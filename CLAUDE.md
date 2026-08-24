@@ -77,6 +77,10 @@ projects under the `nanoneuronais-projects` team:
   forward-only by `scripts/migrate.mjs` (no checksum/baseline machinery —
   single-developer MVP against one dev database; add that back if this grows
   multiple contributors/environments).
+- **Package manager: Bun**, not npm — `bun.lock` at repo root and in
+  `apps/web`, no `package-lock.json` anywhere. Matches this team's
+  convention (and Vercel's own enforced Install Command for this account —
+  see "Deployment" below).
 
 ## Commands
 
@@ -93,14 +97,14 @@ DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/postmortem_ai \
 .venv/bin/python -m pytest apps/api/tests -q
 .venv/bin/ruff check apps/api
 
-# Database
-npm install  # postgres client for scripts/migrate.mjs
-DATABASE_URL=... DATABASE_SSL_MODE=disable node scripts/migrate.mjs
+# Database (bun, not npm -- this repo uses bun.lock, no package-lock.json)
+bun install  # postgres client for scripts/migrate.mjs
+DATABASE_URL=... DATABASE_SSL_MODE=disable bun run scripts/migrate.mjs
 
 # Frontend
-npm install --prefix apps/web
-NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000 npm run dev --prefix apps/web
-npm run build --prefix apps/web  # NEXT_PUBLIC_API_BASE is baked in at build time, not read at runtime
+bun install --cwd apps/web
+NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000 bun run --cwd apps/web dev
+bun run --cwd apps/web build  # NEXT_PUBLIC_API_BASE is baked in at build time, not read at runtime
 
 # Deploy (no GitHub auto-deploy configured -- see Deployment above)
 npx vercel deploy --prod --yes --cwd apps/api   # backend
