@@ -1,0 +1,11 @@
+{
+  "name": "postmortem-ai",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "migrate": "node scripts/migrate.mjs"
+  },
+  "dependencies": {
+    "postgres": "^3.4.5"
+  }
+}
