@@ -120,14 +120,16 @@ auth system, reviewed and found sound earlier in the session that built this:
 - `apps/api/app/security/passwords.py` — scrypt password hashing (stdlib
   `hashlib.scrypt`, no new dependency), random per-password salt, stored as
   `scrypt$<salt_b64>$<hash_b64>`.
-- `apps/api/app/security/tokens.py` — HMAC-SHA256-signed session token.
-  **Always compares UTF-8-encoded bytes with `secrets.compare_digest`, never
-  raw `str`** — this is the exact bug class found and fixed in
-  `nanoneuron-software-company`'s `founder()` dependency this session
-  (`secrets.compare_digest` on a raw `str` raises `TypeError` on non-ASCII
-  input, surfacing as a 500 instead of a clean 401/403); built correctly here
-  from the start, and `test_tokens.py` has a dedicated non-ASCII-email test
-  proving it.
+- `apps/api/app/security/tokens.py` — a real RFC 7519 JWT (via `PyJWT`,
+  `HS256`), not a hand-rolled format. `sub`/`email`/`iat`/`exp` claims;
+  `jwt.decode` is always called with an explicit `algorithms=[ALGORITHM]`
+  allowlist, which is what actually blocks the classic `alg=none` forged-
+  token vulnerability (`test_the_none_algorithm_is_never_accepted` proves
+  it against a real forged token, not just by inspection). The original
+  version of this file was a hand-rolled HMAC-signed format — replaced with
+  a real JWT library on request; **this rotation invalidates every
+  previously-issued session cookie** (old tokens don't parse as JWTs) — a
+  one-time forced logout for anyone signed in, not a data loss.
 - `apps/api/app/auth.py` — `current_user` FastAPI dependency: reads the
   `session_token` cookie, verifies it, loads the user row, 401 on any
   failure. Every route in `apps/api/app/api/v1/postmortems.py` depends on
@@ -146,6 +148,18 @@ auth system, reviewed and found sound earlier in the session that built this:
   confirmed user 3 gets a 404 (not a leak) on it — see
   `test_a_different_user_cannot_see_or_act_on_this_incident` in
   `test_postmortem_routes.py` for the same check as an automated test.
+- `apps/api/app/security/rate_limit.py` — DB-backed login rate limiting
+  (`login_attempts` table, `0005_login_attempts.sql`), not in-memory: this
+  backend runs as Vercel serverless functions with no shared process memory
+  across instances/cold starts, so an in-process counter would silently do
+  nothing in production. Per-email lockout (5 failures / 15 min) is the
+  primary defense; a looser per-IP lockout (20 failures / 15 min) catches
+  credential stuffing across many emails from one source. Login also closes
+  a real timing side-channel: an unregistered email now still runs a full
+  `scrypt` verify against a fixed decoy hash instead of returning early, so
+  "no such account" and "wrong password" take the same time. **Verified
+  live**: 5 real wrong-password attempts against the production API
+  returned 401, the 6th (with the *correct* password) returned 429.
 
 **Deferred, not built:** password reset, email verification, OAuth/SSO,
 multi-tenant organizations.
