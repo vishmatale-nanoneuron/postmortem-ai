@@ -2,8 +2,9 @@
   "name": "postmortem-ai",
   "private": true,
   "type": "module",
+  "workspaces": ["apps/web"],
   "scripts": {
-    "migrate": "node scripts/migrate.mjs"
+    "migrate": "bun run scripts/migrate.mjs"
   },
   "dependencies": {
     "postgres": "^3.4.5"
