@@ -12,8 +12,58 @@ is that a trustworthy AI-generated postmortem needs code-level grounding, not
 just a well-worded prompt — see "The grounding algorithm" below.
 
 **Current scope (deliberate):** real email/password auth (see below), but
-still single-user-per-account, no organizations/multi-tenant, no billing, not
-deployed anywhere.
+still single-user-per-account, no organizations/multi-tenant, no billing.
+**Deployed and live** (see "Deployment" below) — this is not a local-only
+MVP anymore.
+
+## Deployment
+
+Live at `https://www.nanoneuron.ai/` (frontend) and
+`https://postmortem-ai-api.vercel.app` (backend). Two separate Vercel
+projects under the `nanoneuronais-projects` team:
+
+- `postmortem-ai-web` — Next.js frontend. Deployed via `vercel deploy --prod
+  --cwd apps/web` (not GitHub auto-deploy -- the GitHub App wasn't
+  connectable from this account at setup time, see the "GitHub auto-deploy"
+  note below). `NEXT_PUBLIC_API_BASE` is baked in at **build** time, not
+  read at runtime -- changing it requires a redeploy, not just an env var
+  update taking effect on the next request.
+- `postmortem-ai-api` — FastAPI backend, Framework Preset `FastAPI`
+  (Vercel's Python/uv-based builder). Requires a top-level `app = create_app()`
+  instance in `app/main.py` -- the `--factory` uvicorn flag used for local
+  dev isn't how Vercel loads it.
+- **`apps/api/package.json` exists solely as a workaround**: this Vercel
+  team has an enforced Install Command of `bun install --frozen-lockfile`
+  applied to every project regardless of framework (confirmed via a real
+  failed deploy: `Bun could not find a package.json file to install
+  from`), and project-level Install Command overrides via the Vercel API
+  did not take effect. An empty `package.json` with zero dependencies lets
+  that enforced step succeed as a no-op (`bun install --frozen-lockfile`
+  exits 0 against it even with no `bun.lock` present) so the real Python
+  dependency install (`requirements.txt`, via the FastAPI preset) can run
+  afterward. Don't delete this file assuming it's dead weight.
+- Production Postgres: a dedicated Supabase project (`postmortem-ai`, ref
+  `zrfhwvwofaxywjcfccnk`), **separate from `nanoneuron-software-company`'s
+  database** — deliberate, keeps the two products' data cleanly apart
+  regardless of what domain points where.
+- Domain history: `www.nanoneuron.ai` previously pointed to
+  `nanoneuron-software-company`'s frontend (`gst-notice-agent` Vercel
+  project); confirmed with the user that nothing real (no real clients, no
+  real payments) existed there before repointing it to postmortem-ai. The
+  apex `nanoneuron.ai` (no `www`) **intentionally still points to the old
+  project** — only `www.nanoneuron.ai` was authorized to move, so the
+  apex's redirect-to-www was removed rather than silently also moved. If
+  the apex should also move to postmortem-ai later, that's a deliberate
+  follow-up, not an oversight.
+- **AI agent deployment blocking**: this Vercel team appears to flag
+  CLI-initiated deployments from a detected AI-agent actor and hold them
+  as `readyState: BLOCKED` pending some team-level condition (found via a
+  real blocked deployment, `errorLink` pointing at Vercel's
+  project-collaboration docs). Cleared once during this session after the
+  user checked the team dashboard; the exact setting that unblocked it
+  wasn't confirmed. If a future deploy gets stuck in `BLOCKED`, check the
+  team's deployment-protection/security settings before assuming it's a
+  code problem.
 
 ## Stack
 
@@ -51,6 +101,10 @@ DATABASE_URL=... DATABASE_SSL_MODE=disable node scripts/migrate.mjs
 npm install --prefix apps/web
 NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000 npm run dev --prefix apps/web
 npm run build --prefix apps/web  # NEXT_PUBLIC_API_BASE is baked in at build time, not read at runtime
+
+# Deploy (no GitHub auto-deploy configured -- see Deployment above)
+npx vercel deploy --prod --yes --cwd apps/api   # backend
+npx vercel deploy --prod --yes --cwd apps/web   # frontend, only after backend if NEXT_PUBLIC_API_BASE changed
 ```
 
 ## Authentication
