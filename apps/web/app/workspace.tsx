@@ -10,11 +10,17 @@ const label: React.CSSProperties = { display: "block", fontSize: 12, color: "#55
 const input: React.CSSProperties = { width: "100%", padding: 8, marginBottom: 8, boxSizing: "border-box" };
 const button: React.CSSProperties = { padding: "8px 14px", cursor: "pointer" };
 
-// Auth gate: unauthenticated visitors see a login/register form instead of
-// the incident workspace; nothing incident-related renders (or fetches)
-// until GET /v1/auth/me confirms a real signed-in user.
+// Auth gate: defaults to the logged-out landing/sign-in view, since that's
+// what Next.js actually renders server-side for a "use client" component's
+// initial state -- a curl request, a crawler, or a social-link preview
+// never runs the useEffect below, so if the default were a bare loading
+// state (or null) they'd see an empty page instead of the branded landing
+// content. Real signed-in users still only see it for one render before
+// the GET /v1/auth/me check below swaps them to the real workspace --
+// nothing incident-related renders or fetches until that positively
+// confirms a signed-in user.
 export default function Workspace() {
-  const [user, setUser] = useState<AuthUser | null | "loading">("loading");
+  const [user, setUser] = useState<AuthUser | null>(null);
 
   useEffect(() => {
     auth
@@ -23,7 +29,6 @@ export default function Workspace() {
       .catch(() => setUser(null));
   }, []);
 
-  if (user === "loading") return null;
   if (!user) return <AuthGate onSignedIn={setUser} />;
 
   return (
