@@ -96,6 +96,26 @@ async def test_login_with_wrong_password_is_rejected_with_a_generic_message(cont
 
 
 @pytest.mark.asyncio
+async def test_login_is_rate_limited_after_repeated_failures(context) -> None:
+    from app.security.rate_limit import MAX_FAILED_ATTEMPTS_PER_EMAIL
+
+    client, database = context
+    email = "auth-test-ratelimit@example.com"
+    await client.post("/v1/auth/register", json={"email": email, "password": "correct-horse-battery"})
+    client.cookies.clear()
+    await database.execute("DELETE FROM login_attempts WHERE email=%s", (email,))
+
+    for _ in range(MAX_FAILED_ATTEMPTS_PER_EMAIL):
+        response = await client.post("/v1/auth/login", json={"email": email, "password": "wrong-password"})
+        assert response.status_code == 401
+
+    # One more attempt -- even with the CORRECT password -- must now be
+    # rejected as rate limited, not allowed through.
+    locked_out = await client.post("/v1/auth/login", json={"email": email, "password": "correct-horse-battery"})
+    assert locked_out.status_code == 429
+
+
+@pytest.mark.asyncio
 async def test_login_with_an_unregistered_email_gets_the_same_generic_message(context) -> None:
     # Wrong email and wrong password must be indistinguishable to the
     # caller -- otherwise a failed login attempt could be used to enumerate
