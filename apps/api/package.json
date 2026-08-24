@@ -1,0 +1,5 @@
+{
+  "name": "postmortem-ai-api",
+  "private": true,
+  "description": "No JS dependencies -- this is a FastAPI/Python backend. This file exists only because the Vercel team's enforced Install Command runs `bun install --frozen-lockfile` on every project regardless of framework; an empty package.json + bun.lock lets that step succeed as a no-op so the real Python dependency install (requirements.txt, via Vercel's FastAPI framework preset) can proceed."
+}
