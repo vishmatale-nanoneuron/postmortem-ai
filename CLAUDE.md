@@ -19,7 +19,7 @@ deployed anywhere.
 
 - **Backend:** `apps/api/` — FastAPI (Python 3.13), `psycopg[binary,pool]`
   (async connection pool), `pydantic-settings` for config, the real
-  `anthropic` SDK for drafting (no mock in production code).
+  `google-genai` SDK (Gemini) for drafting (no mock in production code).
 - **Frontend:** `apps/web/` — Next.js 15.5 (App Router), TypeScript, one page
   (`app/workspace.tsx`) calling the FastAPI backend directly via `fetch`
   (`app/api.ts`), no proxy layer.
@@ -34,7 +34,7 @@ deployed anywhere.
 # Backend
 python3.13 -m venv .venv && .venv/bin/pip install -r apps/api/requirements.txt
 DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/postmortem_ai \
-  ANTHROPIC_API_KEY=<real key> \
+  GEMINI_API_KEY=<real key> \
   SESSION_SECRET=<real random secret, e.g. python3 -c "import secrets;print(secrets.token_hex(32))"> \
   COOKIE_SECURE=false \
   .venv/bin/uvicorn app.main:create_app --factory --app-dir apps/api --reload
@@ -80,7 +80,7 @@ auth system, reviewed and found sound earlier in the session that built this:
   message either way, so a failed attempt can't be used to enumerate
   registered emails.
 - `Settings.session_secret` has no default — a real secret is required, same
-  "no fabricated/guessed credentials" stance as `anthropic_api_key`.
+  "no fabricated/guessed credentials" stance as `gemini_api_key`.
   `Settings.cookie_secure` defaults to `true`; set `COOKIE_SECURE=false` for
   local dev over plain `http://`.
 - **Verified cross-user isolation manually, not just asserted**: registered
@@ -136,12 +136,14 @@ invented, uncited claim that survives `ground_draft`.
   before rendering — an incident with more evidence than that would
   otherwise blow the model's context on a single `/draft` call.
 - `POST .../draft` catches both `httpx.HTTPError` **and**
-  `anthropic.AnthropicError` as a clean 502 — these are NOT the same
-  exception hierarchy (`anthropic.AnthropicError` is the Anthropic SDK's own
-  base for auth/rate-limit/connection failures). This was found by a live
-  smoke test against a real Anthropic endpoint with an invalid key, which
-  surfaced as an uncaught 500 before the second catch was added — don't
-  remove it assuming `httpx.HTTPError` alone is sufficient.
+  `google.genai.errors.APIError` as a clean 502 — these are NOT the same
+  exception hierarchy (`APIError` is the Gemini SDK's own base for
+  auth/rate-limit/server failures). The equivalent gap was originally found
+  against Anthropic (a live smoke test with an invalid key surfaced an
+  uncaught 500 before that catch was added); carried forward proactively
+  when the provider was swapped to Gemini rather than waiting to
+  rediscover it — don't remove it assuming `httpx.HTTPError` alone is
+  sufficient.
 - Re-drafting an already-published postmortem resets it to `status='draft'`
   (`approved_by`/`approved_at` cleared) via the `ON CONFLICT (incident_id) DO
   UPDATE` clause — a redraft is never silently published.

@@ -188,18 +188,20 @@ async def test_a_provider_http_failure_is_a_bad_gateway_not_a_crash(context) -> 
 
 
 @pytest.mark.asyncio
-async def test_an_anthropic_sdk_error_is_a_bad_gateway_not_a_crash(context) -> None:
-    # anthropic.AnthropicError (auth errors, rate limits, connection
-    # failures) is NOT a subclass of httpx.HTTPError -- confirmed by a live
-    # smoke test against a real Anthropic endpoint with an invalid API key,
-    # which surfaced as an uncaught 500 before the route added this catch.
-    import anthropic
+async def test_a_gemini_sdk_error_is_a_bad_gateway_not_a_crash(context) -> None:
+    # google.genai.errors.APIError (auth errors, rate limits, server
+    # errors) is NOT a subclass of httpx.HTTPError -- this codebase
+    # previously ran the same swap against Anthropic, where a live smoke
+    # test against a real (invalid) API key surfaced an uncaught 500 before
+    # the equivalent catch was added; covering it here so the same gap
+    # can't silently reappear if the provider is ever swapped again.
+    from google.genai import errors as genai_errors
 
     client, provider, _, _ = context
     await seed_two_entries(client)
 
     async def failing_complete(request):
-        raise anthropic.APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
+        raise genai_errors.ClientError(code=401, response_json={"error": {"message": "invalid API key"}})
 
     provider.complete = failing_complete
     response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")

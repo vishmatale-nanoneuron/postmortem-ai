@@ -1,8 +1,8 @@
 import json
 import time
 
-import anthropic
 import httpx
+from google.genai import errors as genai_errors
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
@@ -177,13 +177,15 @@ async def draft_postmortem(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The drafting model returned an unreadable response",
         ) from error
-    except (httpx.HTTPError, anthropic.AnthropicError) as error:
+    except (httpx.HTTPError, genai_errors.APIError) as error:
         # httpx.HTTPError covers a generic ModelProvider's own request
-        # failures; anthropic.AnthropicError is the Anthropic SDK's own
-        # common base (auth errors, rate limits, connection failures) and
-        # is NOT a subclass of httpx.HTTPError, so it needs its own catch --
-        # confirmed by a live smoke test against a real (invalid) API key,
-        # which surfaced as an uncaught 500 before this was added.
+        # failures; google.genai.errors.APIError is the Gemini SDK's own
+        # common base (auth errors, rate limits, server errors) and is NOT a
+        # subclass of httpx.HTTPError, so it needs its own catch -- this
+        # codebase previously ran the same swap against Anthropic, where a
+        # live smoke test against a real (invalid) API key surfaced an
+        # uncaught 500 before the equivalent catch was added; added
+        # proactively here rather than waiting to rediscover the same gap.
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The drafting model is temporarily unavailable",
