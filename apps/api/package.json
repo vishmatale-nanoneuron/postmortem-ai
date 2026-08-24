@@ -1,5 +1,8 @@
 {
-  "name": "postmortem-ai-api",
+  "name": "@nanoneuron/web",
   "private": true,
-  "description": "No JS dependencies -- this is a FastAPI/Python backend. This file exists only because the Vercel team's enforced Install Command runs `bun install --frozen-lockfile` on every project regardless of framework; an empty package.json + bun.lock lets that step succeed as a no-op so the real Python dependency install (requirements.txt, via Vercel's FastAPI framework preset) can proceed."
+  "scripts": {
+    "build": "echo 'no JS build needed for this FastAPI backend'"
+  },
+  "description": "This is a FastAPI/Python backend with no real JS build. This file exists because this Vercel team enforces both an Install Command (`bun install --frozen-lockfile`) AND a Build Command (`bun run --filter @nanoneuron/web build`) on every project, unconditionally -- confirmed by real failed deploys, not overridable via project settings or vercel.json's `framework` field. The name and build script here exist purely to satisfy that enforced filter as a no-op; the real Python dependency install and app startup are handled separately by Vercel's FastAPI framework preset (see apps/api/vercel.json)."
 }
