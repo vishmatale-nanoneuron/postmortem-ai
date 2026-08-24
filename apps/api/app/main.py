@@ -50,3 +50,14 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     return app
+
+
+# Vercel's FastAPI framework preset requires a top-level "app" instance in
+# this module (see docs/frameworks/backend/fastapi#exporting-the-fastapi-
+# application) -- the --factory uvicorn flag used for local dev doesn't
+# need this, but production deployment does. Safe at import time: the only
+# places this module is imported are (a) uvicorn/Vercel's runtime, where
+# real env vars are always present, and (b) test fixtures, which only
+# import app.main lazily inside the fixture function, after
+# monkeypatch.setenv() has already set every required Settings field.
+app = create_app()
