@@ -72,7 +72,11 @@ projects under the `nanoneuronais-projects` team:
   `google-genai` SDK (Gemini) for drafting (no mock in production code).
 - **Frontend:** `apps/web/` — Next.js 15.5 (App Router), TypeScript, one page
   (`app/workspace.tsx`) calling the FastAPI backend directly via `fetch`
-  (`app/api.ts`), no proxy layer.
+  (`app/api.ts`), no proxy layer. Client-side validation via `zod`
+  (`app/validation.ts`) mirrors the real backend Pydantic constraints
+  (field lengths, enum values) so a bad form submission fails fast in the
+  browser — but this is a UX layer only; the backend's own validation is
+  still the actual source of truth and is never bypassed or trusted less.
 - **Database:** Postgres, migrations in `supabase/migrations/*.sql`, applied
   forward-only by `scripts/migrate.mjs` (no checksum/baseline machinery —
   single-developer MVP against one dev database; add that back if this grows

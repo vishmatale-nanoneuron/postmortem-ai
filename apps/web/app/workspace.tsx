@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { api, type Evidence, type Incident, type Postmortem } from "./api";
 import { auth, type AuthUser } from "./auth";
+import { evidenceSchema, firstError, incidentSchema, loginSchema, registerSchema } from "./validation";
 
 const box: React.CSSProperties = { border: "1px solid #d8d8d3", borderRadius: 8, padding: 16, marginBottom: 16 };
 const label: React.CSSProperties = { display: "block", fontSize: 12, color: "#555", marginBottom: 4 };
@@ -50,11 +51,15 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
   const [busy, setBusy] = useState(false);
 
   async function submit(form: FormData) {
-    setBusy(true);
     setError("");
+    const email = String(form.get("email"));
+    const password = String(form.get("password"));
+    const schema = mode === "login" ? loginSchema : registerSchema;
+    const validationError = firstError(schema, { email, password });
+    if (validationError) return setError(validationError);
+
+    setBusy(true);
     try {
-      const email = String(form.get("email"));
-      const password = String(form.get("password"));
       const user = mode === "login" ? await auth.login(email, password) : await auth.register(email, password);
       onSignedIn(user);
     } catch (err) {
@@ -124,13 +129,17 @@ function IncidentWorkspace() {
   }, [selectedId]);
 
   async function createIncident(form: FormData) {
+    const payload = {
+      title: String(form.get("title")),
+      severity: String(form.get("severity")),
+      impact: String(form.get("impact") || "") || undefined,
+    };
+    const validationError = firstError(incidentSchema, payload);
+    if (validationError) return setMessage(validationError);
+
     setBusy(true);
     try {
-      const created = await api.createIncident({
-        title: String(form.get("title")),
-        severity: String(form.get("severity")),
-        impact: String(form.get("impact") || "") || undefined,
-      });
+      const created = await api.createIncident(payload);
       await refreshIncidents();
       setSelectedId(created.id);
       setMessage("Incident created.");
@@ -143,14 +152,18 @@ function IncidentWorkspace() {
 
   async function addEvidence(form: FormData) {
     if (!selectedId) return;
+    const payload = {
+      occurred_at: Date.now(),
+      source: String(form.get("source")),
+      summary: String(form.get("summary")),
+      detail: String(form.get("detail") || "") || undefined,
+    };
+    const validationError = firstError(evidenceSchema, payload);
+    if (validationError) return setMessage(validationError);
+
     setBusy(true);
     try {
-      await api.addEvidence(selectedId, {
-        occurred_at: Date.now(),
-        source: String(form.get("source")),
-        summary: String(form.get("summary")),
-        detail: String(form.get("detail") || "") || undefined,
-      });
+      await api.addEvidence(selectedId, payload);
       await refreshSelected(selectedId);
       setMessage("Evidence recorded.");
     } catch (error) {
