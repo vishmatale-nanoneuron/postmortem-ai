@@ -1,0 +1,60 @@
+# PostMortem AI
+
+Canonical product: https://www.nanoneuron.ai/
+Contact: vish.matale@gmail.com
+Last factual review: 2026-08-25
+
+## What this is
+
+An incident postmortem tool: record evidence about an incident, generate an
+AI-drafted postmortem, publish it once a named human approves. Signed-in
+users only -- account required (email + password).
+
+## The core guarantee: grounded drafting, not free-text generation
+
+Every postmortem draft is produced by a two-layer process, not a single
+unsupervised model call:
+
+1. The drafting model is given the incident's recorded evidence entries,
+   numbered, and instructed to cite the entry number behind every claim it
+   makes, and to leave a section unsupported rather than infer beyond the
+   evidence.
+2. Independently of what the model says about its own citations, code
+   verifies every citation against the real evidence list before anything
+   is stored. A claim with no valid citation (missing, out of range, wrong
+   type) is replaced with a fixed "Not established by the recorded
+   evidence." marker for the four required sections (summary, root cause,
+   detection, resolution), or dropped entirely for optional lists
+   (contributing factors, suggested actions). This verification step can
+   only remove or replace text the model produced -- it never adds new
+   text of its own.
+
+A published postmortem always records who approved it and when; the
+database itself refuses to mark a postmortem published without a named
+approver on record.
+
+## What it does not do
+
+- Does not auto-publish anything -- publishing is always a deliberate,
+  named human action.
+- Does not estimate cost, revenue, or customer-impact figures the evidence
+  didn't state, and the system prompt explicitly instructs the drafting
+  model not to.
+- Does not integrate with external incident/monitoring tools (PagerDuty,
+  Datadog, etc.) -- evidence is entered directly by the signed-in user.
+- Does not support multiple people on one account or organizations --
+  each account is a single user's own incidents.
+
+## Access & discovery
+
+- Public marketing/landing content only at the root URL is intended for
+  indexing; every account-scoped page requires authentication and is not
+  meant to be crawled or indexed as public data.
+- No API keys, credentials, or account-specific data are ever exposed in
+  public pages or this file.
+
+## Commercial scope
+
+This is an active MVP under continued development, not a finished
+commercial product with support commitments. Capabilities described here
+reflect what is actually implemented as of the review date above.
