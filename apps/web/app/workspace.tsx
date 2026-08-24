@@ -1,13 +1,100 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, type Evidence, type Incident, type Postmortem } from "./api";
+import { auth, type AuthUser } from "./auth";
 
 const box: React.CSSProperties = { border: "1px solid #d8d8d3", borderRadius: 8, padding: 16, marginBottom: 16 };
 const label: React.CSSProperties = { display: "block", fontSize: 12, color: "#555", marginBottom: 4 };
 const input: React.CSSProperties = { width: "100%", padding: 8, marginBottom: 8, boxSizing: "border-box" };
 const button: React.CSSProperties = { padding: "8px 14px", cursor: "pointer" };
 
+// Auth gate: unauthenticated visitors see a login/register form instead of
+// the incident workspace; nothing incident-related renders (or fetches)
+// until GET /v1/auth/me confirms a real signed-in user.
 export default function Workspace() {
+  const [user, setUser] = useState<AuthUser | null | "loading">("loading");
+
+  useEffect(() => {
+    auth
+      .me()
+      .then(setUser)
+      .catch(() => setUser(null));
+  }, []);
+
+  if (user === "loading") return null;
+  if (!user) return <AuthGate onSignedIn={setUser} />;
+
+  return (
+    <main style={{ maxWidth: 720, margin: "40px auto", padding: "0 16px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <h1>PostMortem AI</h1>
+        <div>
+          <span style={{ color: "#555", marginRight: 12 }}>{user.email}</span>
+          <button
+            style={button}
+            type="button"
+            onClick={() => void auth.logout().then(() => setUser(null))}
+          >
+            Log out
+          </button>
+        </div>
+      </div>
+      <IncidentWorkspace />
+    </main>
+  );
+}
+
+function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit(form: FormData) {
+    setBusy(true);
+    setError("");
+    try {
+      const email = String(form.get("email"));
+      const password = String(form.get("password"));
+      const user = mode === "login" ? await auth.login(email, password) : await auth.register(email, password);
+      onSignedIn(user);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not sign in.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px" }}>
+      <h1>PostMortem AI</h1>
+      <div style={box}>
+        <h2>{mode === "login" ? "Log in" : "Create an account"}</h2>
+        <form action={submit}>
+          <label style={label}>Email</label>
+          <input style={input} name="email" type="email" required />
+          <label style={label}>Password</label>
+          <input style={input} name="password" type="password" minLength={8} required />
+          <button style={button} disabled={busy} type="submit">
+            {mode === "login" ? "Log in" : "Create account"}
+          </button>
+        </form>
+        {error && <p role="status" style={{ color: "#a33" }}>{error}</p>}
+        <p style={{ marginTop: 12, fontSize: 13 }}>
+          {mode === "login" ? "No account yet? " : "Already have an account? "}
+          <button
+            style={{ ...button, padding: 0, border: "none", background: "none", textDecoration: "underline" }}
+            type="button"
+            onClick={() => setMode(mode === "login" ? "register" : "login")}
+          >
+            {mode === "login" ? "Create one" : "Log in"}
+          </button>
+        </p>
+      </div>
+    </main>
+  );
+}
+
+function IncidentWorkspace() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [evidence, setEvidence] = useState<Evidence[]>([]);
@@ -103,8 +190,7 @@ export default function Workspace() {
   }
 
   return (
-    <main style={{ maxWidth: 720, margin: "40px auto", padding: "0 16px" }}>
-      <h1>PostMortem AI</h1>
+    <>
       <p style={{ color: "#555" }}>Evidence-grounded incident postmortem drafting.</p>
 
       <section style={box}>
@@ -240,6 +326,6 @@ export default function Workspace() {
       )}
 
       {message && <p role="status">{message}</p>}
-    </main>
+    </>
   );
 }

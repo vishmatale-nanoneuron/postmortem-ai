@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from ...ai.model_router import create_model_provider
 from ...ai.provider import ModelProvider
+from ...auth import User, current_user
 from ...database import Database
 from ...dependencies import get_database
 from ...services.postmortem import (
@@ -19,13 +20,6 @@ from ...services.postmortem import (
 from ...settings import Settings, get_settings
 
 router = APIRouter(prefix="/v1/postmortems", tags=["postmortems"])
-
-# MVP scope: no auth yet (see plan). Every route is scoped to this fixed
-# demo identity instead of an authenticated caller's email -- swapping this
-# for a real signed-in user is the entire job of the later auth phase; the
-# grounding/citation mechanics this MVP exists to prove out don't depend on
-# who the caller is.
-DEMO_CLIENT_EMAIL = "demo@postmortem-ai.local"
 
 # Evidence has no upper bound at the schema level, and every entry is
 # rendered into a single prompt with no truncation of its own -- bounding
@@ -52,10 +46,10 @@ def get_model_provider(settings: Settings = Depends(get_settings)) -> ModelProvi
     return create_model_provider(settings)
 
 
-async def require_incident(database: Database, incident_id: str) -> dict:
+async def require_incident(database: Database, incident_id: str, email: str) -> dict:
     incident = await database.fetch_one(
         "SELECT id, title, severity, status FROM incidents WHERE id=%s AND client_email=%s",
-        (incident_id, DEMO_CLIENT_EMAIL),
+        (incident_id, email),
     )
     if not incident:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
@@ -87,6 +81,7 @@ async def load_evidence(database: Database, incident_id: str) -> list[EvidenceEn
 async def create_incident(
     payload: IncidentCreate,
     database: Database = Depends(get_database),
+    user: User = Depends(current_user),
 ) -> dict[str, object]:
     incident_id = f"inc-{int(time.time() * 1000)}"
     now = int(time.time() * 1000)
@@ -94,16 +89,19 @@ async def create_incident(
         """INSERT INTO incidents (id, client_email, title, severity, status, impact, created_at, updated_at)
            VALUES (%s, %s, %s, %s, 'open', %s, %s, %s)
            RETURNING id, title, severity, status, impact""",
-        (incident_id, DEMO_CLIENT_EMAIL, payload.title, payload.severity, payload.impact, now, now),
+        (incident_id, user.email, payload.title, payload.severity, payload.impact, now, now),
     )
     return dict(row or {})
 
 
 @router.get("/incidents")
-async def list_incidents(database: Database = Depends(get_database)) -> list[dict]:
+async def list_incidents(
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> list[dict]:
     return await database.fetch_all(
         "SELECT id, title, severity, status FROM incidents WHERE client_email=%s ORDER BY created_at DESC",
-        (DEMO_CLIENT_EMAIL,),
+        (user.email,),
     )
 
 
@@ -112,8 +110,9 @@ async def record_evidence(
     incident_id: str,
     payload: EvidenceCreate,
     database: Database = Depends(get_database),
+    user: User = Depends(current_user),
 ) -> dict[str, object]:
-    await require_incident(database, incident_id)
+    await require_incident(database, incident_id, user.email)
     now = int(time.time() * 1000)
     row = await database.fetch_one(
         """INSERT INTO incident_evidence
@@ -123,12 +122,12 @@ async def record_evidence(
            RETURNING id::text, occurred_at, source, summary, detail, authorized_by""",
         (
             incident_id,
-            DEMO_CLIENT_EMAIL,
+            user.email,
             payload.occurred_at,
             payload.source,
             payload.summary,
             payload.detail,
-            DEMO_CLIENT_EMAIL,
+            user.email,
             now,
         ),
     )
@@ -139,8 +138,9 @@ async def record_evidence(
 async def list_evidence(
     incident_id: str,
     database: Database = Depends(get_database),
+    user: User = Depends(current_user),
 ) -> list[dict]:
-    await require_incident(database, incident_id)
+    await require_incident(database, incident_id, user.email)
     return await database.fetch_all(
         """SELECT id::text, occurred_at, source, summary, detail, authorized_by, recorded_at
            FROM incident_evidence WHERE incident_id=%s ORDER BY occurred_at, id""",
@@ -153,6 +153,7 @@ async def draft_postmortem(
     incident_id: str,
     database: Database = Depends(get_database),
     provider: ModelProvider = Depends(get_model_provider),
+    user: User = Depends(current_user),
 ) -> dict[str, object]:
     """Build a review-ready draft from the recorded evidence.
 
@@ -160,7 +161,7 @@ async def draft_postmortem(
     by a cited evidence entry is replaced or removed, never kept. The result is
     always a draft -- publishing is a separate, human act.
     """
-    incident = await require_incident(database, incident_id)
+    incident = await require_incident(database, incident_id, user.email)
     evidence = await load_evidence(database, incident_id)
     if not evidence:
         raise HTTPException(
@@ -242,8 +243,9 @@ async def draft_postmortem(
 async def get_postmortem(
     incident_id: str,
     database: Database = Depends(get_database),
+    user: User = Depends(current_user),
 ) -> dict[str, object]:
-    await require_incident(database, incident_id)
+    await require_incident(database, incident_id, user.email)
     return await _load_postmortem(database, incident_id)
 
 
@@ -251,14 +253,15 @@ async def get_postmortem(
 async def publish_postmortem(
     incident_id: str,
     database: Database = Depends(get_database),
+    user: User = Depends(current_user),
 ) -> dict[str, object]:
-    await require_incident(database, incident_id)
+    await require_incident(database, incident_id, user.email)
     now = int(time.time() * 1000)
     updated = await database.execute(
         """UPDATE incident_postmortems
            SET status='published', approved_by=%s, approved_at=%s, updated_at=%s
            WHERE incident_id=%s""",
-        (DEMO_CLIENT_EMAIL, now, now, incident_id),
+        (user.email, now, now, incident_id),
     )
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No draft postmortem to publish")

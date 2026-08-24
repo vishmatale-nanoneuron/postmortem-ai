@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .api.v1.auth import router as auth_router
 from .api.v1.postmortems import router as postmortems_router
 from .database import Database
 from .settings import get_settings
@@ -36,10 +37,12 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
+        allow_credentials=True,  # required for the session cookie to cross the frontend<->backend origin boundary
         allow_methods=["*"],
         allow_headers=["*"],
     )
     app.exception_handler(Exception)(unhandled_exception_handler)
+    app.include_router(auth_router)
     app.include_router(postmortems_router)
 
     @app.get("/health")

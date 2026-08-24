@@ -19,7 +19,8 @@ DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="TEST_DATABASE_URL is not configured")
 
 INCIDENT = "pm-incident-1"
-CLIENT_EMAIL = "demo@postmortem-ai.local"
+CLIENT_EMAIL = "postmortem-test-user@example.com"
+TEST_PASSWORD = "correct-horse-battery-staple"
 
 GOOD_RESPONSE = {
     "summary": {"text": "Checkout latency rose after release 1.2.", "citations": [1, 2]},
@@ -54,6 +55,8 @@ class FakeProvider:
 async def context(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATABASE_URL", DATABASE_URL or "")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
+    monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("COOKIE_SECURE", "false")
 
     from app.api.v1.postmortems import get_model_provider
     from app.database import Database
@@ -67,12 +70,7 @@ async def context(monkeypatch: pytest.MonkeyPatch):
     await database.execute("DELETE FROM incident_postmortems WHERE incident_id=%s", (INCIDENT,))
     await database.execute("DELETE FROM incident_evidence WHERE incident_id=%s", (INCIDENT,))
     await database.execute("DELETE FROM incidents WHERE id=%s", (INCIDENT,))
-    now = int(time.time() * 1000)
-    await database.execute(
-        """INSERT INTO incidents (id, client_email, title, severity, status, impact, created_at, updated_at)
-           VALUES (%s, %s, 'Checkout outage', 'sev1', 'open', 'All checkouts', %s, %s)""",
-        (INCIDENT, CLIENT_EMAIL, now, now),
-    )
+    await database.execute("DELETE FROM users WHERE email=%s", (CLIENT_EMAIL,))
 
     provider = FakeProvider(GOOD_RESPONSE)
     application = create_app()
@@ -80,7 +78,17 @@ async def context(monkeypatch: pytest.MonkeyPatch):
     application.dependency_overrides[get_model_provider] = lambda: provider
 
     async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as client:
-        yield client, provider, database
+        register = await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": TEST_PASSWORD})
+        assert register.status_code == 201, register.text
+
+        now = int(time.time() * 1000)
+        await database.execute(
+            """INSERT INTO incidents (id, client_email, title, severity, status, impact, created_at, updated_at)
+               VALUES (%s, %s, 'Checkout outage', 'sev1', 'open', 'All checkouts', %s, %s)""",
+            (INCIDENT, CLIENT_EMAIL, now, now),
+        )
+
+        yield client, provider, database, application
 
     await database.close()
     get_settings.cache_clear()
@@ -101,7 +109,7 @@ async def seed_two_entries(client) -> None:
 
 @pytest.mark.asyncio
 async def test_an_incident_can_be_created_and_listed(context) -> None:
-    client, _, _ = context
+    client, _, _, _ = context
     response = await client.post(
         "/v1/postmortems/incidents", json={"title": "New outage", "severity": "sev2", "impact": "Some users"}
     )
@@ -116,14 +124,14 @@ async def test_an_incident_can_be_created_and_listed(context) -> None:
 
 @pytest.mark.asyncio
 async def test_drafting_without_evidence_is_refused(context) -> None:
-    client, _, _ = context
+    client, _, _, _ = context
     response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
     assert response.status_code == 409
 
 
 @pytest.mark.asyncio
 async def test_a_grounded_draft_is_stored_with_its_citations(context) -> None:
-    client, _, _ = context
+    client, _, _, _ = context
     await seed_two_entries(client)
     response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
     assert response.status_code == 201, response.text
@@ -135,7 +143,7 @@ async def test_a_grounded_draft_is_stored_with_its_citations(context) -> None:
 
 @pytest.mark.asyncio
 async def test_an_uncited_root_cause_never_reaches_the_database(context) -> None:
-    client, provider, _ = context
+    client, provider, _, _ = context
     await seed_two_entries(client)
     provider.response = {"root_cause": {"text": "Made up cause.", "citations": []}}
     response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
@@ -145,7 +153,7 @@ async def test_an_uncited_root_cause_never_reaches_the_database(context) -> None
 
 @pytest.mark.asyncio
 async def test_an_uncited_action_is_never_stored(context) -> None:
-    client, provider, _ = context
+    client, provider, _, _ = context
     await seed_two_entries(client)
     provider.response = {
         "actions": [{"title": "Do it", "rationale": "Because", "owner": "ops", "citations": []}],
@@ -157,7 +165,7 @@ async def test_an_uncited_action_is_never_stored(context) -> None:
 
 @pytest.mark.asyncio
 async def test_an_unreadable_model_response_is_a_bad_gateway_not_an_empty_draft(context) -> None:
-    client, provider, _ = context
+    client, provider, _, _ = context
     await seed_two_entries(client)
     provider.response = "not json"
     response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
@@ -168,7 +176,7 @@ async def test_an_unreadable_model_response_is_a_bad_gateway_not_an_empty_draft(
 
 @pytest.mark.asyncio
 async def test_a_provider_http_failure_is_a_bad_gateway_not_a_crash(context) -> None:
-    client, provider, _ = context
+    client, provider, _, _ = context
     await seed_two_entries(client)
 
     async def failing_complete(request):
@@ -187,7 +195,7 @@ async def test_an_anthropic_sdk_error_is_a_bad_gateway_not_a_crash(context) -> N
     # which surfaced as an uncaught 500 before the route added this catch.
     import anthropic
 
-    client, provider, _ = context
+    client, provider, _, _ = context
     await seed_two_entries(client)
 
     async def failing_complete(request):
@@ -202,7 +210,7 @@ async def test_an_anthropic_sdk_error_is_a_bad_gateway_not_a_crash(context) -> N
 async def test_evidence_is_bounded_to_the_most_recent_entries(context) -> None:
     from app.api.v1.postmortems import MAX_DRAFT_EVIDENCE_ENTRIES
 
-    client, provider, database = context
+    client, provider, database, _ = context
     total = MAX_DRAFT_EVIDENCE_ENTRIES + 5
     for occurred_at in range(1, total + 1):
         await database.execute(
@@ -224,14 +232,14 @@ async def test_evidence_is_bounded_to_the_most_recent_entries(context) -> None:
 
 @pytest.mark.asyncio
 async def test_publish_requires_a_draft_to_exist(context) -> None:
-    client, _, _ = context
+    client, _, _, _ = context
     response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/publish")
     assert response.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_publishing_records_a_named_approver(context) -> None:
-    client, _, _ = context
+    client, _, _, _ = context
     await seed_two_entries(client)
     await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
     response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/publish")
@@ -244,10 +252,35 @@ async def test_publishing_records_a_named_approver(context) -> None:
 
 @pytest.mark.asyncio
 async def test_redrafting_a_published_postmortem_returns_it_to_draft(context) -> None:
-    client, _, _ = context
+    client, _, _, _ = context
     await seed_two_entries(client)
     await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
     await client.post(f"/v1/postmortems/incidents/{INCIDENT}/publish")
     response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
     assert response.status_code == 201
     assert response.json()["status"] == "draft"
+
+
+@pytest.mark.asyncio
+async def test_a_different_user_cannot_see_or_act_on_this_incident(context) -> None:
+    # This is the actual point of the auth work: incidents are scoped to
+    # the authenticated caller, not merely gated behind "is signed in at
+    # all." A second registered user must get a 404 (not a leak, not a 403
+    # that confirms the incident exists) on every route touching this
+    # incident.
+    _, _, database, application = context
+    other_email = "postmortem-test-other-user@example.com"
+    await database.execute("DELETE FROM users WHERE email=%s", (other_email,))
+
+    async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as other:
+        register = await other.post("/v1/auth/register", json={"email": other_email, "password": TEST_PASSWORD})
+        assert register.status_code == 201
+
+        assert (await other.get(f"/v1/postmortems/incidents/{INCIDENT}/evidence")).status_code == 404
+        assert (await other.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")).status_code == 404
+        assert (await other.get(f"/v1/postmortems/incidents/{INCIDENT}")).status_code == 404
+        assert (await other.post(f"/v1/postmortems/incidents/{INCIDENT}/publish")).status_code == 404
+
+        listing = await other.get("/v1/postmortems/incidents")
+        assert listing.status_code == 200
+        assert all(row["id"] != INCIDENT for row in listing.json())

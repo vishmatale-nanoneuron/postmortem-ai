@@ -11,11 +11,9 @@ that cites only that evidence, publish it once a human approves. The core bet
 is that a trustworthy AI-generated postmortem needs code-level grounding, not
 just a well-worded prompt — see "The grounding algorithm" below.
 
-**Current scope (deliberate):** no auth, no multi-tenant, no billing, not
-deployed anywhere. Every route is scoped to one fixed demo identity
-(`DEMO_CLIENT_EMAIL` in `apps/api/app/api/v1/postmortems.py`). This exists to
-validate the grounding/citation mechanics end-to-end before building anything
-else on top of it.
+**Current scope (deliberate):** real email/password auth (see below), but
+still single-user-per-account, no organizations/multi-tenant, no billing, not
+deployed anywhere.
 
 ## Stack
 
@@ -37,6 +35,8 @@ else on top of it.
 python3.13 -m venv .venv && .venv/bin/pip install -r apps/api/requirements.txt
 DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/postmortem_ai \
   ANTHROPIC_API_KEY=<real key> \
+  SESSION_SECRET=<real random secret, e.g. python3 -c "import secrets;print(secrets.token_hex(32))"> \
+  COOKIE_SECURE=false \
   .venv/bin/uvicorn app.main:create_app --factory --app-dir apps/api --reload
 
 # Backend tests (grounding tests need no DB; route tests need TEST_DATABASE_URL)
@@ -52,6 +52,45 @@ npm install --prefix apps/web
 NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000 npm run dev --prefix apps/web
 npm run build --prefix apps/web  # NEXT_PUBLIC_API_BASE is baked in at build time, not read at runtime
 ```
+
+## Authentication
+
+Email + password, session cookie (not a bearer token — this is a browser-only
+frontend). Design reused (not code copied) from `nanoneuron-software-company`'s
+auth system, reviewed and found sound earlier in the session that built this:
+
+- `apps/api/app/security/passwords.py` — scrypt password hashing (stdlib
+  `hashlib.scrypt`, no new dependency), random per-password salt, stored as
+  `scrypt$<salt_b64>$<hash_b64>`.
+- `apps/api/app/security/tokens.py` — HMAC-SHA256-signed session token.
+  **Always compares UTF-8-encoded bytes with `secrets.compare_digest`, never
+  raw `str`** — this is the exact bug class found and fixed in
+  `nanoneuron-software-company`'s `founder()` dependency this session
+  (`secrets.compare_digest` on a raw `str` raises `TypeError` on non-ASCII
+  input, surfacing as a 500 instead of a clean 401/403); built correctly here
+  from the start, and `test_tokens.py` has a dedicated non-ASCII-email test
+  proving it.
+- `apps/api/app/auth.py` — `current_user` FastAPI dependency: reads the
+  `session_token` cookie, verifies it, loads the user row, 401 on any
+  failure. Every route in `apps/api/app/api/v1/postmortems.py` depends on
+  this and scopes its query by `user.email` — there is no more hardcoded
+  identity anywhere in that file.
+- `apps/api/app/api/v1/auth.py` — register/login/logout/me. Login failure
+  (wrong password OR unregistered email) returns the exact same generic 401
+  message either way, so a failed attempt can't be used to enumerate
+  registered emails.
+- `Settings.session_secret` has no default — a real secret is required, same
+  "no fabricated/guessed credentials" stance as `anthropic_api_key`.
+  `Settings.cookie_secure` defaults to `true`; set `COOKIE_SECURE=false` for
+  local dev over plain `http://`.
+- **Verified cross-user isolation manually, not just asserted**: registered
+  three real users against a live server, had user 2 create an incident,
+  confirmed user 3 gets a 404 (not a leak) on it — see
+  `test_a_different_user_cannot_see_or_act_on_this_incident` in
+  `test_postmortem_routes.py` for the same check as an automated test.
+
+**Deferred, not built:** password reset, email verification, OAuth/SSO,
+multi-tenant organizations.
 
 ## The grounding algorithm (the actual point of this project)
 
@@ -111,8 +150,8 @@ invented, uncited claim that survives `ground_draft`.
 
 ## Known gaps (not fixed, in scope for a later phase — don't assume otherwise)
 
-- No auth/multi-tenant — `DEMO_CLIENT_EMAIL` is hardcoded everywhere a real
-  caller identity should be.
+- Real auth exists now (see "Authentication" above), but no multi-tenant
+  organizations, password reset, email verification, or OAuth/SSO.
 - No deployment configuration (Vercel, Docker, CI) — verified locally only.
 - `npm audit` on `apps/web` shows two remaining high-severity transitive
   vulnerabilities (`postcss`, `sharp`, pulled in by Next.js's build

@@ -6,6 +6,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
+    credentials: "include", // every postmortem route now requires the session cookie
     headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
   });
   if (!response.ok) {

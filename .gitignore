@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+.hypothesis/
 .venv/
 venv/
 node_modules/
