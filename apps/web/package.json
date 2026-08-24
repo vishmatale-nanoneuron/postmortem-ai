@@ -14,9 +14,11 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "22.10.5",
     "@types/react": "19.0.4",
     "@types/react-dom": "19.0.2",
+    "tailwindcss": "^4.3.3",
     "typescript": "5.7.2"
   }
 }

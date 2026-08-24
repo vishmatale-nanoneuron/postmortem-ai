@@ -5,10 +5,14 @@ import { auth, type AuthUser } from "./auth";
 import { Hero, HowItWorks, WhatThisIsnt } from "./landing";
 import { evidenceSchema, firstError, incidentSchema, loginSchema, registerSchema } from "./validation";
 
-const box: React.CSSProperties = { border: "1px solid #d8d8d3", borderRadius: 8, padding: 16, marginBottom: 16 };
-const label: React.CSSProperties = { display: "block", fontSize: 12, color: "#555", marginBottom: 4 };
-const input: React.CSSProperties = { width: "100%", padding: 8, marginBottom: 8, boxSizing: "border-box" };
-const button: React.CSSProperties = { padding: "8px 14px", cursor: "pointer" };
+const card = "rounded-lg border border-line bg-white p-4 shadow-sm mb-4";
+const fieldLabel = "block text-xs font-medium text-muted mb-1";
+const fieldInput =
+  "w-full rounded-md border border-line px-3 py-2 mb-3 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent";
+const primaryButton =
+  "rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper transition hover:bg-ink/90 disabled:cursor-not-allowed disabled:opacity-50";
+const secondaryButton =
+  "rounded-md border border-line px-4 py-2 text-sm font-medium text-ink transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-50";
 
 // Auth gate: defaults to the logged-out landing/sign-in view, since that's
 // what Next.js actually renders server-side for a "use client" component's
@@ -32,16 +36,12 @@ export default function Workspace() {
   if (!user) return <AuthGate onSignedIn={setUser} />;
 
   return (
-    <main style={{ maxWidth: 720, margin: "40px auto", padding: "0 16px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-        <h1>PostMortem AI</h1>
-        <div>
-          <span style={{ color: "#555", marginRight: 12 }}>{user.email}</span>
-          <button
-            style={button}
-            type="button"
-            onClick={() => void auth.logout().then(() => setUser(null))}
-          >
+    <main className="mx-auto max-w-2xl px-4 py-10">
+      <div className="mb-6 flex items-baseline justify-between">
+        <h1 className="text-2xl font-semibold tracking-tight">PostMortem AI</h1>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-muted">{user.email}</span>
+          <button className={secondaryButton} type="button" onClick={() => void auth.logout().then(() => setUser(null))}>
             Log out
           </button>
         </div>
@@ -79,23 +79,27 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
     <main>
       <Hero />
       <HowItWorks />
-      <div style={{ maxWidth: 360, margin: "0 auto 40px", padding: "0 16px" }} id="get-started">
-        <div style={box}>
-          <h2 style={{ marginTop: 0 }}>{mode === "login" ? "Log in" : "Create an account"}</h2>
+      <div id="get-started" className="mx-auto mb-16 max-w-sm px-4">
+        <div className={card}>
+          <h2 className="mb-3 text-lg font-semibold">{mode === "login" ? "Log in" : "Create an account"}</h2>
           <form action={submit}>
-            <label style={label}>Email</label>
-            <input style={input} name="email" type="email" required />
-            <label style={label}>Password</label>
-            <input style={input} name="password" type="password" minLength={8} required />
-            <button style={button} disabled={busy} type="submit">
+            <label className={fieldLabel}>Email</label>
+            <input className={fieldInput} name="email" type="email" required />
+            <label className={fieldLabel}>Password</label>
+            <input className={fieldInput} name="password" type="password" minLength={8} required />
+            <button className={`${primaryButton} w-full`} disabled={busy} type="submit">
               {mode === "login" ? "Log in" : "Create account"}
             </button>
           </form>
-          {error && <p role="status" style={{ color: "#a33" }}>{error}</p>}
-          <p style={{ marginTop: 12, fontSize: 13 }}>
+          {error && (
+            <p role="status" className="mt-3 text-sm text-red-600">
+              {error}
+            </p>
+          )}
+          <p className="mt-3 text-sm text-muted">
             {mode === "login" ? "No account yet? " : "Already have an account? "}
             <button
-              style={{ ...button, padding: 0, border: "none", background: "none", textDecoration: "underline" }}
+              className="font-medium text-ink underline underline-offset-2"
               type="button"
               onClick={() => setMode(mode === "login" ? "register" : "login")}
             >
@@ -214,36 +218,42 @@ function IncidentWorkspace() {
 
   return (
     <>
-      <p style={{ color: "#555" }}>Evidence-grounded incident postmortem drafting.</p>
+      <p className="mb-6 text-sm text-muted">Evidence-grounded incident postmortem drafting.</p>
 
-      <section style={box}>
-        <h2>Incidents</h2>
+      <section className={card}>
+        <h2 className="mb-3 text-base font-semibold">Incidents</h2>
         {incidents.length === 0 ? (
-          <p>No incidents yet.</p>
+          <p className="mb-3 text-sm text-muted">No incidents yet.</p>
         ) : (
-          <ul>
+          <ul className="mb-3 space-y-1.5">
             {incidents.map((incident) => (
               <li key={incident.id}>
-                <button style={button} onClick={() => setSelectedId(incident.id)} type="button">
-                  {incident.title} ({incident.severity}) {selectedId === incident.id ? "← selected" : ""}
+                <button
+                  className={`w-full rounded-md px-3 py-2 text-left text-sm transition ${
+                    selectedId === incident.id ? "bg-accent/10 font-medium text-accent" : "hover:bg-paper"
+                  }`}
+                  onClick={() => setSelectedId(incident.id)}
+                  type="button"
+                >
+                  {incident.title} <span className="text-muted">({incident.severity})</span>
                 </button>
               </li>
             ))}
           </ul>
         )}
         <form action={createIncident}>
-          <label style={label}>Title</label>
-          <input style={input} name="title" required />
-          <label style={label}>Severity</label>
-          <select style={input} name="severity" defaultValue="sev2">
+          <label className={fieldLabel}>Title</label>
+          <input className={fieldInput} name="title" required />
+          <label className={fieldLabel}>Severity</label>
+          <select className={fieldInput} name="severity" defaultValue="sev2">
             <option value="sev1">sev1</option>
             <option value="sev2">sev2</option>
             <option value="sev3">sev3</option>
             <option value="sev4">sev4</option>
           </select>
-          <label style={label}>Impact</label>
-          <input style={input} name="impact" />
-          <button style={button} disabled={busy} type="submit">
+          <label className={fieldLabel}>Impact</label>
+          <input className={fieldInput} name="impact" />
+          <button className={primaryButton} disabled={busy} type="submit">
             Create incident
           </button>
         </form>
@@ -251,22 +261,23 @@ function IncidentWorkspace() {
 
       {selectedId && (
         <>
-          <section style={box}>
-            <h2>Evidence</h2>
+          <section className={card}>
+            <h2 className="mb-3 text-base font-semibold">Evidence</h2>
             {evidence.length === 0 ? (
-              <p>No evidence recorded yet.</p>
+              <p className="mb-3 text-sm text-muted">No evidence recorded yet.</p>
             ) : (
-              <ul>
+              <ul className="mb-3 space-y-1.5 text-sm">
                 {evidence.map((entry) => (
-                  <li key={entry.id}>
-                    [{entry.source}] {entry.summary} {entry.detail ? `-- ${entry.detail}` : ""}
+                  <li key={entry.id} className="rounded-md bg-paper px-3 py-2">
+                    <span className="font-medium">[{entry.source}]</span> {entry.summary}{" "}
+                    {entry.detail && <span className="text-muted">-- {entry.detail}</span>}
                   </li>
                 ))}
               </ul>
             )}
             <form action={addEvidence}>
-              <label style={label}>Source</label>
-              <select style={input} name="source" defaultValue="alert">
+              <label className={fieldLabel}>Source</label>
+              <select className={fieldInput} name="source" defaultValue="alert">
                 <option value="alert">alert</option>
                 <option value="log">log</option>
                 <option value="deploy">deploy</option>
@@ -274,42 +285,47 @@ function IncidentWorkspace() {
                 <option value="human_note">human_note</option>
                 <option value="customer_report">customer_report</option>
               </select>
-              <label style={label}>Summary</label>
-              <input style={input} name="summary" required />
-              <label style={label}>Detail (optional)</label>
-              <input style={input} name="detail" />
-              <button style={button} disabled={busy} type="submit">
+              <label className={fieldLabel}>Summary</label>
+              <input className={fieldInput} name="summary" required />
+              <label className={fieldLabel}>Detail (optional)</label>
+              <input className={fieldInput} name="detail" />
+              <button className={primaryButton} disabled={busy} type="submit">
                 Add evidence
               </button>
             </form>
           </section>
 
-          <section style={box}>
-            <h2>Draft</h2>
-            <button style={button} disabled={busy || evidence.length === 0} onClick={() => void generateDraft()} type="button">
+          <section className={card}>
+            <h2 className="mb-3 text-base font-semibold">Draft</h2>
+            <button
+              className={primaryButton}
+              disabled={busy || evidence.length === 0}
+              onClick={() => void generateDraft()}
+              type="button"
+            >
               Generate draft
             </button>
             {postmortem && (
-              <div style={{ marginTop: 16 }}>
+              <div className="mt-4 space-y-2 text-sm">
                 <p>
-                  <b>Status:</b> {postmortem.status}
+                  <span className="font-medium">Status:</span> {postmortem.status}
                 </p>
                 <p>
-                  <b>Summary:</b> {postmortem.summary}
+                  <span className="font-medium">Summary:</span> {postmortem.summary}
                 </p>
                 <p>
-                  <b>Root cause:</b> {postmortem.root_cause}
+                  <span className="font-medium">Root cause:</span> {postmortem.root_cause}
                 </p>
                 <p>
-                  <b>Detection:</b> {postmortem.detection}
+                  <span className="font-medium">Detection:</span> {postmortem.detection}
                 </p>
                 <p>
-                  <b>Resolution:</b> {postmortem.resolution}
+                  <span className="font-medium">Resolution:</span> {postmortem.resolution}
                 </p>
                 {postmortem.contributing_factors.length > 0 && (
                   <div>
-                    <b>Contributing factors:</b>
-                    <ul>
+                    <span className="font-medium">Contributing factors:</span>
+                    <ul className="mt-1 list-disc space-y-1 pl-5">
                       {postmortem.contributing_factors.map((factor) => (
                         <li key={factor}>{factor}</li>
                       ))}
@@ -318,8 +334,8 @@ function IncidentWorkspace() {
                 )}
                 {postmortem.actions.length > 0 && (
                   <div>
-                    <b>Actions:</b>
-                    <ul>
+                    <span className="font-medium">Actions:</span>
+                    <ul className="mt-1 list-disc space-y-1 pl-5">
                       {postmortem.actions.map((action) => (
                         <li key={action.id}>
                           {action.title} -- {action.owner} ({action.rationale})
@@ -328,17 +344,17 @@ function IncidentWorkspace() {
                     </ul>
                   </div>
                 )}
-                <p style={{ color: "#888", fontSize: 12 }}>
+                <p className="text-xs text-muted">
                   Cited evidence: {postmortem.cited_evidence_ids.length} / unsupported claims dropped:{" "}
                   {postmortem.unsupported_claims_dropped}
                 </p>
                 {postmortem.status !== "published" && (
-                  <button style={button} disabled={busy} onClick={() => void publish()} type="button">
+                  <button className={`${primaryButton} mt-1`} disabled={busy} onClick={() => void publish()} type="button">
                     Publish
                   </button>
                 )}
                 {postmortem.approved_by && (
-                  <p style={{ color: "#888", fontSize: 12 }}>
+                  <p className="text-xs text-muted">
                     Approved by {postmortem.approved_by} at {new Date(postmortem.approved_at ?? 0).toLocaleString()}
                   </p>
                 )}
@@ -348,7 +364,11 @@ function IncidentWorkspace() {
         </>
       )}
 
-      {message && <p role="status">{message}</p>}
+      {message && (
+        <p role="status" className="text-sm text-muted">
+          {message}
+        </p>
+      )}
     </>
   );
 }
