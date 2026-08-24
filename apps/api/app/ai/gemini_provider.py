@@ -1,7 +1,7 @@
 from google import genai
 from google.genai import types
 
-from .provider import ModelRequest
+from .provider import ModelRequest, ModelResponse
 
 
 class GeminiProvider:
@@ -17,11 +17,11 @@ class GeminiProvider:
 
     def __init__(self, api_key: str, default_model: str) -> None:
         self._client = genai.Client(api_key=api_key)
-        self._default_model = default_model
+        self.model_name = default_model
 
-    async def complete(self, request: ModelRequest) -> str:
+    async def complete(self, request: ModelRequest) -> ModelResponse:
         response = await self._client.aio.models.generate_content(
-            model=request.model or self._default_model,
+            model=request.model or self.model_name,
             contents=[message.content for message in request.messages],
             config=types.GenerateContentConfig(
                 system_instruction=request.system,
@@ -32,4 +32,5 @@ class GeminiProvider:
         text = response.text
         if text is None:
             raise ValueError("Gemini returned no text content")
-        return text
+        output_tokens = response.usage_metadata.total_token_count if response.usage_metadata else None
+        return ModelResponse(text=text, output_tokens=output_tokens)

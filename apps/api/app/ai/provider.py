@@ -17,7 +17,16 @@ class ModelRequest:
     temperature: float = 0.1
 
 
+@dataclass(frozen=True)
+class ModelResponse:
+    text: str
+    # None when a provider doesn't report usage (or a test double doesn't
+    # bother) -- ai_runs.output_tokens is nullable for the same reason.
+    output_tokens: int | None = None
+
+
 class ModelProvider(Protocol):
     name: str
+    model_name: str
 
-    async def complete(self, request: ModelRequest) -> str: ...
+    async def complete(self, request: ModelRequest) -> ModelResponse: ...

@@ -6,6 +6,22 @@ from ..ai.provider import ModelMessage, ModelRequest
 
 UNSUPPORTED = "Not established by the recorded evidence."
 
+# Bumped whenever SYSTEM_PROMPT changes meaningfully. Persisted on every
+# incident_postmortems row (see 0004_ai_runs.sql's prompt_version column) so
+# a future prompt change is traceable against which postmortems were
+# drafted under which prompt -- not versioned for its own sake.
+PROMPT_VERSION = "v1"
+
+# Conservative character budget for the rendered evidence body sent to the
+# model, independent of MAX_DRAFT_EVIDENCE_ENTRIES's row-count bound in
+# apps/api/app/api/v1/postmortems.py. A single evidence entry can carry up
+# to a 500-char summary + 4000-char detail (see EvidenceCreate), so even
+# well under the 500-row count bound, total rendered size could still be
+# large enough to be an expensive or unreliable request. ~40K characters is
+# comfortably inside Gemini 2.5 Flash's context window while keeping a
+# single drafting call cheap and fast.
+MAX_EVIDENCE_CHARS = 40_000
+
 # Two-layer defense, not one. This prompt asks the model to cite every claim
 # and to treat an empty/uncited section as correct -- but the prompt is not
 # what makes this trustworthy. ground_draft() below is the enforcement layer:
@@ -76,6 +92,33 @@ def render_evidence(evidence: list[EvidenceEntry]) -> str:
             f"at {entry.occurred_at}) {entry.summary}{detail}"
         )
     return "\n".join(lines)
+
+
+def bound_evidence_by_chars(evidence: list[EvidenceEntry], max_chars: int = MAX_EVIDENCE_CHARS) -> list[EvidenceEntry]:
+    """Trim to the most recent entries whose rendered form fits max_chars.
+
+    Same rationale as postmortems.py's row-count bound: keep the entries
+    closest to resolution (most recent), not the oldest. Always keeps at
+    least one entry, even if it alone exceeds the budget, so a single
+    oversized entry can't block drafting entirely -- the caller still sees
+    a real (possibly very large) request rather than a silent empty one.
+    Callers must use the SAME returned list for both build_draft_request
+    and ground_draft, since citation numbers are positional.
+    """
+    if not evidence:
+        return evidence
+    selected: list[EvidenceEntry] = []
+    total = 0
+    for entry in reversed(evidence):
+        detail = f" -- {entry.detail}" if entry.detail else ""
+        line = f"[i] ({entry.source}, recorded by {entry.authorized_by}, at {entry.occurred_at}) {entry.summary}{detail}"
+        length = len(line) + 1
+        if selected and total + length > max_chars:
+            break
+        selected.append(entry)
+        total += length
+    selected.reverse()
+    return selected
 
 
 def build_draft_request(

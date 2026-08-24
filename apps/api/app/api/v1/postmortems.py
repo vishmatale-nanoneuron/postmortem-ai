@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 
 import httpx
@@ -12,12 +13,17 @@ from ...auth import User, current_user
 from ...database import Database
 from ...dependencies import get_database
 from ...services.postmortem import (
+    PROMPT_VERSION,
     EvidenceEntry,
+    bound_evidence_by_chars,
     build_draft_request,
     ground_draft,
     parse_model_json,
+    render_evidence,
 )
 from ...settings import Settings, get_settings
+
+logger = logging.getLogger("postmortem_ai")
 
 router = APIRouter(prefix="/v1/postmortems", tags=["postmortems"])
 
@@ -168,11 +174,48 @@ async def draft_postmortem(
             status_code=status.HTTP_409_CONFLICT,
             detail="Record at least one piece of evidence before drafting a postmortem",
         )
+    # Two independent bounds: load_evidence already caps row count; this
+    # caps the rendered character size of whatever survived that cap, since
+    # a small number of large entries (summary + detail near their max
+    # lengths) can still be an oversized request on their own. Both bounds
+    # must use the exact same evidence list for build_draft_request and
+    # ground_draft, or citation numbers won't line up.
+    evidence = bound_evidence_by_chars(evidence)
+    input_chars = len(render_evidence(evidence))
+
+    logger.info(
+        "postmortem_draft_requested",
+        extra={"incident_id": incident_id, "provider": provider.name, "evidence_count": len(evidence)},
+    )
+    started_at = time.monotonic()
+
+    async def record_ai_run(status_value: str, output_tokens: int | None, error_type: str | None) -> None:
+        latency_ms = int((time.monotonic() - started_at) * 1000)
+        await database.execute(
+            """INSERT INTO ai_runs
+                 (id,incident_id,provider,model,prompt_version,input_chars,
+                  output_tokens,latency_ms,status,error_type,created_at)
+               VALUES (gen_random_uuid(),%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (
+                incident_id,
+                provider.name,
+                provider.model_name,
+                PROMPT_VERSION,
+                input_chars,
+                output_tokens,
+                latency_ms,
+                status_value,
+                error_type,
+                int(time.time() * 1000),
+            ),
+        )
 
     try:
-        raw = await provider.complete(build_draft_request(dict(incident), evidence))
-        response = parse_model_json(raw)
+        result = await provider.complete(build_draft_request(dict(incident), evidence))
+        response = parse_model_json(result.text)
     except (ValueError, TypeError) as error:
+        logger.warning("postmortem_draft_failed", extra={"incident_id": incident_id, "error_type": "unreadable_response"})
+        await record_ai_run("failed", None, "unreadable_response")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The drafting model returned an unreadable response",
@@ -186,12 +229,26 @@ async def draft_postmortem(
         # live smoke test against a real (invalid) API key surfaced an
         # uncaught 500 before the equivalent catch was added; added
         # proactively here rather than waiting to rediscover the same gap.
+        logger.warning(
+            "postmortem_draft_failed",
+            extra={"incident_id": incident_id, "error_type": type(error).__name__},
+        )
+        await record_ai_run("failed", None, type(error).__name__)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The drafting model is temporarily unavailable",
         ) from error
 
     draft = ground_draft(response, evidence)
+    await record_ai_run("succeeded", result.output_tokens, None)
+    logger.info(
+        "postmortem_draft_succeeded",
+        extra={
+            "incident_id": incident_id,
+            "provider": provider.name,
+            "unsupported_claims_dropped": draft.unsupported_claims_dropped,
+        },
+    )
     now = int(time.time() * 1000)
 
     async with database.transaction() as tx:
@@ -199,8 +256,8 @@ async def draft_postmortem(
             """INSERT INTO incident_postmortems
                  (id,incident_id,status,summary,root_cause,detection,resolution,
                   contributing_factors,cited_evidence_ids,unsupported_claims_dropped,
-                  generated_by,created_at,updated_at)
-               VALUES (gen_random_uuid(),%s,'draft',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                  generated_by,prompt_version,created_at,updated_at)
+               VALUES (gen_random_uuid(),%s,'draft',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                ON CONFLICT (incident_id) DO UPDATE SET
                  status='draft', approved_by=NULL, approved_at=NULL,
                  summary=excluded.summary, root_cause=excluded.root_cause,
@@ -208,7 +265,8 @@ async def draft_postmortem(
                  contributing_factors=excluded.contributing_factors,
                  cited_evidence_ids=excluded.cited_evidence_ids,
                  unsupported_claims_dropped=excluded.unsupported_claims_dropped,
-                 generated_by=excluded.generated_by, updated_at=excluded.updated_at
+                 generated_by=excluded.generated_by, prompt_version=excluded.prompt_version,
+                 updated_at=excluded.updated_at
                RETURNING id::text""",
             (
                 incident_id,
@@ -220,6 +278,7 @@ async def draft_postmortem(
                 json_list(draft.cited_evidence_ids),
                 draft.unsupported_claims_dropped,
                 provider.name,
+                PROMPT_VERSION,
                 now,
                 now,
             ),
@@ -274,7 +333,7 @@ async def _load_postmortem(database: Database, incident_id: str) -> dict[str, ob
     postmortem = await database.fetch_one(
         """SELECT id::text, status, summary, root_cause, detection, resolution,
                   contributing_factors, cited_evidence_ids, unsupported_claims_dropped,
-                  approved_by, approved_at
+                  prompt_version, approved_by, approved_at
            FROM incident_postmortems WHERE incident_id=%s""",
         (incident_id,),
     )

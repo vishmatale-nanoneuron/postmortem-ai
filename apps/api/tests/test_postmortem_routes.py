@@ -41,14 +41,19 @@ GOOD_RESPONSE = {
 
 class FakeProvider:
     name = "fake"
+    model_name = "fake-model-v1"
 
     def __init__(self, response: object) -> None:
         self.response = response
         self.last_request = None
+        self.output_tokens: int | None = 42
 
-    async def complete(self, request) -> str:
+    async def complete(self, request):
+        from app.ai.provider import ModelResponse
+
         self.last_request = request
-        return self.response if isinstance(self.response, str) else json.dumps(self.response)
+        text = self.response if isinstance(self.response, str) else json.dumps(self.response)
+        return ModelResponse(text=text, output_tokens=self.output_tokens)
 
 
 @pytest_asyncio.fixture
@@ -139,6 +144,49 @@ async def test_a_grounded_draft_is_stored_with_its_citations(context) -> None:
     assert body["status"] == "draft"
     assert "latency" in body["summary"].lower()
     assert len(body["actions"]) == 1
+    assert body["prompt_version"] == "v1"
+
+
+@pytest.mark.asyncio
+async def test_a_successful_draft_records_an_ai_run(context) -> None:
+    # Real monitoring surface, not a described process: one queryable row
+    # per /draft call. Also proves the real token count from the (fake)
+    # provider's response makes it all the way to the persisted row.
+    client, provider, database, _ = context
+    await seed_two_entries(client)
+    await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
+
+    runs = await database.fetch_all(
+        "SELECT provider, model, prompt_version, status, output_tokens FROM ai_runs WHERE incident_id=%s",
+        (INCIDENT,),
+    )
+    assert len(runs) == 1
+    assert runs[0]["provider"] == "fake"
+    assert runs[0]["model"] == "fake-model-v1"
+    assert runs[0]["prompt_version"] == "v1"
+    assert runs[0]["status"] == "succeeded"
+    assert runs[0]["output_tokens"] == provider.output_tokens
+
+
+@pytest.mark.asyncio
+async def test_a_failed_draft_also_records_an_ai_run(context) -> None:
+    # Failures are monitoring signal too -- a run that never got recorded
+    # would make outage/error-rate queries against ai_runs silently
+    # undercount real failures.
+    client, provider, database, _ = context
+    await seed_two_entries(client)
+    provider.response = "not json"
+    response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
+    assert response.status_code == 502
+
+    runs = await database.fetch_all(
+        "SELECT status, error_type, output_tokens FROM ai_runs WHERE incident_id=%s",
+        (INCIDENT,),
+    )
+    assert len(runs) == 1
+    assert runs[0]["status"] == "failed"
+    assert runs[0]["error_type"] == "unreadable_response"
+    assert runs[0]["output_tokens"] is None
 
 
 @pytest.mark.asyncio

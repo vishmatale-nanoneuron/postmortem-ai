@@ -3,6 +3,7 @@ from hypothesis import given, settings, strategies as st
 from app.services.postmortem import (
     UNSUPPORTED,
     EvidenceEntry,
+    bound_evidence_by_chars,
     ground_draft,
     parse_model_json,
 )
@@ -106,3 +107,44 @@ def test_grounding_only_ever_removes_never_adds_property(section: object) -> Non
         raw_text = section.get("text")
         assert isinstance(raw_text, str)
         assert draft.summary in raw_text or draft.summary == raw_text.strip()
+
+
+def _make_entry(occurred_at: int, summary_len: int) -> EvidenceEntry:
+    return EvidenceEntry(
+        id=f"e{occurred_at}",
+        occurred_at=occurred_at,
+        source="alert",
+        summary="x" * summary_len,
+        detail=None,
+        authorized_by="ops",
+    )
+
+
+def test_bound_evidence_by_chars_keeps_everything_under_budget() -> None:
+    entries = [_make_entry(i, 10) for i in range(1, 6)]
+    bounded = bound_evidence_by_chars(entries, max_chars=10_000)
+    assert bounded == entries
+
+
+def test_bound_evidence_by_chars_keeps_the_most_recent_not_the_oldest() -> None:
+    # Ten entries, each renders to ~120 chars; a budget of 250 fits ~2.
+    entries = [_make_entry(i, 100) for i in range(1, 11)]
+    bounded = bound_evidence_by_chars(entries, max_chars=250)
+    assert len(bounded) < len(entries)
+    # Kept entries are the most recent (highest occurred_at), in
+    # chronological order.
+    assert [entry.occurred_at for entry in bounded] == sorted(entry.occurred_at for entry in bounded)
+    assert bounded[-1].occurred_at == 10
+
+
+def test_bound_evidence_by_chars_always_keeps_at_least_one_entry() -> None:
+    # A single entry far larger than the budget must still survive --
+    # otherwise drafting would silently get zero evidence instead of a
+    # real (if large) request.
+    entries = [_make_entry(1, 5_000)]
+    bounded = bound_evidence_by_chars(entries, max_chars=100)
+    assert len(bounded) == 1
+
+
+def test_bound_evidence_by_chars_handles_empty_input() -> None:
+    assert bound_evidence_by_chars([], max_chars=1_000) == []
