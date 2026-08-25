@@ -90,7 +90,8 @@ class MCPBearerAuthMiddleware:
             if payload is not None:
                 database: Database = request.app.state.database
                 row = await database.fetch_one(
-                    "SELECT id::text, email, subscription_status FROM users WHERE id=%s", (payload.user_id,)
+                    "SELECT id::text, email, subscription_status, current_period_end FROM users WHERE id=%s",
+                    (payload.user_id,),
                 )
                 if row:
                     user = User(
@@ -98,6 +99,7 @@ class MCPBearerAuthMiddleware:
                         email=row["email"],
                         is_founder=_is_founder(row["email"], self.settings.founder_email),
                         subscription_status=row["subscription_status"],
+                        current_period_end=row["current_period_end"],
                     )
 
         if user is None:

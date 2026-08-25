@@ -107,6 +107,42 @@ async def test_the_billing_portal_404s_before_any_checkout_has_happened(context)
 
 
 @pytest.mark.asyncio
+async def test_a_manually_approved_subscription_stops_granting_access_after_its_period_ends(context) -> None:
+    # Regression for a real bug: approve_payment_claim (founder.py) computes
+    # a 30-day current_period_end but, before this fix, nothing ever
+    # compared it to now -- subscription_status='active' alone granted
+    # access forever, so a single UPI/wire payment bought permanent access
+    # instead of the one month it was actually billed for.
+    client, database = context
+    await client.post("/v1/auth/register", json={"email": UNPAID_EMAIL, "password": "correct-horse-battery"})
+    await database.execute(
+        "UPDATE users SET subscription_status='active', current_period_end=%s WHERE email=%s",
+        (1, UNPAID_EMAIL),  # 1 = Unix epoch second 1, unambiguously in the past
+    )
+
+    response = await client.post(
+        "/v1/postmortems/incidents", json={"title": "Should be blocked -- period lapsed", "severity": "sev2"}
+    )
+    assert response.status_code == 402
+
+
+@pytest.mark.asyncio
+async def test_a_manually_approved_subscription_grants_access_while_its_period_is_still_open(context) -> None:
+    client, database = context
+    await client.post("/v1/auth/register", json={"email": UNPAID_EMAIL, "password": "correct-horse-battery"})
+    far_future = 4102444800  # 2100-01-01, unambiguously not-yet-expired
+    await database.execute(
+        "UPDATE users SET subscription_status='active', current_period_end=%s WHERE email=%s",
+        (far_future, UNPAID_EMAIL),
+    )
+
+    response = await client.post(
+        "/v1/postmortems/incidents", json={"title": "Should be allowed", "severity": "sev2"}
+    )
+    assert response.status_code == 201
+
+
+@pytest.mark.asyncio
 async def test_a_webhook_with_an_invalid_signature_is_rejected(context) -> None:
     client, _ = context
     response = await client.post(

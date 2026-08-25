@@ -1,4 +1,5 @@
 import hmac
+import time
 from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request, status
@@ -31,12 +32,26 @@ class User:
     email: str
     is_founder: bool
     subscription_status: str
+    current_period_end: int | None = None
 
     @property
     def has_active_subscription(self) -> bool:
         # Founder access is independent of any client/subscription state --
         # same invariant as nanoneuron-software-company's founder gate.
-        return self.is_founder or self.subscription_status in ACTIVE_SUBSCRIPTION_STATUSES
+        if self.is_founder:
+            return True
+        if self.subscription_status not in ACTIVE_SUBSCRIPTION_STATUSES:
+            return False
+        # A status of 'active'/'trialing' alone isn't enough: a manually
+        # approved UPI/wire claim (founder.py's approve_payment_claim) sets
+        # status='active' once and nothing ever flips it back -- there's no
+        # recurring billing system behind a manual payment, unlike Stripe,
+        # which corrects status itself via webhook when a period lapses.
+        # Without this check, a single ₹999 payment bought permanent access
+        # instead of the one month it was actually billed for.
+        if self.current_period_end is None:
+            return True
+        return self.current_period_end > int(time.time())
 
 
 async def current_user(
@@ -53,7 +68,8 @@ async def current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired or invalid")
 
     row = await database.fetch_one(
-        "SELECT id::text, email, subscription_status FROM users WHERE id=%s", (payload.user_id,)
+        "SELECT id::text, email, subscription_status, current_period_end FROM users WHERE id=%s",
+        (payload.user_id,),
     )
     if not row:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account no longer exists")
@@ -63,6 +79,7 @@ async def current_user(
         email=row["email"],
         is_founder=_is_founder(row["email"], settings.founder_email),
         subscription_status=row["subscription_status"],
+        current_period_end=row["current_period_end"],
     )
 
 

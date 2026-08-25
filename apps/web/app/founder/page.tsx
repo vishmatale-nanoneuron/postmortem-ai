@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import FounderAuth from "./founder-auth";
 
-// Not linked from the public site and excluded from search indexing --
-// not real security on its own (the URL still works if guessed/shared),
-// but there's no reason to make it discoverable either.
+// Not linked from the public site and excluded from search indexing. Real
+// access control lives in middleware.ts now (a 404 for anyone without the
+// FOUNDER_ACCESS_KEY) -- this metadata is defense-in-depth against search
+// engines, not the actual gate.
 export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };

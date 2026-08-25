@@ -1,7 +1,10 @@
+import logging
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger("postmortem_ai")
 
 
 class Settings(BaseSettings):
@@ -11,6 +14,23 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(alias="GEMINI_API_KEY")
     gemini_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_MODEL")
     session_secret: str = Field(alias="SESSION_SECRET")
+
+    @field_validator("session_secret")
+    @classmethod
+    def _warn_if_session_secret_is_weak(cls, value: str) -> str:
+        # A warning, not a hard failure -- this can't tell whether the
+        # currently-deployed production secret is already weak (Vercel's
+        # Sensitive env vars can never be read back to check), so refusing
+        # to boot here risks turning "the secret might be weak" into a
+        # guaranteed outage. 32 bytes matches PyJWT's own recommended
+        # minimum for HMAC-SHA256 (RFC 7518 3.2), which our token signing
+        # (security/tokens.py) uses.
+        if len(value.encode()) < 32:
+            logger.warning(
+                "weak_session_secret",
+                extra={"length_bytes": len(value.encode())},
+            )
+        return value
     cookie_secure: bool = Field(default=True, alias="COOKIE_SECURE")
     cors_origins_raw: str = Field(default="http://localhost:3000", alias="CORS_ORIGINS")
     # Founder access is granted by email match against a real account in

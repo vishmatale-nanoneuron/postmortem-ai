@@ -76,24 +76,42 @@ class UserOut(BaseModel):
 
 
 def _user_out(row: dict, settings: Settings) -> UserOut:
-    is_founder = _is_founder(row["email"], settings.founder_email)
-    subscription_status = row.get("subscription_status", "none")
-    return UserOut(
+    # Builds the real User (not a separately re-derived bool) so this and
+    # GET /me can never disagree about what counts as active -- this used
+    # to recompute is_founder/status in ("active","trialing") locally,
+    # which meant it never saw current_period_end and could report a
+    # lapsed manual (UPI/wire) subscription as active for a moment.
+    user = User(
         id=row["id"],
         email=row["email"],
-        is_founder=is_founder,
-        subscription_status=subscription_status,
-        has_active_subscription=is_founder or subscription_status in ("active", "trialing"),
+        is_founder=_is_founder(row["email"], settings.founder_email),
+        subscription_status=row.get("subscription_status", "none"),
+        current_period_end=row.get("current_period_end"),
+    )
+    return UserOut(
+        id=user.id,
+        email=user.email,
+        is_founder=user.is_founder,
+        subscription_status=user.subscription_status,
+        has_active_subscription=user.has_active_subscription,
     )
 
 
 def _set_session_cookie(response: Response, settings: Settings, token: str) -> None:
+    # samesite="none" is required, not just permissive: the frontend
+    # (www.nanoneuron.ai) calls this API directly cross-origin (see
+    # apps/web/app/api.ts) rather than through a same-origin proxy, so
+    # samesite="strict"/"lax" would silently never send this cookie back on
+    # any subsequent request -- auth.me() would always look logged-out even
+    # right after a successful login. "none" requires secure=True, which is
+    # exactly the case this cross-origin setup always needs (never send an
+    # unencrypted session cookie same-site-unrestricted).
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
         httponly=True,
         secure=settings.cookie_secure,
-        samesite="strict",
+        samesite="none",
         max_age=60 * 60 * 24 * 7,
         path="/",
     )
@@ -129,7 +147,7 @@ async def register(
     now = int(time.time() * 1000)
     row = await database.fetch_one(
         """INSERT INTO users (email, password_hash, created_at)
-           VALUES (%s, %s, %s) RETURNING id::text, email, subscription_status""",
+           VALUES (%s, %s, %s) RETURNING id::text, email, subscription_status, current_period_end""",
         (payload.email, hash_password(payload.password), now),
     )
     assert row is not None
@@ -153,7 +171,8 @@ async def login(
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
 
     row = await database.fetch_one(
-        "SELECT id::text, email, password_hash, subscription_status FROM users WHERE email=%s", (payload.email,)
+        "SELECT id::text, email, password_hash, subscription_status, current_period_end FROM users WHERE email=%s",
+        (payload.email,),
     )
     stored_hash = row["password_hash"] if row else _DECOY_HASH
     password_matches = verify_password(payload.password, stored_hash)
