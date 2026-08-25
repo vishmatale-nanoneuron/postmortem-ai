@@ -129,7 +129,7 @@ export type Claim = {
   created_at: number;
 };
 
-export type PaymentClaim = Claim & { user_id: string; email: string };
+export type PaymentClaim = Claim & { user_id: string; email: string; bank_verified: boolean };
 
 export const billing = {
   status: () => request<BillingStatus>("/v1/billing/status"),

@@ -179,18 +179,21 @@ function PaymentClaimsReview() {
   }, []);
   usePolling(() => void refresh(), POLL_INTERVAL_MS);
 
-  async function act(claimId: string, action: "approve" | "reject", reference: string) {
+  async function act(claimId: string, action: "approve" | "reject", reference: string, bankVerified: boolean) {
     // Approving is what actually grants access -- a single accidental
     // click here previously had no safety net at all (this is exactly how
     // a claim with no real payment behind it got approved once already).
-    // No amount of code can verify money actually arrived in a real bank
-    // account without a payment-gateway integration (a bigger, separate
-    // piece of work); this is the check that IS possible: force a
-    // deliberate, specific confirmation before the request ever fires.
+    // Approval always requires this explicit click, bank-verified or not
+    // -- automation (bank_alerts.py) only ever marks a claim verified, it
+    // never approves anything itself, per explicit instruction.
     if (action === "approve") {
-      const confirmed = window.confirm(
-        `Approve reference "${reference}"?\n\nOnly click OK if you have personally checked your bank/UPI statement and confirmed this exact amount and reference actually arrived. This grants the client real paid access.`,
-      );
+      const confirmed = bankVerified
+        ? window.confirm(
+            `Approve reference "${reference}"?\n\nA real forwarded bank alert already matched this exact reference and amount. This grants the client real paid access.`,
+          )
+        : window.confirm(
+            `Approve reference "${reference}"?\n\nNo bank alert has matched this yet -- only click OK if you have personally checked your bank/UPI statement and confirmed this exact amount and reference actually arrived. This grants the client real paid access.`,
+          );
       if (!confirmed) return;
     }
     setBusyId(claimId);
@@ -221,13 +224,18 @@ function PaymentClaimsReview() {
                 {claim.amount} via {claim.method === "wire" ? "SWIFT wire" : "UPI"}, ref{" "}
                 <span className="font-mono text-xs">{claim.reference}</span>
                 <span className="text-muted"> ({claim.status})</span>
+                {claim.bank_verified && (
+                  <span className="ml-1.5 rounded-full bg-accent/10 px-1.5 py-0.5 text-xs font-medium text-accent">
+                    ✓ Bank verified
+                  </span>
+                )}
               </span>
               {claim.status === "pending" && (
                 <span className="flex shrink-0 gap-1.5">
                   <button
                     className="rounded-md bg-ink px-2 py-1 text-xs font-medium text-paper disabled:opacity-50"
                     disabled={busyId === claim.id}
-                    onClick={() => void act(claim.id, "approve", claim.reference)}
+                    onClick={() => void act(claim.id, "approve", claim.reference, claim.bank_verified)}
                     type="button"
                   >
                     Approve
@@ -235,7 +243,7 @@ function PaymentClaimsReview() {
                   <button
                     className="rounded-md border border-line px-2 py-1 text-xs text-muted disabled:opacity-50"
                     disabled={busyId === claim.id}
-                    onClick={() => void act(claim.id, "reject", claim.reference)}
+                    onClick={() => void act(claim.id, "reject", claim.reference, claim.bank_verified)}
                     type="button"
                   >
                     Reject

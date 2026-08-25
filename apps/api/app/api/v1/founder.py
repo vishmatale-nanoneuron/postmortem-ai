@@ -78,10 +78,15 @@ class PaymentClaimOut(BaseModel):
     reference: str
     status: str
     created_at: int
+    # True when a real forwarded bank alert already matched this claim's
+    # reference/amount (see bank_alerts.py) -- strong evidence the money
+    # really arrived, shown to the founder as a signal, never a substitute
+    # for the founder's own approve click.
+    bank_verified: bool
 
 
 _CLAIM_SELECT = """SELECT c.id::text, c.user_id::text, u.email, c.method, c.currency,
-                           c.amount_inr AS amount, c.reference, c.status, c.created_at
+                           c.amount_inr AS amount, c.reference, c.status, c.created_at, c.bank_verified
                     FROM payment_claims c JOIN users u ON u.id = c.user_id"""
 
 

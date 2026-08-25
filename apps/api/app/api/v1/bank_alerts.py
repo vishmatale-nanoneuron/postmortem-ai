@@ -2,6 +2,17 @@
 See app/bank_alerts.py for the parsing itself and the honest caveat that
 its patterns aren't yet verified against a real Axis Bank alert.
 
+VERIFIES, DOES NOT APPROVE: a matching real bank alert marks the claim
+bank_verified=true and stops there. It never touches payment_claims.status
+or grants access -- only api/v1/founder.py's approve_payment_claim (a
+founder clicking approve, behind an explicit confirmation dialog on the
+frontend) does that, via activate_manual_subscription(). This is
+deliberate, per explicit instruction: no client gets access without a
+founder approving it, automated verification or not. What this webhook
+buys the founder is not having to manually cross-check their own bank
+statement against every claim -- the dashboard shows which claims already
+have a real matching bank alert behind them.
+
 Not user-authenticated (there's no user session at this point -- an email-
 routing provider or an SMS-forwarding app calls this, not a browser).
 Deliberately accepts several ways of passing the secret and the message
@@ -24,7 +35,6 @@ from pydantic import BaseModel
 from ...bank_alerts import extract_amount, extract_reference, looks_like_a_credit
 from ...database import Database
 from ...dependencies import get_database
-from ...services.billing import activate_manual_subscription
 from ...settings import Settings, get_settings
 
 logger = logging.getLogger("postmortem_ai")
@@ -123,18 +133,23 @@ async def bank_alert_webhook(
         )
         return BankAlertResult(matched=False, reference=reference, reason="Amount does not match the claim")
 
+    # Deliberately does NOT approve or activate anything here -- per
+    # explicit instruction, no client ever gets access without a founder
+    # approving it, automated verification or not. This marks the claim as
+    # bank-verified (strong evidence shown in the founder dashboard) and
+    # stops there; api/v1/founder.py's approve_payment_claim (a founder-
+    # only, explicitly-confirmed click) is the only thing that can still
+    # grant access, via the same activate_manual_subscription() either way
+    # calls.
     now = int(time.time() * 1000)
-    async with database.transaction() as tx:
-        updated = await tx.execute(
-            "UPDATE payment_claims SET status='approved', reviewed_by='auto:bank-alert', reviewed_at=%s "
-            "WHERE reference=%s AND status='pending'",
-            (now, reference),
-        )
-        if not updated:
-            # Lost a race with another concurrent alert/approval for the
-            # same reference -- already handled, not an error.
-            return BankAlertResult(matched=False, reference=reference, reason="Already handled")
-        await activate_manual_subscription(tx, claim["user_id"])
+    updated = await database.execute(
+        "UPDATE payment_claims SET bank_verified=true, bank_verified_at=%s WHERE reference=%s AND status='pending'",
+        (now, reference),
+    )
+    if not updated:
+        # Already approved/rejected, or lost a race with a concurrent
+        # alert for the same reference -- not an error either way.
+        return BankAlertResult(matched=False, reference=reference, reason="Already handled")
 
-    logger.info("bank_alert_auto_approved", extra={"reference": reference})
+    logger.info("bank_alert_verified_awaiting_founder_approval", extra={"reference": reference})
     return BankAlertResult(matched=True, reference=reference, reason=None)
