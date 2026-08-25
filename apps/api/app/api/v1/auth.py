@@ -1,3 +1,4 @@
+import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -14,6 +15,8 @@ from ...security.rate_limit import (
 )
 from ...security.tokens import issue_token
 from ...settings import Settings, get_settings
+
+logger = logging.getLogger("postmortem_ai")
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
@@ -81,9 +84,21 @@ async def register(
     database: Database = Depends(get_database),
     settings: Settings = Depends(get_settings),
 ) -> UserOut:
+    is_founder_email = _is_founder(payload.email, settings.founder_email)
     existing = await database.fetch_one("SELECT id FROM users WHERE email=%s", (payload.email,))
     if existing:
+        if is_founder_email:
+            # The founder email is a fixed, known value -- any repeat
+            # registration attempt against it (yours or otherwise) is worth
+            # a visible log line, not just a silent 409.
+            logger.warning("founder_email_registration_conflict")
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An account with this email already exists")
+
+    if is_founder_email:
+        # First-ever registration of the founder email is the actual
+        # security-sensitive moment: whoever completes it first owns the
+        # founder account, since the email is unique. Always log it.
+        logger.warning("founder_email_registration_succeeded")
 
     now = int(time.time() * 1000)
     row = await database.fetch_one(
@@ -118,6 +133,9 @@ async def login(
     await record_login_attempt(database, payload.email, ip, succeeded)
     if not succeeded:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=LOGIN_FAILURE_DETAIL)
+
+    if _is_founder(row["email"], settings.founder_email):  # type: ignore[index]
+        logger.info("founder_login_succeeded")
 
     token = issue_token(settings.session_secret, row["id"], row["email"])  # type: ignore[index]
     _set_session_cookie(response, settings, token)
