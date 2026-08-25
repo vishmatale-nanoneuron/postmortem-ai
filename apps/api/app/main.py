@@ -69,6 +69,21 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.exception_handler(Exception)(unhandled_exception_handler)
+
+    @app.middleware("http")
+    async def _security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+        # No CSP here deliberately -- /docs (Swagger UI) loads its JS/CSS
+        # from a CDN, so a strict script-src would break the one page on
+        # this API that's actually meant to render in a browser. Everything
+        # else this API returns is JSON, where these headers still matter
+        # (a browser that got tricked into framing/rendering a JSON response
+        # as something else) without the CSP tradeoff.
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
     app.include_router(auth_router)
     app.include_router(billing_router)
     app.include_router(founder_router)
