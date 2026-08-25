@@ -179,6 +179,25 @@ function PaymentClaimsReview() {
   }, []);
   usePolling(() => void refresh(), POLL_INTERVAL_MS);
 
+  async function annotate(claimId: string, reference: string) {
+    // A note only ever appends to payment_claim_events -- it never touches
+    // status or grants/revokes access. For recording something that
+    // happened outside the normal approve/reject flow (e.g. correcting a
+    // past decision) so the audit trail stays complete.
+    const detail = window.prompt(`Add a note to reference "${reference}" (visible in this claim's audit log only):`);
+    if (!detail || !detail.trim()) return;
+    setBusyId(claimId);
+    setError("");
+    try {
+      await founderBilling.annotateClaim(claimId, detail.trim());
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not add note.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function act(claimId: string, action: "approve" | "reject", reference: string, bankVerified: boolean) {
     // Approving is what actually grants access -- a single accidental
     // click here previously had no safety net at all (this is exactly how
@@ -250,6 +269,14 @@ function PaymentClaimsReview() {
                   </button>
                 </span>
               )}
+              <button
+                className="shrink-0 rounded-md border border-line px-2 py-1 text-xs text-muted disabled:opacity-50"
+                disabled={busyId === claim.id}
+                onClick={() => void annotate(claim.id, claim.reference)}
+                type="button"
+              >
+                Note
+              </button>
             </li>
           ))
         )}

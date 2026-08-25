@@ -151,6 +151,11 @@ export const founderBilling = {
     request<PaymentClaim>(`/v1/founder/payment-claims/${claimId}/approve`, { method: "POST" }),
   rejectClaim: (claimId: string) =>
     request<PaymentClaim>(`/v1/founder/payment-claims/${claimId}/reject`, { method: "POST" }),
+  annotateClaim: (claimId: string, detail: string) =>
+    request<{ event_type: string; actor: string; detail: string | null; created_at: number }>(
+      `/v1/founder/payment-claims/${claimId}/annotate`,
+      { method: "POST", body: JSON.stringify({ detail }) },
+    ),
 };
 
 export type Integrations = { slack_connected: boolean; linear_connected: boolean; linear_team_id: string | null };

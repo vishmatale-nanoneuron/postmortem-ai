@@ -101,6 +101,44 @@ async def test_a_rejected_claim_is_also_recorded(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_annotate_appends_a_note_without_touching_status(context) -> None:
+    client, database = context
+    await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+    claim = await client.post("/v1/billing/upi/claim", json={"reference": "ANNOTATELEDGER1"})
+    claim_id = claim.json()["id"]
+    client.cookies.clear()
+
+    await client.post("/v1/auth/register", json={"email": FOUNDER_EMAIL, "password": "correct-horse-battery"})
+    reject = await client.post(f"/v1/founder/payment-claims/{claim_id}/reject")
+    assert reject.status_code == 200, reject.text
+
+    note = await client.post(
+        f"/v1/founder/payment-claims/{claim_id}/annotate",
+        json={"detail": "Correction: reverted, no real payment was ever received."},
+    )
+    assert note.status_code == 200, note.text
+    assert note.json()["actor"] == FOUNDER_EMAIL
+
+    events = await client.get(f"/v1/founder/payment-claims/{claim_id}/events")
+    event_types = [e["event_type"] for e in events.json()]
+    assert event_types == ["created", "rejected", "annotated"]
+
+    row = await database.fetch_one("SELECT status FROM payment_claims WHERE id=%s", (claim_id,))
+    assert row["status"] == "rejected"  # annotate must never change status
+
+
+@pytest.mark.asyncio
+async def test_annotate_requires_founder_auth(context) -> None:
+    client, _ = context
+    await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+    claim = await client.post("/v1/billing/upi/claim", json={"reference": "ANNOTATEAUTHCHK"})
+    claim_id = claim.json()["id"]
+
+    response = await client.post(f"/v1/founder/payment-claims/{claim_id}/annotate", json={"detail": "nope"})
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_events_endpoint_requires_founder_auth(context) -> None:
     client, _ = context
     await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})

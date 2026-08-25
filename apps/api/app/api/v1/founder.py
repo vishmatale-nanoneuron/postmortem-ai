@@ -1,7 +1,7 @@
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ...auth import User, current_founder
 from ...database import Database
@@ -152,6 +152,31 @@ class PaymentClaimEventOut(BaseModel):
     actor: str
     detail: str | None
     created_at: int
+
+
+class AnnotateClaimRequest(BaseModel):
+    detail: str = Field(min_length=1, max_length=2000)
+
+
+@router.post("/payment-claims/{claim_id}/annotate", response_model=PaymentClaimEventOut)
+async def annotate_payment_claim(
+    claim_id: str,
+    payload: AnnotateClaimRequest,
+    database: Database = Depends(get_database),
+    founder: User = Depends(current_founder),
+) -> PaymentClaimEventOut:
+    """Appends a founder-authored note to a claim's ledger without touching
+    payment_claims.status -- for recording something that happened outside
+    the normal approve/reject flow (e.g. a correction to a past decision)
+    so the audit trail stays complete instead of getting a gap. Never
+    mutates status or grants/revokes access itself; use approve/reject for
+    that."""
+    exists = await database.fetch_one("SELECT id FROM payment_claims WHERE id=%s", (claim_id,))
+    if not exists:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    now = int(time.time() * 1000)
+    await record_claim_event(database, claim_id, "annotated", founder.email, payload.detail)
+    return PaymentClaimEventOut(event_type="annotated", actor=founder.email, detail=payload.detail, created_at=now)
 
 
 @router.get("/payment-claims/{claim_id}/events", response_model=list[PaymentClaimEventOut])
