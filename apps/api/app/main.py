@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from .api.v1.auth import router as auth_router
 from .api.v1.billing import router as billing_router
 from .api.v1.founder import router as founder_router
+from .api.v1.integrations import router as integrations_router
 from .api.v1.postmortems import router as postmortems_router
 from .database import Database
 from .mcp_server import MCPBearerAuthMiddleware, build_mcp_server
@@ -71,6 +72,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(billing_router)
     app.include_router(founder_router)
+    app.include_router(integrations_router)
     app.include_router(postmortems_router)
 
     @app.get("/health")

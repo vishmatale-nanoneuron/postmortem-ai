@@ -145,6 +145,14 @@ export const founderBilling = {
     request<PaymentClaim>(`/v1/founder/payment-claims/${claimId}/reject`, { method: "POST" }),
 };
 
+export type Integrations = { slack_connected: boolean; linear_connected: boolean; linear_team_id: string | null };
+
+export const integrations = {
+  get: () => request<Integrations>("/v1/integrations"),
+  update: (payload: { slack_webhook_url?: string; linear_api_key?: string; linear_team_id?: string }) =>
+    request<Integrations>("/v1/integrations", { method: "PUT", body: JSON.stringify(payload) }),
+};
+
 export const api = {
   listIncidents: () => request<Incident[]>("/v1/postmortems/incidents"),
   summary: () => request<DashboardSummary>("/v1/postmortems/summary"),

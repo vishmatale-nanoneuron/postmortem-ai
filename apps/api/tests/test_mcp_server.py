@@ -16,6 +16,7 @@ Production is unaffected -- it runs over real per-request ASGI hosting on
 Vercel, not this in-process test harness's specific teardown ordering.
 """
 
+import json
 import os
 from contextlib import asynccontextmanager
 
@@ -41,6 +42,15 @@ async def context(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
     monkeypatch.setenv("COOKIE_SECURE", "false")
     monkeypatch.setenv("FOUNDER_EMAIL", FOUNDER_EMAIL)
+
+    # RAG's embedding call (draft/publish) is best-effort but would
+    # otherwise attempt a real network call in every test here -- fake it
+    # deterministically, same as test_postmortem_routes.py.
+    async def fake_embed_text(_client, _text):
+        return [0.1] * 768
+
+    monkeypatch.setattr("app.api.v1.postmortems.embed_text", fake_embed_text)
+    monkeypatch.setattr("app.ai.rag.embed_text", fake_embed_text)
 
     from app.database import Database
     from app.main import create_app
@@ -170,6 +180,46 @@ async def test_a_founder_can_create_and_list_their_own_incident_via_mcp(context)
 
         listed = await session.call_tool("list_incidents", {})
     assert "MCP-created incident" in str(listed.content)
+
+
+@pytest.mark.asyncio
+async def test_publish_postmortem_via_mcp_fails_cleanly_not_with_a_missing_argument_error(context) -> None:
+    # Regression test: the publish_postmortem MCP tool wrapper was missing
+    # settings= after postmortems.py's route gained that parameter (found
+    # and fixed twice now, same class of bug as draft_postmortem earlier).
+    # Calling it on an incident with no draft yet should fail with a clean
+    # "no draft to publish" tool error, never a raw Python TypeError about
+    # a missing required argument.
+    app, founder_token, _client_token = context
+    async with mcp_session(app, token=founder_token) as session:
+        created = await session.call_tool(
+            "create_incident", {"title": "No draft yet", "severity": "sev3"}
+        )
+        assert created.isError is not True
+        created_body = json.loads(created.content[0].text)  # type: ignore[union-attr]
+        incident_id = created_body["id"]
+
+        result = await session.call_tool("publish_postmortem", {"incident_id": incident_id})
+    assert result.isError is True
+    text = str(result.content)
+    assert "TypeError" not in text
+    assert "missing" not in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_get_and_update_integrations_via_mcp(context) -> None:
+    app, founder_token, _client_token = context
+    async with mcp_session(app, token=founder_token) as session:
+        initial = await session.call_tool("get_integrations", {})
+        assert initial.isError is not True
+        assert "false" in str(initial.content).lower()  # not connected yet
+
+        updated = await session.call_tool(
+            "update_integrations",
+            {"slack_webhook_url": "https://hooks.example.com/slack", "linear_team_id": "team-1"},
+        )
+        assert updated.isError is not True
+        assert "true" in str(updated.content).lower()  # slack now connected
 
 
 @pytest.mark.asyncio

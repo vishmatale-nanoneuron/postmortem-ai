@@ -405,6 +405,70 @@ async def test_publishing_records_a_named_approver(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_publishing_notifies_slack_and_creates_a_linear_issue_per_action(
+    context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _, database, _ = context
+    slack_calls = []
+    linear_calls = []
+
+    async def fake_notify_slack(webhook_url, message):
+        slack_calls.append((webhook_url, message))
+
+    async def fake_create_linear_issue(api_key, team_id, title, description):
+        linear_calls.append((api_key, team_id, title, description))
+        return {"id": "i1", "identifier": "ENG-1", "url": "https://linear.app/x/issue/ENG-1"}
+
+    monkeypatch.setattr("app.api.v1.postmortems.notify_slack", fake_notify_slack)
+    monkeypatch.setattr("app.api.v1.postmortems.create_linear_issue", fake_create_linear_issue)
+
+    await database.execute(
+        "UPDATE users SET slack_webhook_url=%s, linear_api_key=%s, linear_team_id=%s WHERE email=%s",
+        ("https://hooks.example.com/slack", "real-key", "team-1", CLIENT_EMAIL),
+    )
+
+    await seed_two_entries(client)
+    await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
+    response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/publish")
+    assert response.status_code == 200, response.text
+
+    assert len(slack_calls) == 1
+    assert slack_calls[0][0] == "https://hooks.example.com/slack"
+    assert "Checkout outage" in slack_calls[0][1]
+
+    assert len(linear_calls) == 1  # GOOD_RESPONSE has exactly one action
+    assert linear_calls[0][0] == "real-key"
+    assert linear_calls[0][1] == "team-1"
+    assert linear_calls[0][2] == "Load-test the payment client before release"
+
+
+@pytest.mark.asyncio
+async def test_publishing_does_not_notify_when_no_integrations_are_connected(
+    context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _, _, _ = context
+    calls = []
+
+    async def fake_notify_slack(webhook_url, message):
+        calls.append("slack")
+
+    async def fake_create_linear_issue(api_key, team_id, title, description):
+        calls.append("linear")
+
+    monkeypatch.setattr("app.api.v1.postmortems.notify_slack", fake_notify_slack)
+    monkeypatch.setattr("app.api.v1.postmortems.create_linear_issue", fake_create_linear_issue)
+
+    await seed_two_entries(client)
+    await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
+    response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/publish")
+    assert response.status_code == 200, response.text
+    # notify_slack/create_linear_issue are still CALLED (they're the ones
+    # responsible for no-op'ing when unconfigured) -- this asserts they
+    # were called with no webhook/key, not that they were skipped entirely.
+    assert calls == ["slack", "linear"]
+
+
+@pytest.mark.asyncio
 async def test_redrafting_a_published_postmortem_returns_it_to_draft(context) -> None:
     client, _, _, _ = context
     await seed_two_entries(client)

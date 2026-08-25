@@ -4,12 +4,14 @@ import {
   api,
   billing,
   founderBilling,
+  integrations,
   type BillingStatus,
   type Claim,
   type DashboardSummary,
   type Evidence,
   type FounderSummary,
   type Incident,
+  type Integrations,
   type PaymentClaim,
   type Postmortem,
   type UpiInfo,
@@ -18,7 +20,15 @@ import {
 import { auth, type AuthUser } from "./auth";
 import { Hero, HowItWorks, WhatThisIsnt } from "./landing";
 import { usePolling } from "./use-polling";
-import { evidenceSchema, firstError, incidentSchema, loginSchema, paymentReferenceSchema, registerSchema } from "./validation";
+import {
+  evidenceSchema,
+  firstError,
+  incidentSchema,
+  integrationsSchema,
+  loginSchema,
+  paymentReferenceSchema,
+  registerSchema,
+} from "./validation";
 
 const card = "rounded-lg border border-line bg-white p-4 shadow-sm mb-4";
 const fieldLabel = "block text-xs font-medium text-muted mb-1";
@@ -524,6 +534,113 @@ function ManageBilling() {
   );
 }
 
+function IntegrationsSettings() {
+  const [state, setState] = useState<Integrations | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  function refresh() {
+    integrations.get().then(setState).catch(() => setState(null));
+  }
+
+  useEffect(refresh, []);
+
+  async function save(form: FormData) {
+    const payload: Record<string, string> = {};
+    for (const key of ["slack_webhook_url", "linear_api_key", "linear_team_id"] as const) {
+      const value = String(form.get(key) ?? "").trim();
+      if (value) payload[key] = value;
+    }
+    const validationError = firstError(integrationsSchema, payload);
+    if (validationError) return setError(validationError);
+
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await integrations.update(payload);
+      refresh();
+      setMessage("Saved.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save integrations.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnect(field: "slack_webhook_url" | "linear_api_key") {
+    setBusy(true);
+    try {
+      await integrations.update({ [field]: "" });
+      refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!state) return null;
+
+  return (
+    <section className={card}>
+      <h2 className="mb-1 text-base font-semibold">Integrations</h2>
+      <p className="mb-3 text-xs text-muted">
+        Publishing a postmortem notifies Slack and creates a Linear ticket per action item, when connected.
+      </p>
+      <form action={save} className="space-y-1">
+        <div className="flex items-center justify-between">
+          <label className={fieldLabel}>Slack incoming webhook URL</label>
+          {state.slack_connected && (
+            <span className="text-xs text-accent">
+              Connected --{" "}
+              <button
+                className="underline underline-offset-2"
+                disabled={busy}
+                onClick={() => void disconnect("slack_webhook_url")}
+                type="button"
+              >
+                disconnect
+              </button>
+            </span>
+          )}
+        </div>
+        <input
+          className={fieldInput}
+          name="slack_webhook_url"
+          placeholder={state.slack_connected ? "•••• (connected)" : "https://hooks.slack.com/services/..."}
+        />
+
+        <div className="flex items-center justify-between">
+          <label className={fieldLabel}>Linear personal API key</label>
+          {state.linear_connected && (
+            <span className="text-xs text-accent">
+              Connected --{" "}
+              <button
+                className="underline underline-offset-2"
+                disabled={busy}
+                onClick={() => void disconnect("linear_api_key")}
+                type="button"
+              >
+                disconnect
+              </button>
+            </span>
+          )}
+        </div>
+        <input className={fieldInput} name="linear_api_key" placeholder={state.linear_connected ? "•••• (connected)" : "lin_api_..."} />
+
+        <label className={fieldLabel}>Linear team ID</label>
+        <input className={fieldInput} name="linear_team_id" defaultValue={state.linear_team_id ?? ""} placeholder="team-id" />
+
+        <button className={secondaryButton} disabled={busy} type="submit">
+          Save
+        </button>
+      </form>
+      {message && <p className="mt-2 text-sm text-accent">{message}</p>}
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    </section>
+  );
+}
+
 function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -651,6 +768,7 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
       <p className="mb-6 text-sm text-muted">Evidence-grounded incident postmortem drafting.</p>
 
       {!isFounder && <ManageBilling />}
+      <IntegrationsSettings />
 
       {summary && (
         <section className={card}>

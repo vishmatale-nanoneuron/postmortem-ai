@@ -20,6 +20,8 @@ from ...alerting import send_alert
 from ...auth import User, current_user, require_active_subscription
 from ...database import Database
 from ...dependencies import get_database
+from ...integrations.linear import create_linear_issue
+from ...integrations.slack import notify_slack
 from ...security.rate_limit import is_action_rate_limited, record_action
 from ...services.postmortem import (
     PROMPT_VERSION,
@@ -455,7 +457,7 @@ async def publish_postmortem(
     user: User = Depends(require_active_subscription),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
-    await require_incident(database, incident_id, user.email)
+    incident = await require_incident(database, incident_id, user.email)
     now = int(time.time() * 1000)
     updated = await database.execute(
         """UPDATE incident_postmortems
@@ -475,6 +477,30 @@ async def publish_postmortem(
         await embed_and_store_postmortem(database, settings.gemini_api_key, str(published["id"]), text)
     except Exception:
         logger.warning("postmortem_embedding_failed", extra={"incident_id": incident_id}, exc_info=True)
+
+    # Client integrations (Slack notify, Linear ticket-per-action) -- also
+    # best-effort, also never blocks the publish response. Each account
+    # connects its own workspace; a client with neither configured pays no
+    # extra cost here (both calls are no-ops when unconfigured).
+    try:
+        integration_row = await database.fetch_one(
+            "SELECT slack_webhook_url, linear_api_key, linear_team_id FROM users WHERE id=%s", (user.id,)
+        )
+        integration_row = integration_row or {}
+        await notify_slack(
+            integration_row.get("slack_webhook_url"),
+            f"Postmortem published: *{incident['title']}* -- {published.get('summary')}",
+        )
+        for action in published.get("actions", []):
+            await create_linear_issue(
+                integration_row.get("linear_api_key"),
+                integration_row.get("linear_team_id"),
+                title=action["title"],
+                description=f"{action['rationale']}\n\nFrom postmortem: {incident['title']}",
+            )
+    except Exception:
+        logger.warning("postmortem_publish_integrations_failed", extra={"incident_id": incident_id}, exc_info=True)
+
     return published
 
 

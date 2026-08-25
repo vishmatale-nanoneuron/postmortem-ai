@@ -37,6 +37,18 @@ export const paymentReferenceSchema = z.object({
   reference: z.string().min(4).max(200),
 });
 
+// Mirrors IntegrationsUpdate in apps/api/app/api/v1/integrations.py.
+// Empty string is valid (it clears the field); the URL/key format itself
+// isn't otherwise validated client-side -- a malformed webhook URL or key
+// just fails harmlessly server-side (best-effort delivery, never blocks
+// publishing), so there's no correctness reason to duplicate stricter
+// format rules here.
+export const integrationsSchema = z.object({
+  slack_webhook_url: z.string().max(500).optional(),
+  linear_api_key: z.string().max(200).optional(),
+  linear_team_id: z.string().max(100).optional(),
+});
+
 // Returns the first validation error message, or null if valid -- the
 // shape every form on this page actually needs (one message to show the
 // user), rather than making each call site deal with Zod's full issue

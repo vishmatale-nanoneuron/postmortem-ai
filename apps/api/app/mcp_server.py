@@ -29,6 +29,7 @@ from .ai.embeddings import embed_text
 from .ai.model_router import create_model_provider
 from .ai.rag import find_similar_postmortems, get_embedding_client
 from .api.v1 import founder as founder_routes
+from .api.v1 import integrations as integrations_routes
 from .api.v1 import postmortems as postmortem_routes
 from .auth import User, _is_founder
 from .database import Database
@@ -303,9 +304,41 @@ def build_mcp_server(get_database: Callable[[], Database], settings: Settings) -
     @_audited("publish_postmortem")
     async def publish_postmortem(incident_id: str) -> dict:
         """Publish the incident's current draft postmortem, recording the
-        caller as the named human approver."""
+        caller as the named human approver. Also notifies Slack and
+        creates a Linear ticket per action item, if connected (see
+        get_integrations/update_integrations)."""
         database = get_database()
         user = require_mcp_active_subscription()
-        return await postmortem_routes.publish_postmortem(incident_id, database=database, user=user)
+        return await postmortem_routes.publish_postmortem(
+            incident_id, database=database, user=user, settings=settings
+        )
+
+    @mcp.tool()
+    @_audited("get_integrations")
+    async def get_integrations() -> dict:
+        """The caller's own Slack/Linear connection status (never returns
+        the raw webhook URL or API key -- connected/not-connected only)."""
+        database = get_database()
+        user = current_mcp_user()
+        result = await integrations_routes.get_integrations(database=database, user=user)
+        return result.model_dump()
+
+    @mcp.tool()
+    @_audited("update_integrations")
+    async def update_integrations(
+        slack_webhook_url: str | None = None,
+        linear_api_key: str | None = None,
+        linear_team_id: str | None = None,
+    ) -> dict:
+        """Connect or update the caller's own Slack webhook URL and/or
+        Linear API key/team ID. Omit a field to leave it unchanged; pass
+        an empty string to disconnect it."""
+        database = get_database()
+        user = current_mcp_user()
+        payload = integrations_routes.IntegrationsUpdate(
+            slack_webhook_url=slack_webhook_url, linear_api_key=linear_api_key, linear_team_id=linear_team_id
+        )
+        result = await integrations_routes.update_integrations(payload, database=database, user=user)
+        return result.model_dump()
 
     return mcp
