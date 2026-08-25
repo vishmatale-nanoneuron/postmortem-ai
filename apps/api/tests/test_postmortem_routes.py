@@ -12,6 +12,7 @@ import time
 import httpx
 import pytest
 import pytest_asyncio
+from app.api.v1.postmortems import slugify
 from app.services.postmortem import PROMPT_VERSION
 from httpx import ASGITransport, AsyncClient
 
@@ -404,6 +405,26 @@ async def test_publishing_records_a_named_approver(context) -> None:
     assert body["approved_at"] is not None
 
 
+@pytest.mark.parametrize(
+    "title",
+    [
+        "",
+        "     ",
+        "!!!$%^&*()",
+        "日本語 🔥🔥🔥",
+        "A" * 500,
+        "'; DROP TABLE users; --",
+        "<script>alert(1)</script>",
+        "---Title---",
+    ],
+    ids=["empty", "whitespace-only", "symbols-only", "unicode-emoji-only", "very-long", "sql-shaped", "html-shaped", "strippable-dashes"],
+)
+def test_slugify_never_produces_an_empty_or_unsafe_slug(title: str) -> None:
+    slug = slugify(title, "inc-1755000000000")
+    assert slug
+    assert not any(char in slug for char in ("/", "?", "&", "<", ">", '"', "'"))
+
+
 @pytest.mark.asyncio
 async def test_a_draft_postmortem_cannot_be_made_public(context) -> None:
     client, _, _, _ = context
@@ -463,6 +484,12 @@ async def test_public_postmortem_is_readable_unauthenticated_private_is_not(cont
         body = public_response.json()
         assert body["incident_title"] == "Checkout outage"
         assert "client_email" not in body
+        # Stronger than a key-name check: the account's real email must
+        # not appear ANYWHERE in the public response, under any key name
+        # (e.g. approved_by, which is a real email address and is
+        # deliberately excluded from PublicPostmortemOut).
+        assert CLIENT_EMAIL not in public_response.text
+        assert "approved_by" not in body
         assert "id" not in body  # no internal ids leaked
 
         listing = await anon.get("/v1/postmortems/public")
@@ -582,6 +609,16 @@ async def test_a_different_user_cannot_see_or_act_on_this_incident(context) -> N
 
         assert (
             await other.patch(f"/v1/postmortems/incidents/{INCIDENT}/status", json={"status": "resolved"})
+        ).status_code == 404
+
+        # Adversarial check: a different user must not be able to make
+        # SOMEONE ELSE's postmortem public -- update_public_visibility
+        # goes through require_incident exactly like every other route
+        # here, but this is the one route that, if it had a scoping bug,
+        # would leak private data to the entire internet, not just to one
+        # other authenticated account. Worth its own explicit assertion.
+        assert (
+            await other.patch(f"/v1/postmortems/incidents/{INCIDENT}/public", json={"is_public": True})
         ).status_code == 404
 
 
