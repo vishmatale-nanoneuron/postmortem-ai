@@ -157,3 +157,20 @@ async def me(user: User = Depends(current_user)) -> UserOut:
         subscription_status=user.subscription_status,
         has_active_subscription=user.has_active_subscription,
     )
+
+
+@router.get("/session-token")
+async def session_token(request: Request, _user: User = Depends(current_user)) -> dict[str, str]:
+    """Returns the caller's own already-issued session JWT verbatim (not a
+    new one) -- exists solely so apps/web/app/api/mcp/route.ts (a
+    same-origin Next.js route on the FRONTEND's own domain) can mirror it
+    into a cookie on ITS OWN origin. This is necessary, not incidental:
+    session_token is set by THIS backend's domain
+    (postmortem-ai-api.vercel.app); browsers never send an
+    origin-scoped cookie cross-origin to www.nanoneuron.ai, so the
+    frontend's server genuinely has no other way to learn it. Requires
+    current_user (i.e. the caller must already hold a valid cookie) --
+    this route mirrors an existing session, it never grants a new one."""
+    raw = request.cookies.get(SESSION_COOKIE_NAME)
+    assert raw is not None  # current_user already required this cookie to resolve a user
+    return {"token": raw}

@@ -21,11 +21,43 @@ async function authRequest<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+// Mirrors this browser's backend session into a same-origin cookie the
+// frontend's own /api/mcp route can read (cookies are origin-scoped;
+// the backend's session_token cookie is never sent to this frontend's
+// domain on its own). Best-effort and silent on failure -- MCP access is
+// an added capability, not something the rest of the app depends on, so
+// a failure here must never surface as a login/registration error.
+async function mintMcpSession(): Promise<void> {
+  try {
+    const { token } = await authRequest<{ token: string }>("/v1/auth/session-token");
+    await fetch("/api/session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+  } catch {
+    // Non-fatal -- see comment above.
+  }
+}
+
+async function withMintedMcpSession(user: AuthUser): Promise<AuthUser> {
+  await mintMcpSession();
+  return user;
+}
+
 export const auth = {
-  me: () => authRequest<AuthUser>("/v1/auth/me"),
+  me: () => authRequest<AuthUser>("/v1/auth/me").then(withMintedMcpSession),
   register: (email: string, password: string) =>
-    authRequest<AuthUser>("/v1/auth/register", { method: "POST", body: JSON.stringify({ email, password }) }),
+    authRequest<AuthUser>("/v1/auth/register", { method: "POST", body: JSON.stringify({ email, password }) }).then(
+      withMintedMcpSession,
+    ),
   login: (email: string, password: string) =>
-    authRequest<AuthUser>("/v1/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
-  logout: () => authRequest<{ ok: boolean }>("/v1/auth/logout", { method: "POST" }),
+    authRequest<AuthUser>("/v1/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }).then(
+      withMintedMcpSession,
+    ),
+  logout: async () => {
+    const result = await authRequest<{ ok: boolean }>("/v1/auth/logout", { method: "POST" });
+    await fetch("/api/session", { method: "DELETE" }).catch(() => {});
+    return result;
+  },
 };
