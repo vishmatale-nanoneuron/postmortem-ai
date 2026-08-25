@@ -73,6 +73,34 @@ async def test_wire_info_reflects_configured_beneficiary_and_correspondent_detai
 
 
 @pytest.mark.asyncio
+async def test_wire_info_is_not_reachable_without_signing_in(context) -> None:
+    # Regression for a real bug: this route previously had no auth
+    # dependency at all -- the real bank account number and SWIFT code
+    # were fetchable by anyone on the internet with a single
+    # unauthenticated GET.
+    client, _, _ = context
+    response = await client.get("/v1/billing/wire/info")
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_wire_pricing_is_public_and_never_includes_real_bank_details(context) -> None:
+    # The public /pricing page needs prices to render without requiring a
+    # login -- this is the safe, unauthenticated shape: currency/amount
+    # only, no account number, no SWIFT code, no correspondent details.
+    client, _, _ = context
+    response = await client.get("/v1/billing/wire/pricing")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["configured"] is True
+    usd = next(c for c in body["currencies"] if c["currency"] == "USD")
+    assert usd == {"currency": "USD", "amount": 15}
+    assert "account_number" not in body
+    assert "swift_code" not in body
+    assert "correspondent_swift" not in usd
+
+
+@pytest.mark.asyncio
 async def test_a_wire_claim_requires_a_supported_currency(context) -> None:
     client, _, _ = context
     await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})

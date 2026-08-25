@@ -224,8 +224,31 @@ async def _insert_claim(
     return ClaimOut(**row)
 
 
+class UpiPricingOut(BaseModel):
+    amount_inr: int
+    configured: bool
+
+
+@router.get("/upi/pricing", response_model=UpiPricingOut)
+async def upi_pricing(settings: Settings = Depends(get_settings)) -> UpiPricingOut:
+    """Public, unauthenticated -- price only, no real UPI ID. Backs the
+    public /pricing page, which never needs the actual account to render a
+    price."""
+    return UpiPricingOut(amount_inr=settings.subscription_price_inr, configured=bool(settings.founder_upi_id))
+
+
 @router.get("/upi/info", response_model=UpiInfoOut)
-async def upi_info(settings: Settings = Depends(get_settings)) -> UpiInfoOut:
+async def upi_info(
+    settings: Settings = Depends(get_settings),
+    _user: User = Depends(current_user),
+) -> UpiInfoOut:
+    """Auth required -- this is the real UPI ID and payee name to pay real
+    money to. Previously had no auth dependency at all: anyone on the
+    internet could fetch the real account details with a single
+    unauthenticated GET. Found via direct report, confirmed by reading the
+    route (no Depends(current_user) existed here), fixed by requiring a
+    signed-in caller -- the public price-only shape moved to /upi/pricing
+    above so the public pricing page keeps working without it."""
     return UpiInfoOut(
         upi_id=settings.founder_upi_id,
         payee_name=settings.founder_upi_payee_name,
@@ -321,8 +344,38 @@ def _wire_currency_details(settings: Settings) -> list[WireCurrencyDetails]:
     ]
 
 
+class CurrencyPricingOut(BaseModel):
+    currency: str
+    amount: int
+
+
+class WirePricingOut(BaseModel):
+    configured: bool
+    currencies: list[CurrencyPricingOut]
+
+
+@router.get("/wire/pricing", response_model=WirePricingOut)
+async def wire_pricing(settings: Settings = Depends(get_settings)) -> WirePricingOut:
+    """Public, unauthenticated -- prices only, no real bank account/SWIFT
+    details. Backs the public /pricing page."""
+    return WirePricingOut(
+        configured=bool(settings.founder_bank_account_number),
+        currencies=[CurrencyPricingOut(currency=c.currency, amount=c.amount) for c in _wire_currency_details(settings)],
+    )
+
+
 @router.get("/wire/info", response_model=WireInfoOut)
-async def wire_info(settings: Settings = Depends(get_settings)) -> WireInfoOut:
+async def wire_info(
+    settings: Settings = Depends(get_settings),
+    _user: User = Depends(current_user),
+) -> WireInfoOut:
+    """Auth required -- this is the real bank account number, SWIFT code,
+    and correspondent-bank routing details to wire real money to.
+    Previously had no auth dependency at all: anyone on the internet could
+    fetch the real account details with a single unauthenticated GET.
+    Found via direct report, confirmed by reading the route, fixed by
+    requiring a signed-in caller -- the public price-only shape moved to
+    /wire/pricing above so the public pricing page keeps working."""
     return WireInfoOut(
         account_name=settings.founder_bank_account_name,
         account_number=settings.founder_bank_account_number,

@@ -64,6 +64,30 @@ async def test_upi_info_reflects_configured_settings(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_upi_info_is_not_reachable_without_signing_in(context) -> None:
+    # Regression for a real bug: this route previously had no auth
+    # dependency at all -- the real UPI ID was fetchable by anyone on the
+    # internet with a single unauthenticated GET.
+    client, _, _ = context
+    response = await client.get("/v1/billing/upi/info")
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_upi_pricing_is_public_and_never_includes_the_real_upi_id(context) -> None:
+    # The public /pricing page needs a price to render without requiring a
+    # login -- this is the safe, unauthenticated shape for that: no upi_id,
+    # no payee_name.
+    client, _, _ = context
+    response = await client.get("/v1/billing/upi/pricing")
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {"amount_inr": 999, "configured": True}
+    assert "upi_id" not in body
+    assert "payee_name" not in body
+
+
+@pytest.mark.asyncio
 async def test_submitting_a_claim_does_not_itself_grant_access(context) -> None:
     client, _, _ = context
     await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})

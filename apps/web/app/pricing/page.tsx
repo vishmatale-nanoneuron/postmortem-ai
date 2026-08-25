@@ -28,7 +28,10 @@ async function fetchJson<T>(path: string): Promise<T | null> {
 const card = "rounded-lg border border-line bg-white p-6 shadow-sm";
 
 export default async function PricingPage() {
-  const [upi, wire] = await Promise.all([fetchJson<UpiInfo>("/v1/billing/upi/info"), fetchJson<WireInfo>("/v1/billing/wire/info")]);
+  const [upi, wire] = await Promise.all([
+    fetchJson<UpiInfo>("/v1/billing/upi/pricing"),
+    fetchJson<WireInfo>("/v1/billing/wire/pricing"),
+  ]);
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-10">
