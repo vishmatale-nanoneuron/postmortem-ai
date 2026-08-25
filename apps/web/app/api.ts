@@ -93,9 +93,35 @@ export type BillingStatus = {
 
 export type UpiInfo = { upi_id: string; payee_name: string; amount_inr: number; configured: boolean };
 
-export type UpiClaim = { id: string; amount_inr: number; reference: string; status: string; created_at: number };
+export type WireCurrency = {
+  currency: string;
+  amount: number;
+  correspondent_bank: string;
+  correspondent_swift: string;
+  nostro_account: string;
+  routing_reference: string;
+};
 
-export type PaymentClaim = UpiClaim & { user_id: string; email: string };
+export type WireInfo = {
+  account_name: string;
+  account_number: string;
+  bank_name: string;
+  swift_code: string;
+  configured: boolean;
+  currencies: WireCurrency[];
+};
+
+export type Claim = {
+  id: string;
+  method: string;
+  currency: string;
+  amount: number;
+  reference: string;
+  status: string;
+  created_at: number;
+};
+
+export type PaymentClaim = Claim & { user_id: string; email: string };
 
 export const billing = {
   status: () => request<BillingStatus>("/v1/billing/status"),
@@ -103,8 +129,12 @@ export const billing = {
   portal: () => request<{ url: string }>("/v1/billing/portal", { method: "POST" }),
   upiInfo: () => request<UpiInfo>("/v1/billing/upi/info"),
   submitUpiClaim: (reference: string) =>
-    request<UpiClaim>("/v1/billing/upi/claim", { method: "POST", body: JSON.stringify({ reference }) }),
-  myUpiClaims: () => request<UpiClaim[]>("/v1/billing/upi/claims"),
+    request<Claim>("/v1/billing/upi/claim", { method: "POST", body: JSON.stringify({ reference }) }),
+  myUpiClaims: () => request<Claim[]>("/v1/billing/upi/claims"),
+  wireInfo: () => request<WireInfo>("/v1/billing/wire/info"),
+  submitWireClaim: (currency: string, reference: string) =>
+    request<Claim>("/v1/billing/wire/claim", { method: "POST", body: JSON.stringify({ currency, reference }) }),
+  myWireClaims: () => request<Claim[]>("/v1/billing/wire/claims"),
 };
 
 export const founderBilling = {

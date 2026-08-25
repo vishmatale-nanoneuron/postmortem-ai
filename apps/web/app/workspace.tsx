@@ -5,14 +5,15 @@ import {
   billing,
   founderBilling,
   type BillingStatus,
+  type Claim,
   type DashboardSummary,
   type Evidence,
   type FounderSummary,
   type Incident,
   type PaymentClaim,
   type Postmortem,
-  type UpiClaim,
   type UpiInfo,
+  type WireInfo,
 } from "./api";
 import { auth, type AuthUser } from "./auth";
 import { Hero, HowItWorks, WhatThisIsnt } from "./landing";
@@ -26,6 +27,11 @@ const primaryButton =
   "rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper transition hover:bg-ink/90 disabled:cursor-not-allowed disabled:opacity-50";
 const secondaryButton =
   "rounded-md border border-line px-4 py-2 text-sm font-medium text-ink transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-50";
+
+const CURRENCY_SYMBOLS: Record<string, string> = { INR: "₹", USD: "$", GBP: "£", EUR: "€" };
+function currencySymbol(currency: string): string {
+  return CURRENCY_SYMBOLS[currency] ?? `${currency} `;
+}
 
 // Auth gate: defaults to the logged-out landing/sign-in view, since that's
 // what Next.js actually renders server-side for a "use client" component's
@@ -172,7 +178,7 @@ function PaymentClaimsReview() {
 
   return (
     <>
-      <h3 className="mt-4 mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">UPI payment claims</h3>
+      <h3 className="mt-4 mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">Payment claims</h3>
       <ul className="space-y-1.5 text-sm">
         {claims.length === 0 ? (
           <li className="text-muted">None yet.</li>
@@ -180,7 +186,9 @@ function PaymentClaimsReview() {
           claims.map((claim) => (
             <li key={claim.id} className="flex items-center justify-between gap-2 rounded-md bg-paper px-3 py-2">
               <span className="min-w-0 flex-1">
-                <span className="font-medium">{claim.email}</span> -- ₹{claim.amount_inr}, ref{" "}
+                <span className="font-medium">{claim.email}</span> --{" "}
+                {currencySymbol(claim.currency)}
+                {claim.amount} via {claim.method === "wire" ? "SWIFT wire" : "UPI"}, ref{" "}
                 <span className="font-mono text-xs">{claim.reference}</span>
                 <span className="text-muted"> ({claim.status})</span>
               </span>
@@ -276,8 +284,39 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
 }
 
 function SubscribeGate() {
+  const [tab, setTab] = useState<"upi" | "wire">("upi");
+
+  return (
+    <section className={card}>
+      <h2 className="mb-2 text-base font-semibold">Subscribe to use PostMortem AI</h2>
+      <p className="mb-3 text-sm text-muted">
+        An active subscription is required to create incidents, record evidence, draft, and publish postmortems --
+        viewing your existing history stays available either way.
+      </p>
+      <div className="mb-3 flex gap-1.5">
+        <button
+          className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === "upi" ? "bg-ink text-paper" : "border border-line text-muted"}`}
+          onClick={() => setTab("upi")}
+          type="button"
+        >
+          UPI (India)
+        </button>
+        <button
+          className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === "wire" ? "bg-ink text-paper" : "border border-line text-muted"}`}
+          onClick={() => setTab("wire")}
+          type="button"
+        >
+          International wire (SWIFT)
+        </button>
+      </div>
+      {tab === "upi" ? <UpiPayment /> : <WirePayment />}
+    </section>
+  );
+}
+
+function UpiPayment() {
   const [upi, setUpi] = useState<UpiInfo | null>(null);
-  const [claims, setClaims] = useState<UpiClaim[]>([]);
+  const [claims, setClaims] = useState<Claim[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -309,51 +348,148 @@ function SubscribeGate() {
 
   const latestPending = claims.find((c) => c.status === "pending");
 
+  if (!upi?.configured) return <p className="text-sm text-muted">UPI payment is not yet configured.</p>;
+
   return (
-    <section className={card}>
-      <h2 className="mb-2 text-base font-semibold">Subscribe to use PostMortem AI</h2>
-      {upi?.configured ? (
-        <>
-          <p className="mb-3 text-sm text-muted">
-            Pay ₹{upi.amount_inr}/month via UPI to <span className="font-medium text-ink">{upi.upi_id}</span> (
-            {upi.payee_name}), then submit the transaction reference below. An active subscription is required to
-            create incidents, record evidence, draft, and publish postmortems -- viewing your existing history
-            stays available either way.
-          </p>
-          <p className="mb-3 text-xs text-muted">
-            UPI requires an Indian bank account -- it can&apos;t accept payment from outside India. International
-            clients: email the founder directly for now.
-          </p>
-          {latestPending ? (
-            <p className="rounded-md bg-paper px-3 py-2 text-sm text-muted">
-              Reference <span className="font-medium text-ink">{latestPending.reference}</span> submitted, awaiting
-              review.
-            </p>
-          ) : (
-            <form action={submitReference}>
-              <label className={fieldLabel}>UPI transaction reference / UTR number</label>
-              <input className={fieldInput} name="reference" placeholder="e.g. 123456789012" required />
-              <button className={primaryButton} disabled={busy} type="submit">
-                {busy ? "Submitting..." : "I've paid -- submit reference"}
-              </button>
-            </form>
-          )}
-          {message && <p className="mt-3 text-sm text-accent">{message}</p>}
-          {claims.some((c) => c.status === "rejected") && !latestPending && (
-            <p className="mt-3 text-sm text-red-600">
-              A previous reference was rejected -- double-check the amount and UPI ID, then resubmit.
-            </p>
-          )}
-        </>
+    <>
+      <p className="mb-3 text-sm text-muted">
+        Pay ₹{upi.amount_inr}/month via UPI to <span className="font-medium text-ink">{upi.upi_id}</span> (
+        {upi.payee_name}), then submit the transaction reference below.
+      </p>
+      <p className="mb-3 text-xs text-muted">
+        UPI requires an Indian bank account -- it can&apos;t accept payment from outside India. Use the
+        international wire tab instead if you&apos;re paying from outside India.
+      </p>
+      {latestPending ? (
+        <p className="rounded-md bg-paper px-3 py-2 text-sm text-muted">
+          Reference <span className="font-medium text-ink">{latestPending.reference}</span> submitted, awaiting
+          review.
+        </p>
       ) : (
-        <p className="text-sm text-muted">Payment is not yet configured. Check back soon.</p>
+        <form action={submitReference}>
+          <label className={fieldLabel}>UPI transaction reference / UTR number</label>
+          <input className={fieldInput} name="reference" placeholder="e.g. 123456789012" required />
+          <button className={primaryButton} disabled={busy} type="submit">
+            {busy ? "Submitting..." : "I've paid -- submit reference"}
+          </button>
+        </form>
+      )}
+      {message && <p className="mt-3 text-sm text-accent">{message}</p>}
+      {claims.some((c) => c.status === "rejected") && !latestPending && (
+        <p className="mt-3 text-sm text-red-600">
+          A previous reference was rejected -- double-check the amount and UPI ID, then resubmit.
+        </p>
       )}
       {error && (
         <p role="status" className="mt-3 text-sm text-red-600">
           {error}
         </p>
       )}
-    </section>
+    </>
+  );
+}
+
+function WirePayment() {
+  const [wire, setWire] = useState<WireInfo | null>(null);
+  const [claims, setClaims] = useState<Claim[]>([]);
+  const [currency, setCurrency] = useState("USD");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function refresh() {
+    setWire(await billing.wireInfo());
+    setClaims(await billing.myWireClaims());
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  async function submitReference(form: FormData) {
+    const reference = String(form.get("reference") || "").trim();
+    if (reference.length < 4) return setError("Enter the SWIFT wire transaction reference.");
+    setBusy(true);
+    setError("");
+    try {
+      await billing.submitWireClaim(currency, reference);
+      await refresh();
+      setMessage("Submitted. The founder will review and activate your account shortly.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not submit payment reference.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const latestPending = claims.find((c) => c.status === "pending");
+
+  if (!wire?.configured) return <p className="text-sm text-muted">Wire payment is not yet configured.</p>;
+
+  const active = wire.currencies.find((c) => c.currency === currency) ?? wire.currencies[0];
+
+  return (
+    <>
+      <div className="mb-3 flex gap-1.5">
+        {wire.currencies.map((c) => (
+          <button
+            key={c.currency}
+            className={`rounded-md px-2.5 py-1 text-xs font-medium ${currency === c.currency ? "bg-accent/10 text-accent" : "border border-line text-muted"}`}
+            onClick={() => setCurrency(c.currency)}
+            type="button"
+          >
+            {c.currency}
+          </button>
+        ))}
+      </div>
+      <p className="mb-2 text-sm text-muted">
+        Pay {currencySymbol(active.currency)}
+        {active.amount}/month via SWIFT wire in {active.currency}, then submit the transaction reference below.
+      </p>
+      <dl className="mb-3 grid grid-cols-2 gap-x-3 gap-y-1 rounded-md bg-paper px-3 py-2 text-xs">
+        <dt className="text-muted">Beneficiary name</dt>
+        <dd className="font-medium text-ink">{wire.account_name}</dd>
+        <dt className="text-muted">Account number</dt>
+        <dd className="font-mono text-ink">{wire.account_number}</dd>
+        <dt className="text-muted">Bank</dt>
+        <dd className="text-ink">{wire.bank_name}</dd>
+        <dt className="text-muted">Beneficiary SWIFT</dt>
+        <dd className="font-mono text-ink">{wire.swift_code}</dd>
+        <dt className="text-muted">Correspondent bank</dt>
+        <dd className="text-ink">{active.correspondent_bank}</dd>
+        <dt className="text-muted">Correspondent SWIFT</dt>
+        <dd className="font-mono text-ink">{active.correspondent_swift}</dd>
+        <dt className="text-muted">Nostro account</dt>
+        <dd className="font-mono text-ink">{active.nostro_account}</dd>
+        <dt className="text-muted">{active.currency === "USD" ? "ABA" : "IBAN"}</dt>
+        <dd className="font-mono text-ink">{active.routing_reference}</dd>
+      </dl>
+      {latestPending ? (
+        <p className="rounded-md bg-paper px-3 py-2 text-sm text-muted">
+          Reference <span className="font-medium text-ink">{latestPending.reference}</span> submitted, awaiting
+          review.
+        </p>
+      ) : (
+        <form action={submitReference}>
+          <label className={fieldLabel}>Wire transaction reference</label>
+          <input className={fieldInput} name="reference" placeholder="e.g. SWIFT MT103 reference" required />
+          <button className={primaryButton} disabled={busy} type="submit">
+            {busy ? "Submitting..." : "I've paid -- submit reference"}
+          </button>
+        </form>
+      )}
+      {message && <p className="mt-3 text-sm text-accent">{message}</p>}
+      {claims.some((c) => c.status === "rejected") && !latestPending && (
+        <p className="mt-3 text-sm text-red-600">
+          A previous reference was rejected -- double-check the amount and account details, then resubmit.
+        </p>
+      )}
+      {error && (
+        <p role="status" className="mt-3 text-sm text-red-600">
+          {error}
+        </p>
+      )}
+    </>
   );
 }
 

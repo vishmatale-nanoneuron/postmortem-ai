@@ -200,12 +200,28 @@ class UpiClaimIn(BaseModel):
     reference: str = Field(min_length=4, max_length=200)
 
 
-class UpiClaimOut(BaseModel):
+class ClaimOut(BaseModel):
     id: str
-    amount_inr: int
+    method: str
+    currency: str
+    amount: int
     reference: str
     status: str
     created_at: int
+
+
+async def _insert_claim(
+    database: Database, user: User, method: str, currency: str, amount: int, reference: str
+) -> ClaimOut:
+    now = int(time.time() * 1000)
+    row = await database.fetch_one(
+        """INSERT INTO payment_claims (user_id, amount_inr, currency, method, reference, status, created_at)
+           VALUES (%s, %s, %s, %s, %s, 'pending', %s)
+           RETURNING id::text, method, currency, amount_inr AS amount, reference, status, created_at""",
+        (user.id, amount, currency, method, reference, now),
+    )
+    assert row is not None
+    return ClaimOut(**row)
 
 
 @router.get("/upi/info", response_model=UpiInfoOut)
@@ -218,34 +234,126 @@ async def upi_info(settings: Settings = Depends(get_settings)) -> UpiInfoOut:
     )
 
 
-@router.post("/upi/claim", status_code=status.HTTP_201_CREATED, response_model=UpiClaimOut)
+@router.post("/upi/claim", status_code=status.HTTP_201_CREATED, response_model=ClaimOut)
 async def submit_upi_claim(
     payload: UpiClaimIn,
     database: Database = Depends(get_database),
     settings: Settings = Depends(get_settings),
     user: User = Depends(current_user),
-) -> UpiClaimOut:
+) -> ClaimOut:
     if not settings.founder_upi_id:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="UPI payment is not configured")
-    now = int(time.time() * 1000)
-    row = await database.fetch_one(
-        """INSERT INTO payment_claims (user_id, amount_inr, reference, status, created_at)
-           VALUES (%s, %s, %s, 'pending', %s)
-           RETURNING id::text, amount_inr, reference, status, created_at""",
-        (user.id, settings.subscription_price_inr, payload.reference, now),
-    )
-    assert row is not None
-    return UpiClaimOut(**row)
+    return await _insert_claim(database, user, "upi", "INR", settings.subscription_price_inr, payload.reference)
 
 
-@router.get("/upi/claims", response_model=list[UpiClaimOut])
+@router.get("/upi/claims", response_model=list[ClaimOut])
 async def my_upi_claims(
     database: Database = Depends(get_database),
     user: User = Depends(current_user),
-) -> list[UpiClaimOut]:
+) -> list[ClaimOut]:
     rows = await database.fetch_all(
-        """SELECT id::text, amount_inr, reference, status, created_at
-           FROM payment_claims WHERE user_id=%s ORDER BY created_at DESC""",
+        """SELECT id::text, method, currency, amount_inr AS amount, reference, status, created_at
+           FROM payment_claims WHERE user_id=%s AND method='upi' ORDER BY created_at DESC""",
         (user.id,),
     )
-    return [UpiClaimOut(**row) for row in rows]
+    return [ClaimOut(**row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# Manual international wire (SWIFT): same pattern as UPI, for clients
+# outside India where UPI cannot reach (it requires an Indian bank account
+# on the payer's side -- no workaround). Correspondent bank details differ
+# per currency; beneficiary details are shared.
+# ---------------------------------------------------------------------------
+
+WIRE_CURRENCIES = ("USD", "GBP", "EUR")
+
+
+class WireCurrencyDetails(BaseModel):
+    currency: str
+    amount: int
+    correspondent_bank: str
+    correspondent_swift: str
+    nostro_account: str
+    routing_reference: str  # ABA for USD, IBAN for GBP/EUR -- label kept generic, meaning shown in the value
+
+
+class WireInfoOut(BaseModel):
+    account_name: str
+    account_number: str
+    bank_name: str
+    swift_code: str
+    configured: bool
+    currencies: list[WireCurrencyDetails]
+
+
+class WireClaimIn(BaseModel):
+    currency: str = Field(pattern="^(USD|GBP|EUR)$")
+    reference: str = Field(min_length=4, max_length=200)
+
+
+def _wire_currency_details(settings: Settings) -> list[WireCurrencyDetails]:
+    return [
+        WireCurrencyDetails(
+            currency="USD",
+            amount=settings.subscription_price_usd,
+            correspondent_bank=settings.wire_usd_correspondent_bank,
+            correspondent_swift=settings.wire_usd_correspondent_swift,
+            nostro_account=settings.wire_usd_nostro_account,
+            routing_reference=settings.wire_usd_aba,
+        ),
+        WireCurrencyDetails(
+            currency="GBP",
+            amount=settings.subscription_price_gbp,
+            correspondent_bank=settings.wire_gbp_correspondent_bank,
+            correspondent_swift=settings.wire_gbp_correspondent_swift,
+            nostro_account=settings.wire_gbp_nostro_account,
+            routing_reference=settings.wire_gbp_iban,
+        ),
+        WireCurrencyDetails(
+            currency="EUR",
+            amount=settings.subscription_price_eur,
+            correspondent_bank=settings.wire_eur_correspondent_bank,
+            correspondent_swift=settings.wire_eur_correspondent_swift,
+            nostro_account=settings.wire_eur_nostro_account,
+            routing_reference=settings.wire_eur_iban,
+        ),
+    ]
+
+
+@router.get("/wire/info", response_model=WireInfoOut)
+async def wire_info(settings: Settings = Depends(get_settings)) -> WireInfoOut:
+    return WireInfoOut(
+        account_name=settings.founder_bank_account_name,
+        account_number=settings.founder_bank_account_number,
+        bank_name=settings.founder_bank_name,
+        swift_code=settings.founder_bank_swift_code,
+        configured=bool(settings.founder_bank_account_number),
+        currencies=_wire_currency_details(settings),
+    )
+
+
+@router.post("/wire/claim", status_code=status.HTTP_201_CREATED, response_model=ClaimOut)
+async def submit_wire_claim(
+    payload: WireClaimIn,
+    database: Database = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+    user: User = Depends(current_user),
+) -> ClaimOut:
+    if not settings.founder_bank_account_number:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Wire payment is not configured")
+    amounts = {d.currency: d.amount for d in _wire_currency_details(settings)}
+    return await _insert_claim(database, user, "wire", payload.currency, amounts[payload.currency], payload.reference)
+
+
+@router.get("/wire/claims", response_model=list[ClaimOut])
+async def my_wire_claims(
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> list[ClaimOut]:
+    rows = await database.fetch_all(
+        """SELECT id::text, method, currency, amount_inr AS amount, reference, status, created_at
+           FROM payment_claims WHERE user_id=%s AND method='wire' ORDER BY created_at DESC""",
+        (user.id,),
+    )
+    return [ClaimOut(**row) for row in rows]

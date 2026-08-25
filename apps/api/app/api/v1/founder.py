@@ -77,10 +77,17 @@ class PaymentClaimOut(BaseModel):
     id: str
     user_id: str
     email: str
-    amount_inr: int
+    method: str
+    currency: str
+    amount: int
     reference: str
     status: str
     created_at: int
+
+
+_CLAIM_SELECT = """SELECT c.id::text, c.user_id::text, u.email, c.method, c.currency,
+                           c.amount_inr AS amount, c.reference, c.status, c.created_at
+                    FROM payment_claims c JOIN users u ON u.id = c.user_id"""
 
 
 @router.get("/payment-claims", response_model=list[PaymentClaimOut])
@@ -89,10 +96,7 @@ async def list_payment_claims(
     _founder: User = Depends(current_founder),
 ) -> list[PaymentClaimOut]:
     rows = await database.fetch_all(
-        """SELECT c.id::text, c.user_id::text, u.email, c.amount_inr, c.reference, c.status, c.created_at
-           FROM payment_claims c JOIN users u ON u.id = c.user_id
-           ORDER BY (c.status = 'pending') DESC, c.created_at DESC
-           LIMIT 50"""
+        f"{_CLAIM_SELECT} ORDER BY (c.status = 'pending') DESC, c.created_at DESC LIMIT 50"
     )
     return [PaymentClaimOut(**row) for row in rows]
 
@@ -103,11 +107,7 @@ async def approve_payment_claim(
     database: Database = Depends(get_database),
     founder: User = Depends(current_founder),
 ) -> PaymentClaimOut:
-    claim = await database.fetch_one(
-        """SELECT c.id::text, c.user_id::text, u.email, c.amount_inr, c.reference, c.status, c.created_at
-           FROM payment_claims c JOIN users u ON u.id = c.user_id WHERE c.id=%s""",
-        (claim_id,),
-    )
+    claim = await database.fetch_one(f"{_CLAIM_SELECT} WHERE c.id=%s", (claim_id,))
     if not claim:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
 
@@ -135,11 +135,7 @@ async def reject_payment_claim(
     database: Database = Depends(get_database),
     founder: User = Depends(current_founder),
 ) -> PaymentClaimOut:
-    claim = await database.fetch_one(
-        """SELECT c.id::text, c.user_id::text, u.email, c.amount_inr, c.reference, c.status, c.created_at
-           FROM payment_claims c JOIN users u ON u.id = c.user_id WHERE c.id=%s""",
-        (claim_id,),
-    )
+    claim = await database.fetch_one(f"{_CLAIM_SELECT} WHERE c.id=%s", (claim_id,))
     if not claim:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
 
