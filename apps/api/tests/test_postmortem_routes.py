@@ -162,6 +162,38 @@ async def test_create_incident_is_rate_limited(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_record_evidence_is_rate_limited(context) -> None:
+    from app.api.v1.postmortems import MAX_EVIDENCE_PER_HOUR
+
+    client, _, _, _ = context
+    for i in range(MAX_EVIDENCE_PER_HOUR):
+        response = await add_evidence(client, occurred_at=1_000 + i, summary=f"Entry {i}")
+        assert response  # add_evidence() already asserts 201
+
+    limited = await client.post(
+        f"/v1/postmortems/incidents/{INCIDENT}/evidence",
+        json={"occurred_at": 9_999, "source": "alert", "summary": "One too many", "detail": None},
+    )
+    assert limited.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_update_incident_status_is_rate_limited(context) -> None:
+    from app.api.v1.postmortems import MAX_STATUS_CHANGES_PER_HOUR
+
+    client, _, _, _ = context
+    for i in range(MAX_STATUS_CHANGES_PER_HOUR):
+        response = await client.patch(
+            f"/v1/postmortems/incidents/{INCIDENT}/status",
+            json={"status": "resolved" if i % 2 == 0 else "open"},
+        )
+        assert response.status_code == 200, response.text
+
+    limited = await client.patch(f"/v1/postmortems/incidents/{INCIDENT}/status", json={"status": "open"})
+    assert limited.status_code == 429
+
+
+@pytest.mark.asyncio
 async def test_drafting_without_evidence_is_refused(context) -> None:
     client, _, _, _ = context
     response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")

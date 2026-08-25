@@ -43,11 +43,14 @@ router = APIRouter(prefix="/v1/postmortems", tags=["postmortems"])
 # silently keeping only the oldest.
 MAX_DRAFT_EVIDENCE_ENTRIES = 500
 
-# Per-account rate limits on the two actions worth bounding: creating
-# incidents (cheap, but still a real spam/abuse surface) and drafting
-# (the actual AI-cost-incurring call, and the one that matters most to
-# bound). Generous enough not to interfere with real usage.
+# Per-account rate limits on every write action -- creating incidents,
+# recording evidence, and changing status are cheap individually but still
+# a real spam/abuse surface with zero cost to an attacker otherwise;
+# drafting is the AI-cost-incurring call and the one that matters most to
+# bound. Generous enough not to interfere with real usage.
 MAX_INCIDENTS_PER_HOUR = 30
+MAX_EVIDENCE_PER_HOUR = 100
+MAX_STATUS_CHANGES_PER_HOUR = 60
 MAX_DRAFTS_PER_HOUR = 20
 RATE_LIMITED_DETAIL = "Too many requests. Try again later."
 
@@ -143,6 +146,12 @@ async def update_incident_status(
     database: Database = Depends(get_database),
     user: User = Depends(require_active_subscription),
 ) -> dict[str, object]:
+    if await is_action_rate_limited(
+        database, user.id, "update_incident_status", MAX_STATUS_CHANGES_PER_HOUR, 60 * 60 * 1000
+    ):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
+    await record_action(database, user.id, "update_incident_status")
+
     await require_incident(database, incident_id, user.email)
     now = int(time.time() * 1000)
     row = await database.fetch_one(
@@ -197,6 +206,10 @@ async def record_evidence(
     database: Database = Depends(get_database),
     user: User = Depends(require_active_subscription),
 ) -> dict[str, object]:
+    if await is_action_rate_limited(database, user.id, "record_evidence", MAX_EVIDENCE_PER_HOUR, 60 * 60 * 1000):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
+    await record_action(database, user.id, "record_evidence")
+
     await require_incident(database, incident_id, user.email)
     now = int(time.time() * 1000)
     row = await database.fetch_one(
