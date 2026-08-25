@@ -11,6 +11,7 @@ from .api.v1.billing import router as billing_router
 from .api.v1.founder import router as founder_router
 from .api.v1.postmortems import router as postmortems_router
 from .database import Database
+from .mcp_server import MCPBearerAuthMiddleware, build_mcp_server
 from .settings import get_settings
 
 logger = logging.getLogger("postmortem_ai")
@@ -33,20 +34,31 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     return response
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    settings = get_settings()
-    database = Database(settings)
-    await database.open()
-    app.state.database = database
-    try:
-        yield
-    finally:
-        await database.close()
-
-
 def create_app() -> FastAPI:
     settings = get_settings()
+
+    # `app` is assigned below, after this closure is defined -- fine, since
+    # a lambda resolves free variables at call time, and `get_database` is
+    # only ever called from inside a real request (well after `app` is a
+    # real FastAPI instance with `app.state.database` set by lifespan).
+    mcp_server = build_mcp_server(get_database=lambda: app.state.database, settings=settings)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        database = Database(settings)
+        await database.open()
+        app.state.database = database
+        try:
+            # The MCP session manager owns its own background task group;
+            # mounting its ASGI app via app.mount() does NOT automatically
+            # run a sub-app's own lifespan (a real Starlette/FastAPI
+            # gotcha), so it's driven explicitly here, inside this app's
+            # own lifespan, instead.
+            async with mcp_server.session_manager.run():
+                yield
+        finally:
+            await database.close()
+
     app = FastAPI(title="PostMortem AI", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
@@ -64,6 +76,14 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    # Mounted at "/", not "/mcp" -- streamable_http_app() already mounts
+    # its own handler internally at settings.streamable_http_path (default
+    # "/mcp"), so mounting the whole app again at "/mcp" here would double
+    # it up to "/mcp/mcp" (found via a real failed test, not by inspection).
+    # This mount is added LAST so every route above still matches first;
+    # only unmatched paths (i.e. "/mcp/...") fall through to it.
+    app.mount("/", MCPBearerAuthMiddleware(mcp_server.streamable_http_app(), settings))
 
     return app
 

@@ -81,3 +81,21 @@ class Database:
         async with self._require_pool().connection() as connection:
             async with connection.transaction():
                 yield Transaction(connection)
+
+    @asynccontextmanager
+    async def read_only_transaction(self):
+        """A real Postgres read-only transaction (not just app-level
+        discipline) -- used by the MCP run_read_only_sql tool so a bug in
+        the query-validation layer can't turn into a write, even in
+        principle, because the database itself refuses one."""
+        async with self._require_pool().connection() as connection:
+            # psycopg3 async connections require the async setter, not
+            # direct attribute assignment -- found via a real failing
+            # test, not by inspection ("'read_only' property is
+            # read-only on async connections").
+            await connection.set_read_only(True)
+            try:
+                async with connection.transaction():
+                    yield Transaction(connection)
+            finally:
+                await connection.set_read_only(False)

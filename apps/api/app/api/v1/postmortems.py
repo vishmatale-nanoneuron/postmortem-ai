@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from google.genai import errors as genai_errors
 from pydantic import BaseModel, Field
 
+from ...ai.circuit_breaker import CircuitOpenError
 from ...ai.model_router import create_model_provider
 from ...ai.provider import ModelProvider
 from ...auth import User, current_user, require_active_subscription
@@ -271,6 +272,18 @@ async def draft_postmortem(
     try:
         result = await provider.complete(build_draft_request(dict(incident), evidence))
         response = parse_model_json(result.text)
+    except CircuitOpenError as error:
+        # Distinct from a single failed call (502 below): the breaker is
+        # deliberately avoiding a provider that has failed repeatedly,
+        # rather than adding one more failing request on top -- 503 says
+        # "we know, don't retry immediately" rather than "this one call
+        # happened to fail."
+        logger.warning("postmortem_draft_failed", extra={"incident_id": incident_id, "error_type": "circuit_open"})
+        await record_ai_run("failed", None, "circuit_open")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The drafting model has failed repeatedly and is being avoided for a short cooldown -- try again shortly",
+        ) from error
     except (ValueError, TypeError) as error:
         logger.warning("postmortem_draft_failed", extra={"incident_id": incident_id, "error_type": "unreadable_response"})
         await record_ai_run("failed", None, "unreadable_response")
