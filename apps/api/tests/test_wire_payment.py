@@ -56,9 +56,9 @@ async def context(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-async def test_wire_info_reflects_configured_beneficiary_and_correspondent_details(context) -> None:
+async def test_wire_info_reflects_configured_beneficiary_and_correspondent_details_for_the_founder(context) -> None:
     client, _, _ = context
-    await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+    await client.post("/v1/auth/register", json={"email": FOUNDER_EMAIL, "password": "correct-horse-battery"})
 
     response = await client.get("/v1/billing/wire/info")
     assert response.status_code == 200
@@ -70,6 +70,19 @@ async def test_wire_info_reflects_configured_beneficiary_and_correspondent_detai
     usd = next(c for c in body["currencies"] if c["currency"] == "USD")
     assert usd["amount"] == 15
     assert usd["correspondent_swift"] == "CHASUS33"
+
+
+@pytest.mark.asyncio
+async def test_wire_info_is_not_reachable_by_a_regular_signed_in_client(context) -> None:
+    # Regression for a second real gap: requiring "any signed-in user"
+    # wasn't a real barrier either, since registration is free and instant
+    # -- a client account, however genuine, must never get the real bank
+    # details from this route. Only the founder can.
+    client, _, _ = context
+    await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+
+    response = await client.get("/v1/billing/wire/info")
+    assert response.status_code == 403
 
 
 @pytest.mark.asyncio

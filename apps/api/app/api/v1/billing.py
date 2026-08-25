@@ -13,7 +13,7 @@ import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from ...auth import User, current_user
+from ...auth import User, current_founder, current_user
 from ...database import Database
 from ...dependencies import get_database
 from ...settings import Settings, get_settings
@@ -240,15 +240,17 @@ async def upi_pricing(settings: Settings = Depends(get_settings)) -> UpiPricingO
 @router.get("/upi/info", response_model=UpiInfoOut)
 async def upi_info(
     settings: Settings = Depends(get_settings),
-    _user: User = Depends(current_user),
+    _founder: User = Depends(current_founder),
 ) -> UpiInfoOut:
-    """Auth required -- this is the real UPI ID and payee name to pay real
-    money to. Previously had no auth dependency at all: anyone on the
-    internet could fetch the real account details with a single
-    unauthenticated GET. Found via direct report, confirmed by reading the
-    route (no Depends(current_user) existed here), fixed by requiring a
-    signed-in caller -- the public price-only shape moved to /upi/pricing
-    above so the public pricing page keeps working without it."""
+    """Founder-only -- this is the real UPI ID and payee name to pay real
+    money to. First fixed to require any signed-in caller, which turned out
+    not to be a real barrier: registration is free and instant, so any
+    client (even a throwaway account created seconds earlier) could still
+    reach it. Tightened to founder-only on direct instruction -- no client
+    account, however genuine, gets this from the app anymore. A client who
+    wants to pay is told to contact the founder directly (see workspace.tsx
+    UpiPayment/WirePayment) instead of self-serving the account details.
+    The public price-only shape stays at /upi/pricing above."""
     return UpiInfoOut(
         upi_id=settings.founder_upi_id,
         payee_name=settings.founder_upi_payee_name,
@@ -367,15 +369,18 @@ async def wire_pricing(settings: Settings = Depends(get_settings)) -> WirePricin
 @router.get("/wire/info", response_model=WireInfoOut)
 async def wire_info(
     settings: Settings = Depends(get_settings),
-    _user: User = Depends(current_user),
+    _founder: User = Depends(current_founder),
 ) -> WireInfoOut:
-    """Auth required -- this is the real bank account number, SWIFT code,
-    and correspondent-bank routing details to wire real money to.
-    Previously had no auth dependency at all: anyone on the internet could
-    fetch the real account details with a single unauthenticated GET.
-    Found via direct report, confirmed by reading the route, fixed by
-    requiring a signed-in caller -- the public price-only shape moved to
-    /wire/pricing above so the public pricing page keeps working."""
+    """Founder-only -- this is the real bank account number, SWIFT code,
+    and correspondent-bank routing details to wire real money to. First
+    fixed to require any signed-in caller, which turned out not to be a
+    real barrier: registration is free and instant, so any client (even a
+    throwaway account created seconds earlier) could still reach it.
+    Tightened to founder-only on direct instruction -- no client account,
+    however genuine, gets this from the app anymore. A client who wants to
+    pay is told to contact the founder directly (see workspace.tsx
+    UpiPayment/WirePayment) instead of self-serving the account details.
+    The public price-only shape stays at /wire/pricing above."""
     return WireInfoOut(
         account_name=settings.founder_bank_account_name,
         account_number=settings.founder_bank_account_number,

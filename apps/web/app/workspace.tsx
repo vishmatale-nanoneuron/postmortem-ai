@@ -14,8 +14,8 @@ import {
   type Integrations,
   type PaymentClaim,
   type Postmortem,
-  type UpiInfo,
-  type WireInfo,
+  type UpiPricing,
+  type WirePricing,
 } from "./api";
 import { auth, type AuthUser } from "./auth";
 import { Hero, HowItWorks, WhatThisIsnt } from "./landing";
@@ -332,14 +332,18 @@ function SubscribeGate() {
 }
 
 function UpiPayment() {
-  const [upi, setUpi] = useState<UpiInfo | null>(null);
+  const [upi, setUpi] = useState<UpiPricing | null>(null);
   const [claims, setClaims] = useState<Claim[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
+  // Real UPI ID is founder-only now (see api/v1/billing.py) -- a client
+  // never fetches it directly; this only shows the price, which is public
+  // information, and a claim-submission form for after they've been given
+  // the actual account to pay via a direct, founder-arranged channel.
   async function refresh() {
-    setUpi(await billing.upiInfo());
+    setUpi(await billing.upiPricing());
     setClaims(await billing.myUpiClaims());
   }
 
@@ -371,8 +375,8 @@ function UpiPayment() {
   return (
     <>
       <p className="mb-3 text-sm text-muted">
-        Pay ₹{upi.amount_inr}/month via UPI to <span className="font-medium text-ink">{upi.upi_id}</span> (
-        {upi.payee_name}), then submit the transaction reference below.
+        ₹{upi.amount_inr}/month via UPI. Contact the founder to receive the account to pay to, then submit your
+        transaction reference below.
       </p>
       <p className="mb-3 text-xs text-muted">
         UPI requires an Indian bank account -- it can&apos;t accept payment from outside India. Use the
@@ -408,15 +412,20 @@ function UpiPayment() {
 }
 
 function WirePayment() {
-  const [wire, setWire] = useState<WireInfo | null>(null);
+  const [wire, setWire] = useState<WirePricing | null>(null);
   const [claims, setClaims] = useState<Claim[]>([]);
   const [currency, setCurrency] = useState("USD");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
+  // Real account/SWIFT/correspondent-bank details are founder-only now
+  // (see api/v1/billing.py) -- a client never fetches them directly; this
+  // only shows prices, which are public information, and a claim-
+  // submission form for after they've been given the actual account to
+  // pay via a direct, founder-arranged channel.
   async function refresh() {
-    setWire(await billing.wireInfo());
+    setWire(await billing.wirePricing());
     setClaims(await billing.myWireClaims());
   }
 
@@ -461,28 +470,11 @@ function WirePayment() {
           </button>
         ))}
       </div>
-      <p className="mb-2 text-sm text-muted">
-        Pay {currencySymbol(active.currency)}
-        {active.amount}/month via SWIFT wire in {active.currency}, then submit the transaction reference below.
+      <p className="mb-3 text-sm text-muted">
+        {currencySymbol(active.currency)}
+        {active.amount}/month via SWIFT wire in {active.currency}. Contact the founder to receive the account to
+        wire to, then submit your transaction reference below.
       </p>
-      <dl className="mb-3 grid grid-cols-2 gap-x-3 gap-y-1 rounded-md bg-paper px-3 py-2 text-xs">
-        <dt className="text-muted">Beneficiary name</dt>
-        <dd className="font-medium text-ink">{wire.account_name}</dd>
-        <dt className="text-muted">Account number</dt>
-        <dd className="font-mono text-ink">{wire.account_number}</dd>
-        <dt className="text-muted">Bank</dt>
-        <dd className="text-ink">{wire.bank_name}</dd>
-        <dt className="text-muted">Beneficiary SWIFT</dt>
-        <dd className="font-mono text-ink">{wire.swift_code}</dd>
-        <dt className="text-muted">Correspondent bank</dt>
-        <dd className="text-ink">{active.correspondent_bank}</dd>
-        <dt className="text-muted">Correspondent SWIFT</dt>
-        <dd className="font-mono text-ink">{active.correspondent_swift}</dd>
-        <dt className="text-muted">Nostro account</dt>
-        <dd className="font-mono text-ink">{active.nostro_account}</dd>
-        <dt className="text-muted">{active.currency === "USD" ? "ABA" : "IBAN"}</dt>
-        <dd className="font-mono text-ink">{active.routing_reference}</dd>
-      </dl>
       {latestPending ? (
         <p className="rounded-md bg-paper px-3 py-2 text-sm text-muted">
           Reference <span className="font-medium text-ink">{latestPending.reference}</span> submitted, awaiting

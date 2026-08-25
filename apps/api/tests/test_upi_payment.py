@@ -53,9 +53,9 @@ async def context(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-async def test_upi_info_reflects_configured_settings(context) -> None:
+async def test_upi_info_reflects_configured_settings_for_the_founder(context) -> None:
     client, _, _ = context
-    await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+    await client.post("/v1/auth/register", json={"email": FOUNDER_EMAIL, "password": "correct-horse-battery"})
 
     response = await client.get("/v1/billing/upi/info")
     assert response.status_code == 200
@@ -65,12 +65,25 @@ async def test_upi_info_reflects_configured_settings(context) -> None:
 
 @pytest.mark.asyncio
 async def test_upi_info_is_not_reachable_without_signing_in(context) -> None:
-    # Regression for a real bug: this route previously had no auth
+    # Regression for a real bug: this route originally had no auth
     # dependency at all -- the real UPI ID was fetchable by anyone on the
     # internet with a single unauthenticated GET.
     client, _, _ = context
     response = await client.get("/v1/billing/upi/info")
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_upi_info_is_not_reachable_by_a_regular_signed_in_client(context) -> None:
+    # Regression for a second real gap: requiring "any signed-in user"
+    # wasn't a real barrier either, since registration is free and instant
+    # -- a client account, however genuine, must never get the real UPI ID
+    # from this route. Only the founder can.
+    client, _, _ = context
+    await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+
+    response = await client.get("/v1/billing/upi/info")
+    assert response.status_code == 403
 
 
 @pytest.mark.asyncio

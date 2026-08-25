@@ -93,6 +93,12 @@ export type BillingStatus = {
   has_active_subscription: boolean;
 };
 
+// Price only -- never the real account/UPI id, never fetched by a client.
+// The real details (UpiInfo/WireInfo below) are founder-only now; a client
+// who wants to pay is told to contact the founder to arrange it.
+export type UpiPricing = { amount_inr: number; configured: boolean };
+export type WirePricing = { configured: boolean; currencies: { currency: string; amount: number }[] };
+
 export type UpiInfo = { upi_id: string; payee_name: string; amount_inr: number; configured: boolean };
 
 export type WireCurrency = {
@@ -129,11 +135,11 @@ export const billing = {
   status: () => request<BillingStatus>("/v1/billing/status"),
   checkout: () => request<{ url: string }>("/v1/billing/checkout", { method: "POST" }),
   portal: () => request<{ url: string }>("/v1/billing/portal", { method: "POST" }),
-  upiInfo: () => request<UpiInfo>("/v1/billing/upi/info"),
+  upiPricing: () => request<UpiPricing>("/v1/billing/upi/pricing"),
   submitUpiClaim: (reference: string) =>
     request<Claim>("/v1/billing/upi/claim", { method: "POST", body: JSON.stringify({ reference }) }),
   myUpiClaims: () => request<Claim[]>("/v1/billing/upi/claims"),
-  wireInfo: () => request<WireInfo>("/v1/billing/wire/info"),
+  wirePricing: () => request<WirePricing>("/v1/billing/wire/pricing"),
   submitWireClaim: (currency: string, reference: string) =>
     request<Claim>("/v1/billing/wire/claim", { method: "POST", body: JSON.stringify({ currency, reference }) }),
   myWireClaims: () => request<Claim[]>("/v1/billing/wire/claims"),
