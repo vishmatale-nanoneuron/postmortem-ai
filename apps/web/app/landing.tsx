@@ -27,6 +27,9 @@ export function Hero() {
         <a href="/docs" className="text-sm font-medium text-ink underline underline-offset-2">
           How it works
         </a>
+        <a href="/pricing" className="text-sm font-medium text-ink underline underline-offset-2">
+          Pricing
+        </a>
       </div>
     </div>
   );
