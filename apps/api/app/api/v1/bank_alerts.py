@@ -35,6 +35,7 @@ from pydantic import BaseModel
 from ...bank_alerts import extract_amount, extract_reference, looks_like_a_credit
 from ...database import Database
 from ...dependencies import get_database
+from ...services.billing import record_claim_event
 from ...settings import Settings, get_settings
 
 logger = logging.getLogger("postmortem_ai")
@@ -148,8 +149,15 @@ async def bank_alert_webhook(
     )
     if not updated:
         # Already approved/rejected, or lost a race with a concurrent
-        # alert for the same reference -- not an error either way.
+        # alert for the same reference -- not an error either way. Note:
+        # no event recorded here on purpose -- a webhook retry (proven
+        # idempotent, see test_a_matching_bank_alert_verifies_...) hits
+        # this branch every time after the first, and the audit trail only
+        # needs the first real verification, not every retry.
         return BankAlertResult(matched=False, reference=reference, reason="Already handled")
+    await record_claim_event(
+        database, claim["id"], "bank_verified", "system:bank-alert", f"alert amount={amount}"
+    )
 
     logger.info("bank_alert_verified_awaiting_founder_approval", extra={"reference": reference})
     return BankAlertResult(matched=True, reference=reference, reason=None)

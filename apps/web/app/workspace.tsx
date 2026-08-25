@@ -323,13 +323,26 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
 
 function SubscribeGate() {
   const [tab, setTab] = useState<"upi" | "wire">("upi");
+  const [status, setStatus] = useState<BillingStatus | null>(null);
+
+  // Distinguishes a brand new unpaid account from one whose real, once-
+  // active subscription lapsed -- otherwise a client who paid before sees
+  // the exact same "Subscribe to use..." copy as someone who never has,
+  // with no indication anything expired rather than never having started.
+  useEffect(() => {
+    billing.status().then(setStatus).catch(() => setStatus(null));
+  }, []);
+  const expired = status?.subscription_status === "expired";
 
   return (
     <section className={card}>
-      <h2 className="mb-2 text-base font-semibold">Subscribe to use PostMortem AI</h2>
+      <h2 className="mb-2 text-base font-semibold">
+        {expired ? "Your subscription has expired" : "Subscribe to use PostMortem AI"}
+      </h2>
       <p className="mb-3 text-sm text-muted">
-        An active subscription is required to create incidents, record evidence, draft, and publish postmortems --
-        viewing your existing history stays available either way.
+        {expired && status?.current_period_end
+          ? `Your access expired on ${new Date(status.current_period_end * 1000).toLocaleDateString()}. Make a new payment below to reactivate -- creating incidents, recording evidence, drafting, and publishing all require an active subscription; viewing your existing history stays available either way.`
+          : "An active subscription is required to create incidents, record evidence, draft, and publish postmortems -- viewing your existing history stays available either way."}
       </p>
       <div className="mb-3 flex gap-1.5">
         <button
@@ -539,10 +552,18 @@ function ManageBilling() {
       <div className="text-sm">
         <span className="font-medium">Subscription:</span> {status.subscription_status}
         {status.current_period_end && (
-          <span className="text-muted"> -- renews {new Date(status.current_period_end * 1000).toLocaleDateString()}</span>
+          <span className="text-muted">
+            {" "}
+            -- {status.subscription_status === "expired" ? "expired" : "renews"}{" "}
+            {new Date(status.current_period_end * 1000).toLocaleDateString()}
+          </span>
         )}
       </div>
-      <p className="mt-1 text-xs text-muted">Paid via UPI -- to renew or ask a question, contact the founder directly.</p>
+      <p className="mt-1 text-xs text-muted">
+        {status.subscription_status === "expired"
+          ? "Your access has expired -- contact the founder to make a new payment and reactivate."
+          : "Paid via UPI -- to renew or ask a question, contact the founder directly."}
+      </p>
     </section>
   );
 }

@@ -127,6 +127,28 @@ async def test_a_manually_approved_subscription_stops_granting_access_after_its_
 
 
 @pytest.mark.asyncio
+async def test_an_expired_subscription_is_honestly_reported_not_shown_as_stale_active(context) -> None:
+    # Regression for a real UX gap: subscription_status stays 'active' in
+    # the database forever after a manual period lapses (there's no
+    # recurring billing to flip it back) -- without this, /me and
+    # /billing/status would keep telling the client "active" long after
+    # access was actually cut off, which is actively misleading.
+    client, database = context
+    await client.post("/v1/auth/register", json={"email": UNPAID_EMAIL, "password": "correct-horse-battery"})
+    await database.execute(
+        "UPDATE users SET subscription_status='active', current_period_end=%s WHERE email=%s",
+        (1, UNPAID_EMAIL),
+    )
+
+    me = await client.get("/v1/auth/me")
+    assert me.json()["subscription_status"] == "expired"
+    assert me.json()["has_active_subscription"] is False
+
+    billing_status = await client.get("/v1/billing/status")
+    assert billing_status.json()["subscription_status"] == "expired"
+
+
+@pytest.mark.asyncio
 async def test_a_manually_approved_subscription_grants_access_while_its_period_is_still_open(context) -> None:
     client, database = context
     await client.post("/v1/auth/register", json={"email": UNPAID_EMAIL, "password": "correct-horse-battery"})

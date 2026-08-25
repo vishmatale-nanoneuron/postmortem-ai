@@ -93,7 +93,7 @@ def _user_out(row: dict, settings: Settings) -> UserOut:
         id=user.id,
         email=user.email,
         is_founder=user.is_founder,
-        subscription_status=user.subscription_status,
+        subscription_status=user.effective_status,
         has_active_subscription=user.has_active_subscription,
     )
 
@@ -204,7 +204,7 @@ async def me(user: User = Depends(current_user)) -> UserOut:
         id=user.id,
         email=user.email,
         is_founder=user.is_founder,
-        subscription_status=user.subscription_status,
+        subscription_status=user.effective_status,
         has_active_subscription=user.has_active_subscription,
     )
 

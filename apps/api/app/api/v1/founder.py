@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from ...auth import User, current_founder
 from ...database import Database
 from ...dependencies import get_database
-from ...services.billing import activate_manual_subscription
+from ...services.billing import activate_manual_subscription, record_claim_event
 
 router = APIRouter(prefix="/v1/founder", tags=["founder"])
 
@@ -118,11 +118,13 @@ async def approve_payment_claim(
             (founder.email, now, claim_id),
         )
         # 'active' is one of the statuses require_active_subscription treats
-        # as paid (see auth.ACTIVE_SUBSCRIPTION_STATUSES) -- a manually
-        # approved claim grants access exactly the same way a Stripe
-        # webhook would, through the same field. Shared with bank_alerts.py's
-        # auto-approval so both grant access exactly the same way.
+        # as paid (see auth.ACTIVE_SUBSCRIPTION_STATUSES). This is the ONLY
+        # call site in the whole codebase that reaches
+        # activate_manual_subscription with a real, unconditional grant --
+        # gated behind current_founder above and the frontend's own
+        # explicit confirmation dialog. bank_alerts.py never calls this.
         await activate_manual_subscription(tx, claim["user_id"])
+        await record_claim_event(tx, claim_id, "approved", founder.email)
     return PaymentClaimOut(**{**claim, "status": "approved"})
 
 
@@ -141,4 +143,33 @@ async def reject_payment_claim(
         "UPDATE payment_claims SET status='rejected', reviewed_by=%s, reviewed_at=%s WHERE id=%s",
         (founder.email, now, claim_id),
     )
+    await record_claim_event(database, claim_id, "rejected", founder.email)
     return PaymentClaimOut(**{**claim, "status": "rejected"})
+
+
+class PaymentClaimEventOut(BaseModel):
+    event_type: str
+    actor: str
+    detail: str | None
+    created_at: int
+
+
+@router.get("/payment-claims/{claim_id}/events", response_model=list[PaymentClaimEventOut])
+async def payment_claim_events(
+    claim_id: str,
+    database: Database = Depends(get_database),
+    _founder: User = Depends(current_founder),
+) -> list[PaymentClaimEventOut]:
+    """The actual payoff of the append-only ledger (migration 0016): a
+    full, unmodifiable history of what happened to a claim -- when it was
+    created, whether/when a real bank alert verified it, and who approved
+    or rejected it and when. Never reconstructed from payment_claims'
+    current-state fields, which only ever show the latest state."""
+    exists = await database.fetch_one("SELECT id FROM payment_claims WHERE id=%s", (claim_id,))
+    if not exists:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    rows = await database.fetch_all(
+        "SELECT event_type, actor, detail, created_at FROM payment_claim_events WHERE claim_id=%s ORDER BY created_at",
+        (claim_id,),
+    )
+    return [PaymentClaimEventOut(**row) for row in rows]

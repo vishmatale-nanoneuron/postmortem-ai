@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from ...auth import User, current_founder, current_user
 from ...database import Database
 from ...dependencies import get_database
+from ...services.billing import record_claim_event
 from ...settings import Settings, get_settings
 
 logger = logging.getLogger("postmortem_ai")
@@ -111,17 +112,16 @@ async def create_portal_session(
 
 
 @router.get("/status", response_model=BillingStatusOut)
-async def billing_status(
-    database: Database = Depends(get_database),
-    user: User = Depends(current_user),
-) -> BillingStatusOut:
-    row = await database.fetch_one(
-        "SELECT subscription_status, current_period_end FROM users WHERE id=%s", (user.id,)
-    )
-    row = row or {}
+async def billing_status(user: User = Depends(current_user)) -> BillingStatusOut:
+    # user already carries subscription_status/current_period_end from its
+    # own DB read in current_user() -- no need for a second, separate
+    # fetch_one that could theoretically read a different row (e.g. if a
+    # concurrent write landed between the two queries). effective_status
+    # honestly reports "expired" rather than a stale "active" past the
+    # real period_end -- see auth.py's User.effective_status.
     return BillingStatusOut(
-        subscription_status=row.get("subscription_status", "none"),
-        current_period_end=row.get("current_period_end"),
+        subscription_status=user.effective_status,
+        current_period_end=user.current_period_end,
         has_active_subscription=user.has_active_subscription,
     )
 
@@ -238,6 +238,7 @@ async def _insert_claim(
         (user.id, amount, currency, method, reference, now),
     )
     assert row is not None
+    await record_claim_event(database, row["id"], "created", user.email, f"{currency} {amount} via {method}")
     return ClaimOut(**row)
 
 

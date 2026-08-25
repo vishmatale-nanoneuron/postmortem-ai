@@ -53,6 +53,22 @@ class User:
             return True
         return self.current_period_end > int(time.time())
 
+    @property
+    def effective_status(self) -> str:
+        """What should actually be shown to the account -- not just what's
+        stored. subscription_status stays 'active' in the database forever
+        after a manual (UPI/wire) period lapses (see has_active_subscription
+        above): there's no recurring billing system to flip it back on its
+        own. Without this, a client whose 30 days ran out a month ago would
+        still see "Subscription: active" in their own dashboard, which is
+        actively misleading -- a real subscription product (this is the
+        actual "like Claude AI" expectation) tells you plainly when your
+        plan has expired so you know to renew, rather than showing a stale
+        status next to a past date."""
+        if not self.is_founder and self.subscription_status == "active" and not self.has_active_subscription:
+            return "expired"
+        return self.subscription_status
+
 
 async def current_user(
     request: Request,
