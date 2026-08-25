@@ -86,6 +86,14 @@ async def context(monkeypatch: pytest.MonkeyPatch):
         register = await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": TEST_PASSWORD})
         assert register.status_code == 201, register.text
 
+        # These tests are about postmortem/drafting logic, not billing --
+        # give the account an active subscription directly (mimicking what
+        # a real Stripe webhook would apply) rather than driving a full
+        # checkout flow through every test here.
+        await database.execute(
+            "UPDATE users SET subscription_status='active' WHERE email=%s", (CLIENT_EMAIL,)
+        )
+
         now = int(time.time() * 1000)
         await database.execute(
             """INSERT INTO incidents (id, client_email, title, severity, status, impact, created_at, updated_at)
@@ -325,6 +333,10 @@ async def test_a_different_user_cannot_see_or_act_on_this_incident(context) -> N
     async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as other:
         register = await other.post("/v1/auth/register", json={"email": other_email, "password": TEST_PASSWORD})
         assert register.status_code == 201
+        # An active subscription so this test isolates tenant scoping from
+        # billing gating -- the 404s below must come from "not your
+        # incident," not "not subscribed."
+        await database.execute("UPDATE users SET subscription_status='active' WHERE email=%s", (other_email,))
 
         assert (await other.get(f"/v1/postmortems/incidents/{INCIDENT}/evidence")).status_code == 404
         assert (await other.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")).status_code == 404

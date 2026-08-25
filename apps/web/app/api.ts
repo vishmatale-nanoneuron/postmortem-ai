@@ -84,6 +84,18 @@ export type FounderSummary = {
   }[];
 };
 
+export type BillingStatus = {
+  subscription_status: string;
+  current_period_end: number | null;
+  has_active_subscription: boolean;
+};
+
+export const billing = {
+  status: () => request<BillingStatus>("/v1/billing/status"),
+  checkout: () => request<{ url: string }>("/v1/billing/checkout", { method: "POST" }),
+  portal: () => request<{ url: string }>("/v1/billing/portal", { method: "POST" }),
+};
+
 export const api = {
   listIncidents: () => request<Incident[]>("/v1/postmortems/incidents"),
   summary: () => request<DashboardSummary>("/v1/postmortems/summary"),

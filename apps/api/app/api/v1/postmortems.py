@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from ...ai.model_router import create_model_provider
 from ...ai.provider import ModelProvider
-from ...auth import User, current_user
+from ...auth import User, current_user, require_active_subscription
 from ...database import Database
 from ...dependencies import get_database
 from ...services.postmortem import (
@@ -87,7 +87,7 @@ async def load_evidence(database: Database, incident_id: str) -> list[EvidenceEn
 async def create_incident(
     payload: IncidentCreate,
     database: Database = Depends(get_database),
-    user: User = Depends(current_user),
+    user: User = Depends(require_active_subscription),
 ) -> dict[str, object]:
     incident_id = f"inc-{int(time.time() * 1000)}"
     now = int(time.time() * 1000)
@@ -120,7 +120,7 @@ async def update_incident_status(
     incident_id: str,
     payload: IncidentStatusUpdate,
     database: Database = Depends(get_database),
-    user: User = Depends(current_user),
+    user: User = Depends(require_active_subscription),
 ) -> dict[str, object]:
     await require_incident(database, incident_id, user.email)
     now = int(time.time() * 1000)
@@ -174,7 +174,7 @@ async def record_evidence(
     incident_id: str,
     payload: EvidenceCreate,
     database: Database = Depends(get_database),
-    user: User = Depends(current_user),
+    user: User = Depends(require_active_subscription),
 ) -> dict[str, object]:
     await require_incident(database, incident_id, user.email)
     now = int(time.time() * 1000)
@@ -217,7 +217,7 @@ async def draft_postmortem(
     incident_id: str,
     database: Database = Depends(get_database),
     provider: ModelProvider = Depends(get_model_provider),
-    user: User = Depends(current_user),
+    user: User = Depends(require_active_subscription),
 ) -> dict[str, object]:
     """Build a review-ready draft from the recorded evidence.
 
@@ -372,7 +372,7 @@ async def get_postmortem(
 async def publish_postmortem(
     incident_id: str,
     database: Database = Depends(get_database),
-    user: User = Depends(current_user),
+    user: User = Depends(require_active_subscription),
 ) -> dict[str, object]:
     await require_incident(database, incident_id, user.email)
     now = int(time.time() * 1000)

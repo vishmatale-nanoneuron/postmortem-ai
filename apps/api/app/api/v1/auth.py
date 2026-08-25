@@ -46,6 +46,20 @@ class UserOut(BaseModel):
     id: str
     email: str
     is_founder: bool = False
+    subscription_status: str = "none"
+    has_active_subscription: bool = False
+
+
+def _user_out(row: dict, settings: Settings) -> UserOut:
+    is_founder = _is_founder(row["email"], settings.founder_email)
+    subscription_status = row.get("subscription_status", "none")
+    return UserOut(
+        id=row["id"],
+        email=row["email"],
+        is_founder=is_founder,
+        subscription_status=subscription_status,
+        has_active_subscription=is_founder or subscription_status in ("active", "trialing"),
+    )
 
 
 def _set_session_cookie(response: Response, settings: Settings, token: str) -> None:
@@ -73,13 +87,14 @@ async def register(
 
     now = int(time.time() * 1000)
     row = await database.fetch_one(
-        "INSERT INTO users (email, password_hash, created_at) VALUES (%s, %s, %s) RETURNING id::text, email",
+        """INSERT INTO users (email, password_hash, created_at)
+           VALUES (%s, %s, %s) RETURNING id::text, email, subscription_status""",
         (payload.email, hash_password(payload.password), now),
     )
     assert row is not None
     token = issue_token(settings.session_secret, row["id"], row["email"])
     _set_session_cookie(response, settings, token)
-    return UserOut(id=row["id"], email=row["email"], is_founder=_is_founder(row["email"], settings.founder_email))
+    return _user_out(row, settings)
 
 
 @router.post("/login", response_model=UserOut)
@@ -95,7 +110,7 @@ async def login(
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
 
     row = await database.fetch_one(
-        "SELECT id::text, email, password_hash FROM users WHERE email=%s", (payload.email,)
+        "SELECT id::text, email, password_hash, subscription_status FROM users WHERE email=%s", (payload.email,)
     )
     stored_hash = row["password_hash"] if row else _DECOY_HASH
     password_matches = verify_password(payload.password, stored_hash)
@@ -106,9 +121,7 @@ async def login(
 
     token = issue_token(settings.session_secret, row["id"], row["email"])  # type: ignore[index]
     _set_session_cookie(response, settings, token)
-    return UserOut(  # type: ignore[index]
-        id=row["id"], email=row["email"], is_founder=_is_founder(row["email"], settings.founder_email)
-    )
+    return _user_out(row, settings)  # type: ignore[arg-type]
 
 
 @router.post("/logout")
@@ -119,4 +132,10 @@ async def logout(response: Response) -> dict[str, bool]:
 
 @router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(current_user)) -> UserOut:
-    return UserOut(id=user.id, email=user.email, is_founder=user.is_founder)
+    return UserOut(
+        id=user.id,
+        email=user.email,
+        is_founder=user.is_founder,
+        subscription_status=user.subscription_status,
+        has_active_subscription=user.has_active_subscription,
+    )

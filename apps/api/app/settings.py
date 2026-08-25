@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     # if that should ever change.
     founder_email: str = Field(default="vish.matale@gmail.com", alias="FOUNDER_EMAIL")
 
+    # Real Stripe subscription billing -- these are all required in
+    # production (no defaults) so a misconfigured deploy fails at startup
+    # rather than silently letting checkout/webhook routes 500 per request.
+    stripe_secret_key: str = Field(alias="STRIPE_SECRET_KEY")
+    stripe_webhook_secret: str = Field(alias="STRIPE_WEBHOOK_SECRET")
+    stripe_price_id: str = Field(alias="STRIPE_PRICE_ID")
+    frontend_url: str = Field(default="http://localhost:3000", alias="FRONTEND_URL")
+
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins_raw.split(",") if origin.strip()]

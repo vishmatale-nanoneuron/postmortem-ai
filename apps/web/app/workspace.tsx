@@ -1,6 +1,15 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api, type DashboardSummary, type Evidence, type FounderSummary, type Incident, type Postmortem } from "./api";
+import {
+  api,
+  billing,
+  type BillingStatus,
+  type DashboardSummary,
+  type Evidence,
+  type FounderSummary,
+  type Incident,
+  type Postmortem,
+} from "./api";
 import { auth, type AuthUser } from "./auth";
 import { Hero, HowItWorks, WhatThisIsnt } from "./landing";
 import { evidenceSchema, firstError, incidentSchema, loginSchema, registerSchema } from "./validation";
@@ -50,7 +59,11 @@ export default function Workspace() {
         </div>
       </div>
       {user.is_founder && <FounderDashboard />}
-      <IncidentWorkspace />
+      {user.has_active_subscription ? (
+        <IncidentWorkspace isFounder={user.is_founder} />
+      ) : (
+        <SubscribeGate />
+      )}
     </main>
   );
 }
@@ -186,7 +199,85 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
   );
 }
 
-function IncidentWorkspace() {
+function SubscribeGate() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function startCheckout() {
+    setBusy(true);
+    setError("");
+    try {
+      const { url } = await billing.checkout();
+      window.location.href = url;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start checkout.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className={card}>
+      <h2 className="mb-2 text-base font-semibold">Subscribe to use PostMortem AI</h2>
+      <p className="mb-4 text-sm text-muted">
+        $49/month, billed monthly via Stripe. An active subscription is required to create incidents, record
+        evidence, draft, and publish postmortems -- viewing your existing history stays available either way.
+      </p>
+      <button className={primaryButton} disabled={busy} onClick={() => void startCheckout()} type="button">
+        {busy ? "Redirecting to Stripe..." : "Subscribe -- $49/mo"}
+      </button>
+      {error && (
+        <p role="status" className="mt-3 text-sm text-red-600">
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function ManageBilling() {
+  const [status, setStatus] = useState<BillingStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    billing.status().then(setStatus).catch(() => setStatus(null));
+  }, []);
+
+  async function openPortal() {
+    setBusy(true);
+    setError("");
+    try {
+      const { url } = await billing.portal();
+      window.location.href = url;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not open billing portal.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className={card}>
+      <div className="flex items-center justify-between">
+        <div className="text-sm">
+          <span className="font-medium">Subscription:</span> {status?.subscription_status ?? "..."}
+          {status?.current_period_end && (
+            <span className="text-muted"> -- renews {new Date(status.current_period_end * 1000).toLocaleDateString()}</span>
+          )}
+        </div>
+        <button className={secondaryButton} disabled={busy} onClick={() => void openPortal()} type="button">
+          Manage billing
+        </button>
+      </div>
+      {error && (
+        <p role="status" className="mt-3 text-sm text-red-600">
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [evidence, setEvidence] = useState<Evidence[]>([]);
@@ -307,6 +398,8 @@ function IncidentWorkspace() {
   return (
     <>
       <p className="mb-6 text-sm text-muted">Evidence-grounded incident postmortem drafting.</p>
+
+      {!isFounder && <ManageBilling />}
 
       {summary && (
         <section className={card}>

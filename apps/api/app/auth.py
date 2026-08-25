@@ -10,6 +10,13 @@ from .settings import Settings, get_settings
 
 SESSION_COOKIE_NAME = "session_token"
 
+# Stripe subscription.status values that mean "the account may use the
+# product." Everything else (past_due, canceled, unpaid, incomplete,
+# incomplete_expired, or the pre-checkout 'none') is treated as inactive --
+# an explicit allowlist rather than a denylist, so a Stripe status this
+# code hasn't seen before fails closed instead of silently granting access.
+ACTIVE_SUBSCRIPTION_STATUSES = {"active", "trialing"}
+
 
 def _is_founder(email: str, founder_email: str) -> bool:
     # Constant-time comparison -- same defense as nanoneuron-software-
@@ -23,6 +30,13 @@ class User:
     id: str
     email: str
     is_founder: bool
+    subscription_status: str
+
+    @property
+    def has_active_subscription(self) -> bool:
+        # Founder access is independent of any client/subscription state --
+        # same invariant as nanoneuron-software-company's founder gate.
+        return self.is_founder or self.subscription_status in ACTIVE_SUBSCRIPTION_STATUSES
 
 
 async def current_user(
@@ -38,11 +52,18 @@ async def current_user(
     if payload is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired or invalid")
 
-    row = await database.fetch_one("SELECT id::text, email FROM users WHERE id=%s", (payload.user_id,))
+    row = await database.fetch_one(
+        "SELECT id::text, email, subscription_status FROM users WHERE id=%s", (payload.user_id,)
+    )
     if not row:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account no longer exists")
 
-    return User(id=row["id"], email=row["email"], is_founder=_is_founder(row["email"], settings.founder_email))
+    return User(
+        id=row["id"],
+        email=row["email"],
+        is_founder=_is_founder(row["email"], settings.founder_email),
+        subscription_status=row["subscription_status"],
+    )
 
 
 async def current_founder(user: User = Depends(current_user)) -> User:
@@ -51,4 +72,14 @@ async def current_founder(user: User = Depends(current_user)) -> User:
     # for nanoneuron-software-company's founder dependency.
     if not user.is_founder:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Founder access required")
+    return user
+
+
+async def require_active_subscription(user: User = Depends(current_user)) -> User:
+    # Gates the product's actual work (creating incidents, drafting,
+    # publishing) -- not signup/login/read routes, which stay reachable so
+    # a lapsed or not-yet-paying account can still see its own history and
+    # start checkout.
+    if not user.has_active_subscription:
+        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="An active subscription is required")
     return user
