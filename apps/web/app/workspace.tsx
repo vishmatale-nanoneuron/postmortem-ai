@@ -320,6 +320,10 @@ function SubscribeGate() {
             create incidents, record evidence, draft, and publish postmortems -- viewing your existing history
             stays available either way.
           </p>
+          <p className="mb-3 text-xs text-muted">
+            UPI requires an Indian bank account -- it can&apos;t accept payment from outside India. International
+            clients: email the founder directly for now.
+          </p>
           {latestPending ? (
             <p className="rounded-md bg-paper px-3 py-2 text-sm text-muted">
               Reference <span className="font-medium text-ink">{latestPending.reference}</span> submitted, awaiting
