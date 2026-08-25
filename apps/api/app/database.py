@@ -28,26 +28,45 @@ class Transaction:
             return cursor.rowcount
 
 
-class Database:
-    """Thin async wrapper over a psycopg3 connection pool.
-
-    Deliberately minimal for this MVP: no pooler-mode detection (Supabase
-    transaction-pooler prepared-statement/pool-size quirks) since this runs
-    against a single dev Postgres for now. Add that back if this is ever
-    deployed behind a transaction pooler -- see the reference project's
-    apps/api/app/database.py for the pattern to reuse at that point.
+def _uses_transaction_pooler(database_url: str) -> bool:
+    """True when the connection targets a connection pooler in transaction
+    mode. Supabase serves that mode on port 6543 -- which is exactly what
+    production uses here. Server-side prepared statements are unsafe there:
+    a later query can land on a different backend, and psycopg's cached
+    statement names then collide with "prepared statement already exists" /
+    "prepared statement does not exist" -- intermittent, not reproducible
+    per-request, and not tied to any one user, because which backend a
+    query lands on is effectively random. Reproduced this exact failure
+    signature live against production before finding the missing fix (this
+    file's own prior comment named the gap but nothing had closed it yet);
+    the mirrored pattern below matches the reference project's
+    apps/api/app/database.py, referenced by that comment.
     """
+    return ":6543" in database_url
+
+
+class Database:
+    """Thin async wrapper over a psycopg3 connection pool."""
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._pool: AsyncConnectionPool | None = None
 
     async def open(self) -> None:
+        pooled = _uses_transaction_pooler(self._settings.database_url)
+        connection_kwargs: dict[str, Any] = {"autocommit": True, "row_factory": dict_row}
+        if pooled:
+            connection_kwargs["prepare_threshold"] = None
+        # A transaction-mode pooler can also route two connections from the
+        # same pool to different backends mid-session in ways a larger pool
+        # makes more likely to surface -- kept small when pooled, same
+        # reasoning the reference project's own pool-size clamp documents.
+        max_size = 3 if pooled else 5
         self._pool = AsyncConnectionPool(
             self._settings.database_url,
             min_size=1,
-            max_size=5,
-            kwargs={"autocommit": True, "row_factory": dict_row},
+            max_size=max_size,
+            kwargs=connection_kwargs,
             open=False,
         )
         await self._pool.open()
