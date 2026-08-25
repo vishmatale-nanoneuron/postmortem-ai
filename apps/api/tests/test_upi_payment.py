@@ -115,6 +115,23 @@ async def test_submitting_a_claim_does_not_itself_grant_access(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_reused_reference_is_rejected_automatically(context) -> None:
+    # Real UPI/wire references are unique per transaction. A second claim
+    # (same or different account) reusing one can only be a mistake or an
+    # attempt to get approved twice off one real payment -- rejected at
+    # submission, before it ever becomes a pending claim a founder could
+    # accidentally approve.
+    client, _, _ = context
+    await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+
+    first = await client.post("/v1/billing/upi/claim", json={"reference": "UTR-REUSED-REF"})
+    assert first.status_code == 201, first.text
+
+    second = await client.post("/v1/billing/upi/claim", json={"reference": "UTR-REUSED-REF"})
+    assert second.status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_a_founder_approving_a_claim_grants_access(context) -> None:
     client, database, application = context
     await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})

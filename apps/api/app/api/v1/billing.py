@@ -213,6 +213,23 @@ class ClaimOut(BaseModel):
 async def _insert_claim(
     database: Database, user: User, method: str, currency: str, amount: int, reference: str
 ) -> ClaimOut:
+    # A real UPI/wire transaction reference is unique per transaction --
+    # amount and currency are already server-derived (never client input,
+    # so a bogus amount can't be submitted at all), but nothing previously
+    # stopped the same reference string from being reused across multiple
+    # claims (same or different accounts), which can only mean a mistake
+    # or an attempt to get approved twice off one real payment. Rejected
+    # automatically at submission, before it ever becomes a pending claim
+    # a founder could accidentally approve.
+    existing = await database.fetch_one(
+        "SELECT id FROM payment_claims WHERE reference=%s AND status != 'rejected'", (reference,)
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This reference has already been submitted. Contact the founder if this is a mistake.",
+        )
+
     now = int(time.time() * 1000)
     row = await database.fetch_one(
         """INSERT INTO payment_claims (user_id, amount_inr, currency, method, reference, status, created_at)

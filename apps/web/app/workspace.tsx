@@ -179,7 +179,20 @@ function PaymentClaimsReview() {
   }, []);
   usePolling(() => void refresh(), POLL_INTERVAL_MS);
 
-  async function act(claimId: string, action: "approve" | "reject") {
+  async function act(claimId: string, action: "approve" | "reject", reference: string) {
+    // Approving is what actually grants access -- a single accidental
+    // click here previously had no safety net at all (this is exactly how
+    // a claim with no real payment behind it got approved once already).
+    // No amount of code can verify money actually arrived in a real bank
+    // account without a payment-gateway integration (a bigger, separate
+    // piece of work); this is the check that IS possible: force a
+    // deliberate, specific confirmation before the request ever fires.
+    if (action === "approve") {
+      const confirmed = window.confirm(
+        `Approve reference "${reference}"?\n\nOnly click OK if you have personally checked your bank/UPI statement and confirmed this exact amount and reference actually arrived. This grants the client real paid access.`,
+      );
+      if (!confirmed) return;
+    }
     setBusyId(claimId);
     setError("");
     try {
@@ -214,7 +227,7 @@ function PaymentClaimsReview() {
                   <button
                     className="rounded-md bg-ink px-2 py-1 text-xs font-medium text-paper disabled:opacity-50"
                     disabled={busyId === claim.id}
-                    onClick={() => void act(claim.id, "approve")}
+                    onClick={() => void act(claim.id, "approve", claim.reference)}
                     type="button"
                   >
                     Approve
@@ -222,7 +235,7 @@ function PaymentClaimsReview() {
                   <button
                     className="rounded-md border border-line px-2 py-1 text-xs text-muted disabled:opacity-50"
                     disabled={busyId === claim.id}
-                    onClick={() => void act(claim.id, "reject")}
+                    onClick={() => void act(claim.id, "reject", claim.reference)}
                     type="button"
                   >
                     Reject
