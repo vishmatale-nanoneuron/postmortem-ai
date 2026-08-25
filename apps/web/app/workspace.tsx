@@ -3,12 +3,16 @@ import { useEffect, useState } from "react";
 import {
   api,
   billing,
+  founderBilling,
   type BillingStatus,
   type DashboardSummary,
   type Evidence,
   type FounderSummary,
   type Incident,
+  type PaymentClaim,
   type Postmortem,
+  type UpiClaim,
+  type UpiInfo,
 } from "./api";
 import { auth, type AuthUser } from "./auth";
 import { Hero, HowItWorks, WhatThisIsnt } from "./landing";
@@ -91,6 +95,7 @@ function FounderDashboard() {
     ["Published postmortems", summary.published_postmortems],
     ["AI runs (ok / failed)", `${summary.ai_runs_succeeded} / ${summary.ai_runs_failed}`],
     ["Avg draft latency", summary.ai_runs_avg_latency_ms != null ? `${summary.ai_runs_avg_latency_ms} ms` : "--"],
+    ["Pending payment claims", summary.pending_payment_claims],
   ];
 
   return (
@@ -133,7 +138,78 @@ function FounderDashboard() {
           ))
         )}
       </ul>
+      <PaymentClaimsReview />
     </section>
+  );
+}
+
+function PaymentClaimsReview() {
+  const [claims, setClaims] = useState<PaymentClaim[]>([]);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState("");
+
+  async function refresh() {
+    setClaims(await founderBilling.paymentClaims());
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  async function act(claimId: string, action: "approve" | "reject") {
+    setBusyId(claimId);
+    setError("");
+    try {
+      if (action === "approve") await founderBilling.approveClaim(claimId);
+      else await founderBilling.rejectClaim(claimId);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update claim.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <>
+      <h3 className="mt-4 mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">UPI payment claims</h3>
+      <ul className="space-y-1.5 text-sm">
+        {claims.length === 0 ? (
+          <li className="text-muted">None yet.</li>
+        ) : (
+          claims.map((claim) => (
+            <li key={claim.id} className="flex items-center justify-between gap-2 rounded-md bg-paper px-3 py-2">
+              <span className="min-w-0 flex-1">
+                <span className="font-medium">{claim.email}</span> -- ₹{claim.amount_inr}, ref{" "}
+                <span className="font-mono text-xs">{claim.reference}</span>
+                <span className="text-muted"> ({claim.status})</span>
+              </span>
+              {claim.status === "pending" && (
+                <span className="flex shrink-0 gap-1.5">
+                  <button
+                    className="rounded-md bg-ink px-2 py-1 text-xs font-medium text-paper disabled:opacity-50"
+                    disabled={busyId === claim.id}
+                    onClick={() => void act(claim.id, "approve")}
+                    type="button"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    className="rounded-md border border-line px-2 py-1 text-xs text-muted disabled:opacity-50"
+                    disabled={busyId === claim.id}
+                    onClick={() => void act(claim.id, "reject")}
+                    type="button"
+                  >
+                    Reject
+                  </button>
+                </span>
+              )}
+            </li>
+          ))
+        )}
+      </ul>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    </>
   );
 }
 
@@ -200,31 +276,74 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
 }
 
 function SubscribeGate() {
+  const [upi, setUpi] = useState<UpiInfo | null>(null);
+  const [claims, setClaims] = useState<UpiClaim[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
-  async function startCheckout() {
+  async function refresh() {
+    setUpi(await billing.upiInfo());
+    setClaims(await billing.myUpiClaims());
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  async function submitReference(form: FormData) {
+    const reference = String(form.get("reference") || "").trim();
+    if (reference.length < 4) return setError("Enter the UPI transaction reference / UTR number.");
     setBusy(true);
     setError("");
     try {
-      const { url } = await billing.checkout();
-      window.location.href = url;
+      await billing.submitUpiClaim(reference);
+      await refresh();
+      setMessage("Submitted. The founder will review and activate your account shortly.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start checkout.");
+      setError(err instanceof Error ? err.message : "Could not submit payment reference.");
+    } finally {
       setBusy(false);
     }
   }
 
+  const latestPending = claims.find((c) => c.status === "pending");
+
   return (
     <section className={card}>
       <h2 className="mb-2 text-base font-semibold">Subscribe to use PostMortem AI</h2>
-      <p className="mb-4 text-sm text-muted">
-        $49/month, billed monthly via Stripe. An active subscription is required to create incidents, record
-        evidence, draft, and publish postmortems -- viewing your existing history stays available either way.
-      </p>
-      <button className={primaryButton} disabled={busy} onClick={() => void startCheckout()} type="button">
-        {busy ? "Redirecting to Stripe..." : "Subscribe -- $49/mo"}
-      </button>
+      {upi?.configured ? (
+        <>
+          <p className="mb-3 text-sm text-muted">
+            Pay ₹{upi.amount_inr}/month via UPI to <span className="font-medium text-ink">{upi.upi_id}</span> (
+            {upi.payee_name}), then submit the transaction reference below. An active subscription is required to
+            create incidents, record evidence, draft, and publish postmortems -- viewing your existing history
+            stays available either way.
+          </p>
+          {latestPending ? (
+            <p className="rounded-md bg-paper px-3 py-2 text-sm text-muted">
+              Reference <span className="font-medium text-ink">{latestPending.reference}</span> submitted, awaiting
+              review.
+            </p>
+          ) : (
+            <form action={submitReference}>
+              <label className={fieldLabel}>UPI transaction reference / UTR number</label>
+              <input className={fieldInput} name="reference" placeholder="e.g. 123456789012" required />
+              <button className={primaryButton} disabled={busy} type="submit">
+                {busy ? "Submitting..." : "I've paid -- submit reference"}
+              </button>
+            </form>
+          )}
+          {message && <p className="mt-3 text-sm text-accent">{message}</p>}
+          {claims.some((c) => c.status === "rejected") && !latestPending && (
+            <p className="mt-3 text-sm text-red-600">
+              A previous reference was rejected -- double-check the amount and UPI ID, then resubmit.
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="text-sm text-muted">Payment is not yet configured. Check back soon.</p>
+      )}
       {error && (
         <p role="status" className="mt-3 text-sm text-red-600">
           {error}
@@ -236,43 +355,22 @@ function SubscribeGate() {
 
 function ManageBilling() {
   const [status, setStatus] = useState<BillingStatus | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
 
   useEffect(() => {
     billing.status().then(setStatus).catch(() => setStatus(null));
   }, []);
 
-  async function openPortal() {
-    setBusy(true);
-    setError("");
-    try {
-      const { url } = await billing.portal();
-      window.location.href = url;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not open billing portal.");
-      setBusy(false);
-    }
-  }
+  if (!status) return null;
 
   return (
     <section className={card}>
-      <div className="flex items-center justify-between">
-        <div className="text-sm">
-          <span className="font-medium">Subscription:</span> {status?.subscription_status ?? "..."}
-          {status?.current_period_end && (
-            <span className="text-muted"> -- renews {new Date(status.current_period_end * 1000).toLocaleDateString()}</span>
-          )}
-        </div>
-        <button className={secondaryButton} disabled={busy} onClick={() => void openPortal()} type="button">
-          Manage billing
-        </button>
+      <div className="text-sm">
+        <span className="font-medium">Subscription:</span> {status.subscription_status}
+        {status.current_period_end && (
+          <span className="text-muted"> -- renews {new Date(status.current_period_end * 1000).toLocaleDateString()}</span>
+        )}
       </div>
-      {error && (
-        <p role="status" className="mt-3 text-sm text-red-600">
-          {error}
-        </p>
-      )}
+      <p className="mt-1 text-xs text-muted">Paid via UPI -- to renew or ask a question, contact the founder directly.</p>
     </section>
   );
 }

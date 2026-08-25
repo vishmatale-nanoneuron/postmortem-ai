@@ -7,10 +7,11 @@ invisible to this backend).
 """
 
 import logging
+import time
 
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ...auth import User, current_user
 from ...database import Database
@@ -45,6 +46,11 @@ class BillingStatusOut(BaseModel):
 
 
 def _client(settings: Settings) -> stripe.StripeClient:
+    if not settings.stripe_secret_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Card payments are not available yet -- use UPI (/v1/billing/upi/info)",
+        )
     return stripe.StripeClient(api_key=settings.stripe_secret_key)
 
 
@@ -140,6 +146,9 @@ async def stripe_webhook(
     database: Database = Depends(get_database),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, bool]:
+    if not settings.stripe_webhook_secret:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stripe is not configured")
+
     payload = await request.body()
     signature = request.headers.get("stripe-signature", "")
     try:
@@ -169,3 +178,74 @@ async def stripe_webhook(
 
     logger.info("stripe_webhook_handled type=%s", event["type"])
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Manual UPI payment: no gateway, no KYC. The client pays the founder's UPI
+# ID directly and submits a transaction reference; the founder reviews and
+# approves from the founder dashboard (see api/v1/founder.py), which is what
+# actually flips subscription_status to 'active' -- submitting a claim here
+# does not itself grant access.
+# ---------------------------------------------------------------------------
+
+
+class UpiInfoOut(BaseModel):
+    upi_id: str
+    payee_name: str
+    amount_inr: int
+    configured: bool
+
+
+class UpiClaimIn(BaseModel):
+    reference: str = Field(min_length=4, max_length=200)
+
+
+class UpiClaimOut(BaseModel):
+    id: str
+    amount_inr: int
+    reference: str
+    status: str
+    created_at: int
+
+
+@router.get("/upi/info", response_model=UpiInfoOut)
+async def upi_info(settings: Settings = Depends(get_settings)) -> UpiInfoOut:
+    return UpiInfoOut(
+        upi_id=settings.founder_upi_id,
+        payee_name=settings.founder_upi_payee_name,
+        amount_inr=settings.subscription_price_inr,
+        configured=bool(settings.founder_upi_id),
+    )
+
+
+@router.post("/upi/claim", status_code=status.HTTP_201_CREATED, response_model=UpiClaimOut)
+async def submit_upi_claim(
+    payload: UpiClaimIn,
+    database: Database = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+    user: User = Depends(current_user),
+) -> UpiClaimOut:
+    if not settings.founder_upi_id:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="UPI payment is not configured")
+    now = int(time.time() * 1000)
+    row = await database.fetch_one(
+        """INSERT INTO payment_claims (user_id, amount_inr, reference, status, created_at)
+           VALUES (%s, %s, %s, 'pending', %s)
+           RETURNING id::text, amount_inr, reference, status, created_at""",
+        (user.id, settings.subscription_price_inr, payload.reference, now),
+    )
+    assert row is not None
+    return UpiClaimOut(**row)
+
+
+@router.get("/upi/claims", response_model=list[UpiClaimOut])
+async def my_upi_claims(
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> list[UpiClaimOut]:
+    rows = await database.fetch_all(
+        """SELECT id::text, amount_inr, reference, status, created_at
+           FROM payment_claims WHERE user_id=%s ORDER BY created_at DESC""",
+        (user.id,),
+    )
+    return [UpiClaimOut(**row) for row in rows]

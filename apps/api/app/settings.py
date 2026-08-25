@@ -20,13 +20,22 @@ class Settings(BaseSettings):
     # if that should ever change.
     founder_email: str = Field(default="vish.matale@gmail.com", alias="FOUNDER_EMAIL")
 
-    # Real Stripe subscription billing -- these are all required in
-    # production (no defaults) so a misconfigured deploy fails at startup
-    # rather than silently letting checkout/webhook routes 500 per request.
-    stripe_secret_key: str = Field(alias="STRIPE_SECRET_KEY")
-    stripe_webhook_secret: str = Field(alias="STRIPE_WEBHOOK_SECRET")
-    stripe_price_id: str = Field(alias="STRIPE_PRICE_ID")
+    # Stripe subscription billing -- built and tested (sandbox), but
+    # optional at startup: going live needs Indian business KYC (PAN) that
+    # isn't done yet, so these are unset in production for now and the
+    # /v1/billing/* Stripe routes 503 rather than the app failing to boot.
+    # Real payment today goes through the UPI flow below instead.
+    stripe_secret_key: str | None = Field(default=None, alias="STRIPE_SECRET_KEY")
+    stripe_webhook_secret: str | None = Field(default=None, alias="STRIPE_WEBHOOK_SECRET")
+    stripe_price_id: str | None = Field(default=None, alias="STRIPE_PRICE_ID")
     frontend_url: str = Field(default="http://localhost:3000", alias="FRONTEND_URL")
+
+    # Manual UPI payment: the client pays this UPI ID directly and submits
+    # the transaction reference; the founder reviews and approves in the
+    # founder dashboard. No gateway, no KYC -- real money, human-verified.
+    founder_upi_id: str = Field(default="", alias="FOUNDER_UPI_ID")
+    founder_upi_payee_name: str = Field(default="PostMortem AI", alias="FOUNDER_UPI_PAYEE_NAME")
+    subscription_price_inr: int = Field(default=999, alias="SUBSCRIPTION_PRICE_INR")
 
     @property
     def cors_origins(self) -> list[str]:

@@ -71,6 +71,7 @@ export type FounderSummary = {
   ai_runs_succeeded: number;
   ai_runs_failed: number;
   ai_runs_avg_latency_ms: number | null;
+  pending_payment_claims: number;
   recent_users: { id: string; email: string; created_at: number }[];
   recent_ai_runs: {
     id: string;
@@ -90,10 +91,28 @@ export type BillingStatus = {
   has_active_subscription: boolean;
 };
 
+export type UpiInfo = { upi_id: string; payee_name: string; amount_inr: number; configured: boolean };
+
+export type UpiClaim = { id: string; amount_inr: number; reference: string; status: string; created_at: number };
+
+export type PaymentClaim = UpiClaim & { user_id: string; email: string };
+
 export const billing = {
   status: () => request<BillingStatus>("/v1/billing/status"),
   checkout: () => request<{ url: string }>("/v1/billing/checkout", { method: "POST" }),
   portal: () => request<{ url: string }>("/v1/billing/portal", { method: "POST" }),
+  upiInfo: () => request<UpiInfo>("/v1/billing/upi/info"),
+  submitUpiClaim: (reference: string) =>
+    request<UpiClaim>("/v1/billing/upi/claim", { method: "POST", body: JSON.stringify({ reference }) }),
+  myUpiClaims: () => request<UpiClaim[]>("/v1/billing/upi/claims"),
+};
+
+export const founderBilling = {
+  paymentClaims: () => request<PaymentClaim[]>("/v1/founder/payment-claims"),
+  approveClaim: (claimId: string) =>
+    request<PaymentClaim>(`/v1/founder/payment-claims/${claimId}/approve`, { method: "POST" }),
+  rejectClaim: (claimId: string) =>
+    request<PaymentClaim>(`/v1/founder/payment-claims/${claimId}/reject`, { method: "POST" }),
 };
 
 export const api = {
