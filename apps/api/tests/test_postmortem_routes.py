@@ -405,6 +405,79 @@ async def test_publishing_records_a_named_approver(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_draft_postmortem_cannot_be_made_public(context) -> None:
+    client, _, _, _ = context
+    await seed_two_entries(client)
+    await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
+
+    response = await client.patch(
+        f"/v1/postmortems/incidents/{INCIDENT}/public", json={"is_public": True}
+    )
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_making_a_published_postmortem_public_generates_a_stable_slug(context) -> None:
+    client, _, database, _ = context
+    await seed_two_entries(client)
+    await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
+    await client.post(f"/v1/postmortems/incidents/{INCIDENT}/publish")
+
+    made_public = await client.patch(
+        f"/v1/postmortems/incidents/{INCIDENT}/public", json={"is_public": True}
+    )
+    assert made_public.status_code == 200, made_public.text
+    body = made_public.json()
+    assert body["is_public"] is True
+    assert body["slug"]
+    first_slug = body["slug"]
+
+    # Toggling off and back on must NOT change the slug -- a real, already
+    # shared/indexed URL would otherwise break.
+    await client.patch(f"/v1/postmortems/incidents/{INCIDENT}/public", json={"is_public": False})
+    made_public_again = await client.patch(
+        f"/v1/postmortems/incidents/{INCIDENT}/public", json={"is_public": True}
+    )
+    assert made_public_again.json()["slug"] == first_slug
+
+    row = await database.fetch_one(
+        "SELECT slug FROM incident_postmortems WHERE incident_id=%s", (INCIDENT,)
+    )
+    assert row["slug"] == first_slug
+
+
+@pytest.mark.asyncio
+async def test_public_postmortem_is_readable_unauthenticated_private_is_not(context) -> None:
+    client, _, _, application = context
+    await seed_two_entries(client)
+    await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
+    await client.post(f"/v1/postmortems/incidents/{INCIDENT}/publish")
+    made_public = await client.patch(
+        f"/v1/postmortems/incidents/{INCIDENT}/public", json={"is_public": True}
+    )
+    slug = made_public.json()["slug"]
+
+    async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as anon:
+        public_response = await anon.get(f"/v1/postmortems/public/{slug}")
+        assert public_response.status_code == 200
+        body = public_response.json()
+        assert body["incident_title"] == "Checkout outage"
+        assert "client_email" not in body
+        assert "id" not in body  # no internal ids leaked
+
+        listing = await anon.get("/v1/postmortems/public")
+        assert listing.status_code == 200
+        assert any(item["slug"] == slug for item in listing.json())
+
+        await client.patch(f"/v1/postmortems/incidents/{INCIDENT}/public", json={"is_public": False})
+        now_private = await anon.get(f"/v1/postmortems/public/{slug}")
+        assert now_private.status_code == 404
+
+        not_a_real_slug = await anon.get("/v1/postmortems/public/this-slug-does-not-exist")
+        assert not_a_real_slug.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_publishing_notifies_slack_and_creates_a_linear_issue_per_action(
     context, monkeypatch: pytest.MonkeyPatch
 ) -> None:

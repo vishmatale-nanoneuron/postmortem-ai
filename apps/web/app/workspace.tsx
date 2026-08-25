@@ -763,6 +763,19 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
     }
   }
 
+  async function togglePublic() {
+    if (!selectedId || !postmortem) return;
+    setBusy(true);
+    try {
+      const updated = await api.updatePublicVisibility(selectedId, !postmortem.is_public);
+      setPostmortem(updated);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not update visibility.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <>
       <p className="mb-6 text-sm text-muted">Evidence-grounded incident postmortem drafting.</p>
@@ -936,6 +949,21 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
                   <p className="text-xs text-muted">
                     Approved by {postmortem.approved_by} at {new Date(postmortem.approved_at ?? 0).toLocaleString()}
                   </p>
+                )}
+                {postmortem.status === "published" && (
+                  <div className="mt-1">
+                    <button className={secondaryButton} disabled={busy} onClick={() => void togglePublic()} type="button">
+                      {postmortem.is_public ? "Make private" : "Make public"}
+                    </button>
+                    {postmortem.is_public && postmortem.slug && (
+                      <p className="mt-1.5 text-xs text-muted">
+                        Public at{" "}
+                        <a className="underline underline-offset-2" href={`/postmortems/${postmortem.slug}`} target="_blank" rel="noreferrer">
+                          /postmortems/{postmortem.slug}
+                        </a>
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
             )}

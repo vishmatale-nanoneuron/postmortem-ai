@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 
 import httpx
@@ -508,7 +509,7 @@ async def _load_postmortem(database: Database, incident_id: str) -> dict[str, ob
     postmortem = await database.fetch_one(
         """SELECT id::text, status, summary, root_cause, detection, resolution,
                   contributing_factors, cited_evidence_ids, unsupported_claims_dropped,
-                  prompt_version, approved_by, approved_at
+                  prompt_version, approved_by, approved_at, is_public, slug
            FROM incident_postmortems WHERE incident_id=%s""",
         (incident_id,),
     )
@@ -524,3 +525,97 @@ async def _load_postmortem(database: Database, incident_id: str) -> dict[str, ob
 
 def json_list(values: list[str]) -> str:
     return json.dumps(values)
+
+
+def slugify(title: str, incident_id: str) -> str:
+    """A public URL's slug -- kebab-cased title plus a short suffix
+    derived from the incident id, so two incidents titled the same way
+    still get distinct URLs without a retry-on-collision loop."""
+    base = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:80] or "postmortem"
+    suffix = incident_id.split("-")[-1][-8:] if "-" in incident_id else incident_id[-8:]
+    return f"{base}-{suffix}"
+
+
+class PublicVisibilityUpdate(BaseModel):
+    is_public: bool
+
+
+@router.patch("/incidents/{incident_id}/public")
+async def update_public_visibility(
+    incident_id: str,
+    payload: PublicVisibilityUpdate,
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> dict[str, object]:
+    """Opt a PUBLISHED postmortem in or out of having a public, SEO-indexed
+    page at /postmortems/{slug}. Owner-only, but deliberately not gated
+    behind require_active_subscription -- managing the privacy of already-
+    published content shouldn't be blocked by a lapsed subscription."""
+    incident = await require_incident(database, incident_id, user.email)
+    existing = await database.fetch_one(
+        "SELECT id::text, status, slug FROM incident_postmortems WHERE incident_id=%s", (incident_id,)
+    )
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No postmortem drafted yet")
+    if existing["status"] != "published":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only a published postmortem can be made public")
+
+    # Generate the slug once, the first time this postmortem ever goes
+    # public, and never again -- a stable URL matters for real SEO/
+    # sharing; regenerating on every re-publish or re-toggle would break
+    # every link and search index entry pointing at the old one.
+    slug = existing["slug"]
+    if payload.is_public and not slug:
+        slug = slugify(str(incident["title"]), incident_id)
+
+    await database.execute(
+        "UPDATE incident_postmortems SET is_public=%s, slug=%s WHERE incident_id=%s",
+        (payload.is_public, slug, incident_id),
+    )
+    return await _load_postmortem(database, incident_id)
+
+
+class PublicPostmortemOut(BaseModel):
+    slug: str
+    incident_title: str
+    severity: str
+    summary: str
+    root_cause: str
+    detection: str
+    resolution: str
+    contributing_factors: list[str]
+    approved_at: int | None
+    published_at: int | None
+
+
+@router.get("/public", response_model=list[PublicPostmortemOut])
+async def list_public_postmortems(database: Database = Depends(get_database)) -> list[PublicPostmortemOut]:
+    """Unauthenticated -- every currently-public postmortem, most recently
+    approved first. Backs both the public index page and the sitemap; only
+    the fields safe to publish (no client_email, no internal ids)."""
+    rows = await database.fetch_all(
+        """SELECT p.slug, i.title AS incident_title, i.severity, p.summary, p.root_cause,
+                  p.detection, p.resolution, p.contributing_factors, p.approved_at, p.updated_at AS published_at
+           FROM incident_postmortems p JOIN incidents i ON i.id = p.incident_id
+           WHERE p.is_public = true AND p.status = 'published'
+           ORDER BY p.approved_at DESC NULLS LAST
+           LIMIT 200"""
+    )
+    return [PublicPostmortemOut(**row) for row in rows]
+
+
+@router.get("/public/{slug}", response_model=PublicPostmortemOut)
+async def get_public_postmortem(slug: str, database: Database = Depends(get_database)) -> PublicPostmortemOut:
+    """Unauthenticated -- a single public postmortem by its slug. 404s
+    (not 403) for a private or nonexistent slug, so this can't be used to
+    distinguish "exists but private" from "never existed"."""
+    row = await database.fetch_one(
+        """SELECT p.slug, i.title AS incident_title, i.severity, p.summary, p.root_cause,
+                  p.detection, p.resolution, p.contributing_factors, p.approved_at, p.updated_at AS published_at
+           FROM incident_postmortems p JOIN incidents i ON i.id = p.incident_id
+           WHERE p.slug=%s AND p.is_public = true AND p.status = 'published'""",
+        (slug,),
+    )
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    return PublicPostmortemOut(**row)

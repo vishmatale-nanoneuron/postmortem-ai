@@ -49,6 +49,8 @@ export type Postmortem = {
   approved_by: string | null;
   approved_at: number | null;
   actions: PostmortemAction[];
+  is_public: boolean;
+  slug: string | null;
 };
 
 export type DashboardSummary = {
@@ -160,6 +162,11 @@ export const api = {
     request<Incident>(`/v1/postmortems/incidents/${incidentId}/status`, {
       method: "PATCH",
       body: JSON.stringify({ status }),
+    }),
+  updatePublicVisibility: (incidentId: string, isPublic: boolean) =>
+    request<Postmortem>(`/v1/postmortems/incidents/${incidentId}/public`, {
+      method: "PATCH",
+      body: JSON.stringify({ is_public: isPublic }),
     }),
   founderSummary: () => request<FounderSummary>("/v1/founder/summary"),
   createIncident: (input: { title: string; severity: string; impact?: string }) =>
