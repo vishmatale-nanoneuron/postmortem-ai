@@ -17,6 +17,7 @@ import {
 } from "./api";
 import { auth, type AuthUser } from "./auth";
 import { Hero, HowItWorks, WhatThisIsnt } from "./landing";
+import { usePolling } from "./use-polling";
 import { evidenceSchema, firstError, incidentSchema, loginSchema, paymentReferenceSchema, registerSchema } from "./validation";
 
 const card = "rounded-lg border border-line bg-white p-4 shadow-sm mb-4";
@@ -78,16 +79,21 @@ export default function Workspace() {
   );
 }
 
+const POLL_INTERVAL_MS = 20_000;
+
 function FounderDashboard() {
   const [summary, setSummary] = useState<FounderSummary | null>(null);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  function refresh() {
     api
       .founderSummary()
       .then(setSummary)
       .catch((err) => setError(err instanceof Error ? err.message : "Could not load founder summary."));
-  }, []);
+  }
+
+  useEffect(refresh, []);
+  usePolling(refresh, POLL_INTERVAL_MS);
 
   if (error) return <p className="mb-4 text-sm text-red-600">{error}</p>;
   if (!summary) return null;
@@ -161,6 +167,7 @@ function PaymentClaimsReview() {
   useEffect(() => {
     void refresh();
   }, []);
+  usePolling(() => void refresh(), POLL_INTERVAL_MS);
 
   async function act(claimId: string, action: "approve" | "reject") {
     setBusyId(claimId);
@@ -556,10 +563,14 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
   useEffect(() => {
     void refreshIncidents();
   }, []);
+  usePolling(() => void refreshIncidents(), POLL_INTERVAL_MS);
 
   useEffect(() => {
     if (selectedId) void refreshSelected(selectedId);
   }, [selectedId]);
+  usePolling(() => {
+    if (selectedId) void refreshSelected(selectedId);
+  }, POLL_INTERVAL_MS);
 
   async function createIncident(form: FormData) {
     const payload = {
