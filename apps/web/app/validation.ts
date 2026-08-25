@@ -30,6 +30,13 @@ export const evidenceSchema = z.object({
   detail: z.string().max(4000).optional(),
 });
 
+// Mirrors UpiClaimIn/WireClaimIn in apps/api/app/api/v1/billing.py -- both
+// use the identical reference constraint, so one shared schema rather
+// than two copies of the same rule.
+export const paymentReferenceSchema = z.object({
+  reference: z.string().min(4).max(200),
+});
+
 // Returns the first validation error message, or null if valid -- the
 // shape every form on this page actually needs (one message to show the
 // user), rather than making each call site deal with Zod's full issue

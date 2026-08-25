@@ -17,7 +17,7 @@ import {
 } from "./api";
 import { auth, type AuthUser } from "./auth";
 import { Hero, HowItWorks, WhatThisIsnt } from "./landing";
-import { evidenceSchema, firstError, incidentSchema, loginSchema, registerSchema } from "./validation";
+import { evidenceSchema, firstError, incidentSchema, loginSchema, paymentReferenceSchema, registerSchema } from "./validation";
 
 const card = "rounded-lg border border-line bg-white p-4 shadow-sm mb-4";
 const fieldLabel = "block text-xs font-medium text-muted mb-1";
@@ -332,7 +332,8 @@ function UpiPayment() {
 
   async function submitReference(form: FormData) {
     const reference = String(form.get("reference") || "").trim();
-    if (reference.length < 4) return setError("Enter the UPI transaction reference / UTR number.");
+    const validationError = firstError(paymentReferenceSchema, { reference });
+    if (validationError) return setError(validationError);
     setBusy(true);
     setError("");
     try {
@@ -408,7 +409,8 @@ function WirePayment() {
 
   async function submitReference(form: FormData) {
     const reference = String(form.get("reference") || "").trim();
-    if (reference.length < 4) return setError("Enter the SWIFT wire transaction reference.");
+    const validationError = firstError(paymentReferenceSchema, { reference });
+    if (validationError) return setError(validationError);
     setBusy(true);
     setError("");
     try {
