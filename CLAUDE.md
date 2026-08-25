@@ -11,10 +11,25 @@ that cites only that evidence, publish it once a human approves. The core bet
 is that a trustworthy AI-generated postmortem needs code-level grounding, not
 just a well-worded prompt — see "The grounding algorithm" below.
 
-**Current scope (deliberate):** real email/password auth (see below), but
-still single-user-per-account, no organizations/multi-tenant, no billing.
-**Deployed and live** (see "Deployment" below) — this is not a local-only
-MVP anymore.
+**Current scope (deliberate):** real email/password auth (see below), a
+founder role and a paywall on the actual product work (see "Founder access"
+and "Billing / payments" below), but still single-user-per-account, no
+organizations/multi-tenant. **Deployed and live** (see "Deployment" below)
+— this is not a local-only MVP anymore.
+
+**Production migrations 0006-0008 status**: written, tested locally
+against a real Postgres, and the code paths that depend on them
+(`subscription_status`, `payment_claims`, founder dashboard, billing) are
+already deployed live — but as of this writing those migrations have not
+yet been confirmed applied against the real production database, because
+`DATABASE_URL` is a Vercel "Sensitive" env var and is permanently
+write-only (unreadable via CLI/dashboard/API by anyone, including the
+person who set it, once saved that way) — see "Deployment" below for why
+that matters and how to unblock it. Until they're applied, `/v1/auth/register`,
+`/v1/auth/login`, and everything downstream of them 500 in production. Check
+this by hand (`curl -X POST https://postmortem-ai-api.vercel.app/v1/auth/register
+-d '{"email":"x@example.com","password":"testtesttest"}'` — 500 means still
+pending, 201/409 means it's done) rather than assuming either state.
 
 ## Deployment
 
@@ -64,6 +79,35 @@ projects under the `nanoneuronais-projects` team:
   wasn't confirmed. If a future deploy gets stuck in `BLOCKED`, check the
   team's deployment-protection/security settings before assuming it's a
   code problem.
+- **Vercel "Sensitive" env vars are permanently write-only — confirmed the
+  hard way**: every env var set via `vercel env add` on this project
+  (`DATABASE_URL`, `STRIPE_SECRET_KEY`, the UPI/wire settings, etc.)
+  defaults to Sensitive visibility. Once saved that way, its value can
+  never be read back again by anyone or anything — not `vercel env ls`,
+  not `vercel env pull` (prints `[SENSITIVE]` as a literal string, which
+  `scripts/migrate.mjs` then fails to parse as a URL), not the dashboard,
+  regardless of who's running the command or whether it's an agent session
+  or the account owner's own terminal (verified both ways). This is a real
+  Vercel platform guarantee, not an agent-specific restriction — don't
+  assume switching to a "regular" terminal session fixes it. **The only
+  way to recover a value set this way is from its original source** (here,
+  Supabase's own dashboard → Project Settings → Database → Connection
+  string, for `DATABASE_URL`) — there is no Vercel-side recovery path.
+  If you need to read back an env var's value later, set it as
+  "Non-sensitive" instead (accepting the tradeoff that it's then visible
+  in the dashboard/CLI/logs).
+- **Vercel's own MCP server connects fine; Supabase's does not (as of this
+  session)** — `claude mcp add-json`/`claude mcp add --scope project`
+  against `https://mcp.supabase.com/mcp?project_ref=...` repeatedly
+  returned `{"message":"resource: Resource must be a valid MCP endpoint"}`
+  even with a correctly project-scoped config (see `.mcp.json` at repo
+  root). Also, this session runs inside a VS Code extension, and
+  Supabase's own setup docs state authentication must happen in "a
+  regular terminal, not an IDE extension" — and even a successful
+  terminal-side authentication would authorize a *different* running
+  session, not necessarily the one doing the work. Don't assume Supabase
+  MCP is a faster path than the dashboard without re-verifying this is
+  fixed.
 
 ## Stack
 
@@ -168,6 +212,88 @@ auth system, reviewed and found sound earlier in the session that built this:
 **Deferred, not built:** password reset, email verification, OAuth/SSO,
 multi-tenant organizations.
 
+## Founder access
+
+Not a separate account type or password — `User.is_founder` (`apps/api/app/auth.py`)
+is a constant-time comparison of the authenticated account's email against
+`Settings.founder_email` (defaults to `vish.matale@gmail.com`; override via
+`FOUNDER_EMAIL`). Registering or logging in with that exact email *is* the
+founder login. `current_founder` (also `auth.py`) 403s anyone else; it's
+independent of subscription state (a founder never needs to pay — see
+"Billing / payments" below).
+
+- `apps/web/app/founder/` — a separate, unlinked, `noindex`'d login/register
+  page (not the public landing page's `AuthGate`). Denies access generically
+  (no account-existence leak) and signs a session back out immediately if
+  it isn't the founder account, rather than leaving a non-founder session
+  sitting on that page.
+- `apps/api/app/api/v1/founder.py` — `GET /v1/founder/summary` (platform-
+  wide aggregates: users, incidents, postmortems, `ai_runs` success/
+  failure/latency, recent signups) and the payment-claims review routes
+  (see "Billing / payments").
+- **The actual security-sensitive moment**: the founder email is a fixed,
+  known value, and `register()` is first-come-first-served on a unique
+  email — whoever registers it first owns the founder account. Every
+  registration attempt against that email (successful or a 409 conflict)
+  is logged (`founder_email_registration_succeeded`/`_conflict` in
+  `api/v1/auth.py`) so this would be visible if it ever happened. Claim it
+  immediately once the account doesn't already exist — don't leave that
+  window open.
+
+## Dashboards
+
+- **Client** (`workspace.tsx`'s `IncidentWorkspace`): `GET
+  /v1/postmortems/summary` — per-account counts (open/resolved incidents,
+  drafted/published postmortems) plus a "mark resolved/reopen" action via
+  `PATCH /v1/postmortems/incidents/{id}/status`. Closed a real gap found
+  while building this: `incidents.status` previously never transitioned
+  away from `'open'` anywhere in the codebase.
+- **Founder** (`workspace.tsx`'s `FounderDashboard`, shown automatically
+  when `user.is_founder`): the platform-wide summary above, plus a
+  payment-claims review list (approve/reject buttons, see below).
+
+## Billing / payments
+
+The product's actual work — creating incidents, recording evidence,
+drafting, publishing, changing status — requires `User.has_active_subscription`
+(`require_active_subscription` dependency, `apps/api/app/auth.py`); read-only
+routes (list/summary/get) stay reachable so a lapsed account can still see
+its own history. Founders are exempt (see "Founder access" above). Two
+independent payment paths feed the same `users.subscription_status` field:
+
+- **Stripe** (`apps/api/app/api/v1/billing.py`, `/v1/billing/checkout`,
+  `/portal`, `/webhook`) — built and tested against a real Stripe sandbox
+  via the Vercel Marketplace integration, but **not live**: going live
+  needs Indian business KYC (a PAN) that hasn't been completed. All three
+  `STRIPE_*` settings are `Optional` for exactly this reason — unset in
+  production, and those three routes 503 with a pointer to UPI rather than
+  the app failing to boot. Webhook handles `checkout.session.completed`,
+  `customer.subscription.updated`/`.deleted`, `invoice.payment_failed`;
+  signature-verified via `STRIPE_WEBHOOK_SECRET`; no hardcoded
+  `payment_method_types` (Stripe determines eligible methods dynamically
+  from Dashboard settings — this is also why enabling UPI as a Stripe
+  payment method later needs no code change, only Dashboard config, once
+  KYC is done).
+- **Manual, human-verified** (`payment_claims` table, `0007`/`0008`
+  migrations) — the actual live path today. A client pays directly and
+  submits a transaction reference; the founder reviews and
+  approves/rejects from the founder dashboard
+  (`POST /v1/founder/payment-claims/{id}/approve`, which is what actually
+  sets `subscription_status='active'` plus a 30-day manual renewal
+  window — there is no gateway enforcing a real billing cycle here).
+  Submitting a claim does **not** itself grant access.
+  - **UPI** (`FOUNDER_UPI_ID`, `SUBSCRIPTION_PRICE_INR`, default ₹999/mo)
+    — India-only; UPI requires an Indian bank account on the payer's side,
+    there is no workaround for international clients.
+  - **International SWIFT wire** (`FOUNDER_BANK_*`, `WIRE_{USD,GBP,EUR}_*`
+    settings) — the second manual method, for clients UPI can't reach.
+    Beneficiary details are shared across currencies; correspondent
+    bank/SWIFT/nostro/ABA-or-IBAN differ per currency. `payment_claims.method`
+    (`'upi'`/`'wire'`) and `.currency` distinguish the two; `.amount_inr`
+    predates the wire method and is kept as the generic amount column
+    (name is a historical artifact, not a currency guarantee) since
+    migrations here are additive-only.
+
 ## The grounding algorithm (the actual point of this project)
 
 Two-layer defense, not one:
@@ -230,7 +356,12 @@ invented, uncited claim that survives `ground_draft`.
 
 - Real auth exists now (see "Authentication" above), but no multi-tenant
   organizations, password reset, email verification, or OAuth/SSO.
-- No deployment configuration (Vercel, Docker, CI) — verified locally only.
+- Production migrations 0006-0008 (subscription/payment-claims tables) not
+  yet confirmed applied — see "Production migrations 0006-0008 status" at
+  the top of this file for why and how to check.
+- Stripe billing is built and tested (sandbox) but not live — needs Indian
+  business KYC (PAN). Manual UPI/wire payment is the real live path; see
+  "Billing / payments" above.
 - `npm audit` on `apps/web` shows two remaining high-severity transitive
   vulnerabilities (`postcss`, `sharp`, pulled in by Next.js's build
   tooling) whose fix requires Next.js 16 (a breaking major-version jump).
