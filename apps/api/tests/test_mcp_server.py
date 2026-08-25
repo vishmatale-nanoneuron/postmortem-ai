@@ -243,6 +243,21 @@ async def test_run_read_only_sql_rejects_a_data_modifying_cte(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_read_only_sql_is_bounded_by_a_statement_timeout(context) -> None:
+    # Regression for a real gap: read_only_transaction() blocked a *write*
+    # but not an expensive-to-compute SELECT. The connection pool here is
+    # only max_size=5 (see database.py), so an unbounded pg_sleep() would
+    # hold one of five connections indefinitely -- one or two such calls
+    # starve every other request on the whole API, not just this tool's
+    # caller. A 5s SET LOCAL statement_timeout means this legal single
+    # SELECT still gets cancelled server-side rather than hanging forever.
+    app, founder_token, _client_token = context
+    async with mcp_session(app, token=founder_token) as session:
+        result = await session.call_tool("run_read_only_sql", {"sql": "SELECT pg_sleep(30)"})
+    assert result.isError is True
+
+
+@pytest.mark.asyncio
 async def test_run_read_only_sql_redacts_password_hash(context) -> None:
     app, founder_token, _client_token = context
     async with mcp_session(app, token=founder_token) as session:

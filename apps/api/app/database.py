@@ -96,6 +96,14 @@ class Database:
             await connection.set_read_only(True)
             try:
                 async with connection.transaction():
+                    # read-only blocks a write, but not an expensive-to-
+                    # compute SELECT (pg_sleep, a runaway join, ...) -- and
+                    # the pool is only max_size=5, so one or two such
+                    # queries would starve every other request, not just
+                    # this tool's caller. SET LOCAL scopes the timeout to
+                    # this transaction only; it reverts automatically at
+                    # commit/rollback, no manual reset needed.
+                    await connection.execute("SET LOCAL statement_timeout = '5s'")
                     yield Transaction(connection)
             finally:
                 await connection.set_read_only(False)
