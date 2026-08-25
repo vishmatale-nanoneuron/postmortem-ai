@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import secrets
 import time
 
 import httpx
@@ -115,7 +116,15 @@ async def create_incident(
     if not await try_record_action(database, user.id, "create_incident", MAX_INCIDENTS_PER_HOUR, 60 * 60 * 1000):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
 
-    incident_id = f"inc-{int(time.time() * 1000)}"
+    # A bare millisecond timestamp collides under real concurrency -- two
+    # create_incident calls landing in the same millisecond (plausible on
+    # serverless, and more so now that try_record_action lets a legitimate
+    # burst through as fast as the DB allows) hit incidents.id's PRIMARY
+    # KEY and the second caller gets an unhandled UniqueViolation -> 500.
+    # Reproduced directly against Postgres before this fix. The random
+    # suffix makes a collision astronomically unlikely without changing
+    # incidents.id's column type (still `text`, still human-legible).
+    incident_id = f"inc-{int(time.time() * 1000)}-{secrets.token_hex(4)}"
     now = int(time.time() * 1000)
     row = await database.fetch_one(
         """INSERT INTO incidents (id, client_email, title, severity, status, impact, created_at, updated_at)

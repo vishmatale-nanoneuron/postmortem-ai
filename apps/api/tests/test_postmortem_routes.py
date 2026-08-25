@@ -148,6 +148,30 @@ async def test_an_incident_can_be_created_and_listed(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_concurrent_incident_creation_never_collides(context) -> None:
+    # Regression for a real bug: incident_id used to be a bare
+    # f"inc-{int(time.time()*1000)}" -- two create_incident calls landing
+    # in the same millisecond hit incidents.id's PRIMARY KEY and the second
+    # got an unhandled UniqueViolation -> 500. Reproduced directly against
+    # Postgres before the fix (a random suffix added to the id). Firing
+    # genuinely concurrent calls here proves it end-to-end through the real
+    # route, not just at the id-generation function.
+    import asyncio
+
+    client, _, _, _ = context
+    responses = await asyncio.gather(
+        *[
+            client.post("/v1/postmortems/incidents", json={"title": "Race", "severity": "sev2"})
+            for _ in range(10)
+        ]
+    )
+    statuses = [r.status_code for r in responses]
+    assert all(s == 201 for s in statuses), statuses
+    ids = [r.json()["id"] for r in responses]
+    assert len(set(ids)) == 10
+
+
+@pytest.mark.asyncio
 async def test_create_incident_is_rate_limited(context) -> None:
     from app.api.v1.postmortems import MAX_INCIDENTS_PER_HOUR
 
