@@ -334,3 +334,39 @@ async def test_a_different_user_cannot_see_or_act_on_this_incident(context) -> N
         listing = await other.get("/v1/postmortems/incidents")
         assert listing.status_code == 200
         assert all(row["id"] != INCIDENT for row in listing.json())
+
+        assert (
+            await other.patch(f"/v1/postmortems/incidents/{INCIDENT}/status", json={"status": "resolved"})
+        ).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_an_incident_can_be_marked_resolved_and_reopened(context) -> None:
+    client, _, _, _ = context
+    resolved = await client.patch(f"/v1/postmortems/incidents/{INCIDENT}/status", json={"status": "resolved"})
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["status"] == "resolved"
+
+    reopened = await client.patch(f"/v1/postmortems/incidents/{INCIDENT}/status", json={"status": "open"})
+    assert reopened.status_code == 200
+    assert reopened.json()["status"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_an_invalid_status_value_is_rejected(context) -> None:
+    client, _, _, _ = context
+    response = await client.patch(f"/v1/postmortems/incidents/{INCIDENT}/status", json={"status": "closed"})
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_the_summary_reflects_real_counts_scoped_to_the_caller(context) -> None:
+    client, _, _, _ = context
+    await client.patch(f"/v1/postmortems/incidents/{INCIDENT}/status", json={"status": "resolved"})
+
+    summary = await client.get("/v1/postmortems/summary")
+    assert summary.status_code == 200
+    body = summary.json()
+    assert body["total_incidents"] >= 1
+    assert body["resolved_incidents"] >= 1
+    assert any(row["id"] == INCIDENT for row in body["recent_incidents"])

@@ -51,8 +51,48 @@ export type Postmortem = {
   actions: PostmortemAction[];
 };
 
+export type DashboardSummary = {
+  total_incidents: number;
+  open_incidents: number;
+  resolved_incidents: number;
+  drafted_postmortems: number;
+  published_postmortems: number;
+  recent_incidents: Incident[];
+};
+
+export type FounderSummary = {
+  total_users: number;
+  total_incidents: number;
+  open_incidents: number;
+  resolved_incidents: number;
+  drafted_postmortems: number;
+  published_postmortems: number;
+  ai_runs_total: number;
+  ai_runs_succeeded: number;
+  ai_runs_failed: number;
+  ai_runs_avg_latency_ms: number | null;
+  recent_users: { id: string; email: string; created_at: number }[];
+  recent_ai_runs: {
+    id: string;
+    incident_id: string;
+    provider: string;
+    model: string;
+    status: string;
+    error_type: string | null;
+    latency_ms: number;
+    created_at: number;
+  }[];
+};
+
 export const api = {
   listIncidents: () => request<Incident[]>("/v1/postmortems/incidents"),
+  summary: () => request<DashboardSummary>("/v1/postmortems/summary"),
+  updateIncidentStatus: (incidentId: string, status: "open" | "resolved") =>
+    request<Incident>(`/v1/postmortems/incidents/${incidentId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+  founderSummary: () => request<FounderSummary>("/v1/founder/summary"),
   createIncident: (input: { title: string; severity: string; impact?: string }) =>
     request<Incident>("/v1/postmortems/incidents", { method: "POST", body: JSON.stringify(input) }),
   listEvidence: (incidentId: string) => request<Evidence[]>(`/v1/postmortems/incidents/${incidentId}/evidence`),

@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     session_secret: str = Field(alias="SESSION_SECRET")
     cookie_secure: bool = Field(default=True, alias="COOKIE_SECURE")
     cors_origins_raw: str = Field(default="http://localhost:3000", alias="CORS_ORIGINS")
+    # Founder access is granted by email match against a real account in
+    # `users` -- no separate account type or password. Defaults to the
+    # operator's own address so registering/logging in with it is, by
+    # default, the founder login; override via FOUNDER_EMAIL in production
+    # if that should ever change.
+    founder_email: str = Field(default="vish.matale@gmail.com", alias="FOUNDER_EMAIL")
 
     @property
     def cors_origins(self) -> list[str]:

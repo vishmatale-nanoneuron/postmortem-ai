@@ -3,11 +3,15 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field
 
-from ...auth import SESSION_COOKIE_NAME, User, current_user
+from ...auth import SESSION_COOKIE_NAME, User, _is_founder, current_user
 from ...database import Database
 from ...dependencies import get_database
 from ...security.passwords import hash_password, verify_password
-from ...security.rate_limit import client_ip, is_login_rate_limited, record_login_attempt
+from ...security.rate_limit import (
+    client_ip,
+    is_login_rate_limited,
+    record_login_attempt,
+)
 from ...security.tokens import issue_token
 from ...settings import Settings, get_settings
 
@@ -41,6 +45,7 @@ class LoginRequest(BaseModel):
 class UserOut(BaseModel):
     id: str
     email: str
+    is_founder: bool = False
 
 
 def _set_session_cookie(response: Response, settings: Settings, token: str) -> None:
@@ -74,7 +79,7 @@ async def register(
     assert row is not None
     token = issue_token(settings.session_secret, row["id"], row["email"])
     _set_session_cookie(response, settings, token)
-    return UserOut(id=row["id"], email=row["email"])
+    return UserOut(id=row["id"], email=row["email"], is_founder=_is_founder(row["email"], settings.founder_email))
 
 
 @router.post("/login", response_model=UserOut)
@@ -101,7 +106,9 @@ async def login(
 
     token = issue_token(settings.session_secret, row["id"], row["email"])  # type: ignore[index]
     _set_session_cookie(response, settings, token)
-    return UserOut(id=row["id"], email=row["email"])  # type: ignore[index]
+    return UserOut(  # type: ignore[index]
+        id=row["id"], email=row["email"], is_founder=_is_founder(row["email"], settings.founder_email)
+    )
 
 
 @router.post("/logout")
@@ -112,4 +119,4 @@ async def logout(response: Response) -> dict[str, bool]:
 
 @router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(current_user)) -> UserOut:
-    return UserOut(id=user.id, email=user.email)
+    return UserOut(id=user.id, email=user.email, is_founder=user.is_founder)

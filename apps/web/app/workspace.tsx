@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api, type Evidence, type Incident, type Postmortem } from "./api";
+import { api, type DashboardSummary, type Evidence, type FounderSummary, type Incident, type Postmortem } from "./api";
 import { auth, type AuthUser } from "./auth";
 import { Hero, HowItWorks, WhatThisIsnt } from "./landing";
 import { evidenceSchema, firstError, incidentSchema, loginSchema, registerSchema } from "./validation";
@@ -40,14 +40,87 @@ export default function Workspace() {
       <div className="mb-6 flex items-baseline justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">PostMortem AI</h1>
         <div className="flex items-center gap-3">
+          {user.is_founder && (
+            <span className="rounded-full bg-ink px-2.5 py-0.5 text-xs font-medium text-paper">Founder</span>
+          )}
           <span className="text-sm text-muted">{user.email}</span>
           <button className={secondaryButton} type="button" onClick={() => void auth.logout().then(() => setUser(null))}>
             Log out
           </button>
         </div>
       </div>
+      {user.is_founder && <FounderDashboard />}
       <IncidentWorkspace />
     </main>
+  );
+}
+
+function FounderDashboard() {
+  const [summary, setSummary] = useState<FounderSummary | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api
+      .founderSummary()
+      .then(setSummary)
+      .catch((err) => setError(err instanceof Error ? err.message : "Could not load founder summary."));
+  }, []);
+
+  if (error) return <p className="mb-4 text-sm text-red-600">{error}</p>;
+  if (!summary) return null;
+
+  const stats: [string, number | string][] = [
+    ["Users", summary.total_users],
+    ["Incidents", summary.total_incidents],
+    ["Open incidents", summary.open_incidents],
+    ["Resolved incidents", summary.resolved_incidents],
+    ["Drafted postmortems", summary.drafted_postmortems],
+    ["Published postmortems", summary.published_postmortems],
+    ["AI runs (ok / failed)", `${summary.ai_runs_succeeded} / ${summary.ai_runs_failed}`],
+    ["Avg draft latency", summary.ai_runs_avg_latency_ms != null ? `${summary.ai_runs_avg_latency_ms} ms` : "--"],
+  ];
+
+  return (
+    <section className={card}>
+      <h2 className="mb-3 text-base font-semibold">Founder dashboard</h2>
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {stats.map(([label, value]) => (
+          <div key={label} className="rounded-md bg-paper px-3 py-2">
+            <div className="text-lg font-semibold text-ink">{value}</div>
+            <div className="text-xs text-muted">{label}</div>
+          </div>
+        ))}
+      </div>
+      <h3 className="mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">Recent signups</h3>
+      <ul className="mb-4 space-y-1 text-sm">
+        {summary.recent_users.length === 0 ? (
+          <li className="text-muted">None yet.</li>
+        ) : (
+          summary.recent_users.map((u) => (
+            <li key={u.id} className="flex justify-between rounded-md bg-paper px-3 py-1.5">
+              <span>{u.email}</span>
+              <span className="text-muted">{new Date(u.created_at).toLocaleString()}</span>
+            </li>
+          ))
+        )}
+      </ul>
+      <h3 className="mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">Recent AI runs</h3>
+      <ul className="space-y-1 text-sm">
+        {summary.recent_ai_runs.length === 0 ? (
+          <li className="text-muted">None yet.</li>
+        ) : (
+          summary.recent_ai_runs.map((run) => (
+            <li key={run.id} className="flex justify-between rounded-md bg-paper px-3 py-1.5">
+              <span>
+                {run.provider}/{run.model} -- {run.status}
+                {run.error_type ? ` (${run.error_type})` : ""}
+              </span>
+              <span className="text-muted">{run.latency_ms} ms</span>
+            </li>
+          ))
+        )}
+      </ul>
+    </section>
   );
 }
 
@@ -118,11 +191,26 @@ function IncidentWorkspace() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [evidence, setEvidence] = useState<Evidence[]>([]);
   const [postmortem, setPostmortem] = useState<Postmortem | null>(null);
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function refreshIncidents() {
     setIncidents(await api.listIncidents());
+    setSummary(await api.summary());
+  }
+
+  async function toggleResolved(incident: Incident) {
+    const nextStatus = incident.status === "resolved" ? "open" : "resolved";
+    setBusy(true);
+    try {
+      await api.updateIncidentStatus(incident.id, nextStatus);
+      await refreshIncidents();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not update status.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function refreshSelected(id: string) {
@@ -220,6 +308,27 @@ function IncidentWorkspace() {
     <>
       <p className="mb-6 text-sm text-muted">Evidence-grounded incident postmortem drafting.</p>
 
+      {summary && (
+        <section className={card}>
+          <h2 className="mb-3 text-base font-semibold">Dashboard</h2>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {(
+              [
+                ["Open", summary.open_incidents],
+                ["Resolved", summary.resolved_incidents],
+                ["Drafted", summary.drafted_postmortems],
+                ["Published", summary.published_postmortems],
+              ] as [string, number][]
+            ).map(([label, value]) => (
+              <div key={label} className="rounded-md bg-paper px-3 py-2">
+                <div className="text-lg font-semibold text-ink">{value}</div>
+                <div className="text-xs text-muted">{label}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className={card}>
         <h2 className="mb-3 text-base font-semibold">Incidents</h2>
         {incidents.length === 0 ? (
@@ -227,7 +336,7 @@ function IncidentWorkspace() {
         ) : (
           <ul className="mb-3 space-y-1.5">
             {incidents.map((incident) => (
-              <li key={incident.id}>
+              <li key={incident.id} className="flex items-center gap-1.5">
                 <button
                   className={`w-full rounded-md px-3 py-2 text-left text-sm transition ${
                     selectedId === incident.id ? "bg-accent/10 font-medium text-accent" : "hover:bg-paper"
@@ -235,7 +344,15 @@ function IncidentWorkspace() {
                   onClick={() => setSelectedId(incident.id)}
                   type="button"
                 >
-                  {incident.title} <span className="text-muted">({incident.severity})</span>
+                  {incident.title} <span className="text-muted">({incident.severity}, {incident.status})</span>
+                </button>
+                <button
+                  className="shrink-0 rounded-md border border-line px-2 py-1 text-xs text-muted transition hover:bg-paper disabled:opacity-50"
+                  disabled={busy}
+                  onClick={() => void toggleResolved(incident)}
+                  type="button"
+                >
+                  {incident.status === "resolved" ? "Reopen" : "Mark resolved"}
                 </button>
               </li>
             ))}

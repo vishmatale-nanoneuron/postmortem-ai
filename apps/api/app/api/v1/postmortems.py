@@ -3,8 +3,8 @@ import logging
 import time
 
 import httpx
-from google.genai import errors as genai_errors
 from fastapi import APIRouter, Depends, HTTPException, status
+from google.genai import errors as genai_errors
 from pydantic import BaseModel, Field
 
 from ...ai.model_router import create_model_provider
@@ -109,6 +109,64 @@ async def list_incidents(
         "SELECT id, title, severity, status FROM incidents WHERE client_email=%s ORDER BY created_at DESC",
         (user.email,),
     )
+
+
+class IncidentStatusUpdate(BaseModel):
+    status: str = Field(pattern="^(open|resolved)$")
+
+
+@router.patch("/incidents/{incident_id}/status")
+async def update_incident_status(
+    incident_id: str,
+    payload: IncidentStatusUpdate,
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> dict[str, object]:
+    await require_incident(database, incident_id, user.email)
+    now = int(time.time() * 1000)
+    row = await database.fetch_one(
+        "UPDATE incidents SET status=%s, updated_at=%s WHERE id=%s RETURNING id, title, severity, status",
+        (payload.status, now, incident_id),
+    )
+    return dict(row or {})
+
+
+@router.get("/summary")
+async def dashboard_summary(
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> dict[str, object]:
+    """Real aggregate counts for a client dashboard -- one query, not the
+    frontend fetching every incident's own postmortem to count client-side
+    (which would be an N+1 call pattern for something this cheap to do in
+    SQL once)."""
+    incident_counts = await database.fetch_one(
+        """SELECT count(*) AS total,
+                  count(*) FILTER (WHERE status = 'open') AS open,
+                  count(*) FILTER (WHERE status = 'resolved') AS resolved
+           FROM incidents WHERE client_email=%s""",
+        (user.email,),
+    )
+    postmortem_counts = await database.fetch_one(
+        """SELECT count(*) FILTER (WHERE p.status = 'draft') AS drafted,
+                  count(*) FILTER (WHERE p.status = 'published') AS published
+           FROM incident_postmortems p
+           JOIN incidents i ON i.id = p.incident_id
+           WHERE i.client_email=%s""",
+        (user.email,),
+    )
+    recent_incidents = await database.fetch_all(
+        "SELECT id, title, severity, status FROM incidents WHERE client_email=%s ORDER BY created_at DESC LIMIT 5",
+        (user.email,),
+    )
+    return {
+        "total_incidents": (incident_counts or {}).get("total", 0),
+        "open_incidents": (incident_counts or {}).get("open", 0),
+        "resolved_incidents": (incident_counts or {}).get("resolved", 0),
+        "drafted_postmortems": (postmortem_counts or {}).get("drafted", 0),
+        "published_postmortems": (postmortem_counts or {}).get("published", 0),
+        "recent_incidents": recent_incidents,
+    }
 
 
 @router.post("/incidents/{incident_id}/evidence", status_code=status.HTTP_201_CREATED)
