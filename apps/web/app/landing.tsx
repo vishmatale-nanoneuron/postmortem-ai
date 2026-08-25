@@ -17,12 +17,17 @@ export function Hero() {
         to a real, recorded entry — anything the evidence doesn&apos;t support is marked unsupported, never
         invented.
       </p>
-      <a
-        href="#get-started"
-        className="mt-8 inline-block rounded-md bg-ink px-6 py-2.5 text-sm font-medium text-paper transition hover:bg-ink/90"
-      >
-        Get started
-      </a>
+      <div className="mt-8 flex items-center justify-center gap-4">
+        <a
+          href="#get-started"
+          className="inline-block rounded-md bg-ink px-6 py-2.5 text-sm font-medium text-paper transition hover:bg-ink/90"
+        >
+          Get started
+        </a>
+        <a href="/docs" className="text-sm font-medium text-ink underline underline-offset-2">
+          How it works
+        </a>
+      </div>
     </div>
   );
 }

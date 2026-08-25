@@ -7,6 +7,7 @@ from pydantic import BaseModel, EmailStr, Field
 from ...auth import SESSION_COOKIE_NAME, User, _is_founder, current_user
 from ...database import Database
 from ...dependencies import get_database
+from ...security.captcha import verify_turnstile
 from ...security.passwords import hash_password, verify_password
 from ...security.rate_limit import (
     client_ip,
@@ -25,6 +26,7 @@ router = APIRouter(prefix="/v1/auth", tags=["auth"])
 # enumerate which emails are registered.
 LOGIN_FAILURE_DETAIL = "Incorrect email or password"
 RATE_LIMITED_DETAIL = "Too many attempts. Try again later."
+CAPTCHA_FAILURE_DETAIL = "CAPTCHA verification failed"
 
 # Computed once at import time, never stored anywhere, never matched by a
 # real password. When the email doesn't exist, login still runs a scrypt
@@ -38,11 +40,13 @@ _DECOY_HASH = hash_password("this-decoy-password-never-matches-a-real-account")
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=200)
+    captcha_token: str | None = None
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=200)
+    captcha_token: str | None = None
 
 
 class UserOut(BaseModel):
@@ -80,10 +84,14 @@ def _set_session_cookie(response: Response, settings: Settings, token: str) -> N
 @router.post("/register", status_code=status.HTTP_201_CREATED, response_model=UserOut)
 async def register(
     payload: RegisterRequest,
+    request: Request,
     response: Response,
     database: Database = Depends(get_database),
     settings: Settings = Depends(get_settings),
 ) -> UserOut:
+    if not await verify_turnstile(settings.turnstile_secret_key, payload.captcha_token, client_ip(request)):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=CAPTCHA_FAILURE_DETAIL)
+
     is_founder_email = _is_founder(payload.email, settings.founder_email)
     existing = await database.fetch_one("SELECT id FROM users WHERE email=%s", (payload.email,))
     if existing:
@@ -121,6 +129,8 @@ async def login(
     settings: Settings = Depends(get_settings),
 ) -> UserOut:
     ip = client_ip(request)
+    if not await verify_turnstile(settings.turnstile_secret_key, payload.captcha_token, ip):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=CAPTCHA_FAILURE_DETAIL)
     if await is_login_rate_limited(database, payload.email, ip):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
 
@@ -157,6 +167,15 @@ async def me(user: User = Depends(current_user)) -> UserOut:
         subscription_status=user.subscription_status,
         has_active_subscription=user.has_active_subscription,
     )
+
+
+@router.get("/captcha-config")
+async def captcha_config(settings: Settings = Depends(get_settings)) -> dict[str, object]:
+    """Public config the frontend needs to render (or skip) the Turnstile
+    widget -- site_key is meant to be public (it's shipped to every
+    browser as part of the widget itself); secret_key never leaves this
+    backend."""
+    return {"enabled": bool(settings.turnstile_secret_key), "site_key": settings.turnstile_site_key}
 
 
 @router.get("/session-token")

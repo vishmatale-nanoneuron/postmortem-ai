@@ -129,6 +129,7 @@ async def test_tools_are_listed_and_include_the_expected_names(context) -> None:
     assert "list_incidents" in names
     assert "create_incident" in names
     assert "run_read_only_sql" in names
+    assert "find_similar_incidents" in names
 
 
 @pytest.mark.asyncio

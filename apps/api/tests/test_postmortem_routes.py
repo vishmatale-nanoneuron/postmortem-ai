@@ -12,6 +12,7 @@ import time
 import httpx
 import pytest
 import pytest_asyncio
+from app.services.postmortem import PROMPT_VERSION
 from httpx import ASGITransport, AsyncClient
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
@@ -67,6 +68,16 @@ async def context(monkeypatch: pytest.MonkeyPatch):
     from app.database import Database
     from app.main import create_app
     from app.settings import get_settings
+
+    # RAG's embedding call is best-effort and separate from drafting, but
+    # a real network call in every test here would be slow and flaky --
+    # fake it deterministically. find_similar_postmortems still runs for
+    # real against the test database.
+    async def fake_embed_text(_client, _text):
+        return [0.1] * 768
+
+    monkeypatch.setattr("app.api.v1.postmortems.embed_text", fake_embed_text)
+    monkeypatch.setattr("app.ai.rag.embed_text", fake_embed_text)
 
     get_settings.cache_clear()
     database = Database(get_settings())
@@ -136,6 +147,21 @@ async def test_an_incident_can_be_created_and_listed(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_incident_is_rate_limited(context) -> None:
+    from app.api.v1.postmortems import MAX_INCIDENTS_PER_HOUR
+
+    client, _, _, _ = context
+    for i in range(MAX_INCIDENTS_PER_HOUR):
+        response = await client.post(
+            "/v1/postmortems/incidents", json={"title": f"Spam incident {i}", "severity": "sev4"}
+        )
+        assert response.status_code == 201, response.text
+
+    limited = await client.post("/v1/postmortems/incidents", json={"title": "One too many", "severity": "sev4"})
+    assert limited.status_code == 429
+
+
+@pytest.mark.asyncio
 async def test_drafting_without_evidence_is_refused(context) -> None:
     client, _, _, _ = context
     response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
@@ -152,7 +178,45 @@ async def test_a_grounded_draft_is_stored_with_its_citations(context) -> None:
     assert body["status"] == "draft"
     assert "latency" in body["summary"].lower()
     assert len(body["actions"]) == 1
-    assert body["prompt_version"] == "v1"
+    assert body["prompt_version"] == PROMPT_VERSION
+
+
+@pytest.mark.asyncio
+async def test_a_published_postmortem_surfaces_as_rag_context_for_a_later_draft(context) -> None:
+    # RAG: a published postmortem should show up as reference context on a
+    # LATER incident's draft -- and, just as importantly, that context
+    # must be clearly non-citable (see services/postmortem.py's
+    # render_similar_postmortems) so it can never satisfy ground_draft's
+    # citation check.
+    client, provider, database, _ = context
+    await seed_two_entries(client)
+    await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
+    published = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/publish")
+    assert published.status_code == 200, published.text
+
+    other_incident = "pm-incident-2"
+    await database.execute("DELETE FROM incidents WHERE id=%s", (other_incident,))
+    now = int(time.time() * 1000)
+    await database.execute(
+        """INSERT INTO incidents (id, client_email, title, severity, status, impact, created_at, updated_at)
+           VALUES (%s, %s, 'A different outage', 'sev2', 'open', 'Some users', %s, %s)""",
+        (other_incident, CLIENT_EMAIL, now, now),
+    )
+    evidence = await client.post(
+        f"/v1/postmortems/incidents/{other_incident}/evidence",
+        json={"occurred_at": 2_000, "source": "alert", "summary": "A different alert fired", "detail": None},
+    )
+    assert evidence.status_code == 201, evidence.text
+
+    draft = await client.post(f"/v1/postmortems/incidents/{other_incident}/draft")
+    assert draft.status_code == 201, draft.text
+
+    prompt_body = provider.last_request.messages[0].content
+    assert "Similar past incidents" in prompt_body
+    assert "Checkout outage" in prompt_body  # the first incident's title, seeded in the fixture
+    assert "never cite these" in prompt_body
+
+    await database.execute("DELETE FROM incidents WHERE id=%s", (other_incident,))
 
 
 @pytest.mark.asyncio
@@ -171,7 +235,7 @@ async def test_a_successful_draft_records_an_ai_run(context) -> None:
     assert len(runs) == 1
     assert runs[0]["provider"] == "fake"
     assert runs[0]["model"] == "fake-model-v1"
-    assert runs[0]["prompt_version"] == "v1"
+    assert runs[0]["prompt_version"] == PROMPT_VERSION
     assert runs[0]["status"] == "succeeded"
     assert runs[0]["output_tokens"] == provider.output_tokens
 

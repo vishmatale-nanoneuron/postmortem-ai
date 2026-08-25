@@ -50,3 +50,23 @@ async def record_login_attempt(database: Database, email: str, ip: str, succeede
         "INSERT INTO login_attempts (email, ip, succeeded, created_at) VALUES (%s, %s, %s, %s)",
         (email, ip, succeeded, int(time.time() * 1000)),
     )
+
+
+# Generic per-account action rate limiting -- separate from login's own
+# email/IP-based limiter (a different threat model: this bounds how often
+# an already-authenticated account can call a specific action, regardless
+# of who's calling it or from where).
+async def is_action_rate_limited(database: Database, user_id: str, action: str, max_per_window: int, window_ms: int) -> bool:
+    now = int(time.time() * 1000)
+    row = await database.fetch_one(
+        "SELECT count(*) AS n FROM api_action_events WHERE user_id=%s AND action=%s AND created_at > %s",
+        (user_id, action, now - window_ms),
+    )
+    return bool(row and row["n"] >= max_per_window)
+
+
+async def record_action(database: Database, user_id: str, action: str) -> None:
+    await database.execute(
+        "INSERT INTO api_action_events (user_id, action, created_at) VALUES (%s, %s, %s)",
+        (user_id, action, int(time.time() * 1000)),
+    )

@@ -24,7 +24,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from .ai.embeddings import embed_text
 from .ai.model_router import create_model_provider
+from .ai.rag import find_similar_postmortems, get_embedding_client
 from .api.v1 import founder as founder_routes
 from .api.v1 import postmortems as postmortem_routes
 from .auth import User, _is_founder
@@ -258,12 +260,34 @@ def build_mcp_server(get_database: Callable[[], Database], settings: Settings) -
     @_audited("draft_postmortem")
     async def draft_postmortem(incident_id: str) -> dict:
         """Generate a grounded AI draft from the incident's recorded
-        evidence. Every claim is cited-or-dropped -- see the grounding
-        algorithm in CLAUDE.md."""
+        evidence, using retrieved similar past incidents (this account's
+        own history only) as non-citable reference context. Every claim
+        is still cited-or-dropped -- see the grounding algorithm in
+        CLAUDE.md."""
         database = get_database()
         user = require_mcp_active_subscription()
         provider = create_model_provider(settings)
-        return await postmortem_routes.draft_postmortem(incident_id, database=database, provider=provider, user=user)
+        return await postmortem_routes.draft_postmortem(
+            incident_id, database=database, provider=provider, user=user, settings=settings
+        )
+
+    @mcp.tool()
+    @_audited("find_similar_incidents")
+    async def find_similar_incidents(query: str) -> list[dict]:
+        """Semantic search over the caller's own PUBLISHED postmortems
+        (RAG retrieval) -- given free-text describing a new incident,
+        returns the most similar past incidents' title/summary/root cause.
+        Reference only, same non-citable status as the context
+        draft_postmortem retrieves automatically."""
+        database = get_database()
+        user = current_mcp_user()
+        client = get_embedding_client(settings.gemini_api_key)
+        embedding = await embed_text(client, query)
+        similar = await find_similar_postmortems(database, user.email, embedding, exclude_incident_id="")
+        return [
+            {"incident_title": item.incident_title, "summary": item.summary, "root_cause": item.root_cause}
+            for item in similar
+        ]
 
     @mcp.tool()
     @_audited("publish_postmortem")

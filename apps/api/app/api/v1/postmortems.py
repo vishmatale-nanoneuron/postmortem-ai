@@ -8,11 +8,19 @@ from google.genai import errors as genai_errors
 from pydantic import BaseModel, Field
 
 from ...ai.circuit_breaker import CircuitOpenError
+from ...ai.embeddings import embed_text
 from ...ai.model_router import create_model_provider
 from ...ai.provider import ModelProvider
+from ...ai.rag import (
+    embed_and_store_postmortem,
+    find_similar_postmortems,
+    get_embedding_client,
+)
+from ...alerting import send_alert
 from ...auth import User, current_user, require_active_subscription
 from ...database import Database
 from ...dependencies import get_database
+from ...security.rate_limit import is_action_rate_limited, record_action
 from ...services.postmortem import (
     PROMPT_VERSION,
     EvidenceEntry,
@@ -34,6 +42,14 @@ router = APIRouter(prefix="/v1/postmortems", tags=["postmortems"])
 # resolution and most likely to describe root cause/recovery, rather than
 # silently keeping only the oldest.
 MAX_DRAFT_EVIDENCE_ENTRIES = 500
+
+# Per-account rate limits on the two actions worth bounding: creating
+# incidents (cheap, but still a real spam/abuse surface) and drafting
+# (the actual AI-cost-incurring call, and the one that matters most to
+# bound). Generous enough not to interfere with real usage.
+MAX_INCIDENTS_PER_HOUR = 30
+MAX_DRAFTS_PER_HOUR = 20
+RATE_LIMITED_DETAIL = "Too many requests. Try again later."
 
 
 class IncidentCreate(BaseModel):
@@ -90,6 +106,10 @@ async def create_incident(
     database: Database = Depends(get_database),
     user: User = Depends(require_active_subscription),
 ) -> dict[str, object]:
+    if await is_action_rate_limited(database, user.id, "create_incident", MAX_INCIDENTS_PER_HOUR, 60 * 60 * 1000):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
+    await record_action(database, user.id, "create_incident")
+
     incident_id = f"inc-{int(time.time() * 1000)}"
     now = int(time.time() * 1000)
     row = await database.fetch_one(
@@ -219,6 +239,7 @@ async def draft_postmortem(
     database: Database = Depends(get_database),
     provider: ModelProvider = Depends(get_model_provider),
     user: User = Depends(require_active_subscription),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     """Build a review-ready draft from the recorded evidence.
 
@@ -226,6 +247,10 @@ async def draft_postmortem(
     by a cited evidence entry is replaced or removed, never kept. The result is
     always a draft -- publishing is a separate, human act.
     """
+    if await is_action_rate_limited(database, user.id, "draft_postmortem", MAX_DRAFTS_PER_HOUR, 60 * 60 * 1000):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
+    await record_action(database, user.id, "draft_postmortem")
+
     incident = await require_incident(database, incident_id, user.email)
     evidence = await load_evidence(database, incident_id)
     if not evidence:
@@ -269,17 +294,46 @@ async def draft_postmortem(
             ),
         )
 
+    # RAG: retrieve similar past PUBLISHED postmortems (this client only)
+    # as reference context -- never evidence, never citable (see
+    # services/postmortem.py's SYSTEM_PROMPT rule 5). Best-effort: any
+    # failure here (embedding call, retrieval query) must never block
+    # drafting itself, which is why it's wrapped separately from the
+    # actual drafting try/except below and simply degrades to no context.
+    similar_past_incidents = []
     try:
-        result = await provider.complete(build_draft_request(dict(incident), evidence))
+        query_text = f"{incident.get('title')}\n{render_evidence(evidence)}"
+        embedding_client = get_embedding_client(settings.gemini_api_key)
+        query_embedding = await embed_text(embedding_client, query_text)
+        similar_past_incidents = await find_similar_postmortems(
+            database, user.email, query_embedding, incident_id
+        )
+    except Exception:
+        logger.warning("postmortem_rag_retrieval_failed", extra={"incident_id": incident_id}, exc_info=True)
+
+    try:
+        result = await provider.complete(
+            build_draft_request(dict(incident), evidence, similar_past_incidents=similar_past_incidents)
+        )
         response = parse_model_json(result.text)
     except CircuitOpenError as error:
         # Distinct from a single failed call (502 below): the breaker is
         # deliberately avoiding a provider that has failed repeatedly,
         # rather than adding one more failing request on top -- 503 says
         # "we know, don't retry immediately" rather than "this one call
-        # happened to fail."
+        # happened to fail." Also the one failure mode worth a real alert
+        # (not just a log line): the drafting model is broken right now,
+        # not just this one request. May fire more than once per outage
+        # (every blocked call during the cooldown re-raises this), which
+        # is an accepted tradeoff over the added complexity of tracking
+        # "already alerted for this open period" state.
         logger.warning("postmortem_draft_failed", extra={"incident_id": incident_id, "error_type": "circuit_open"})
         await record_ai_run("failed", None, "circuit_open")
+        await send_alert(
+            settings.alert_webhook_url,
+            f"PostMortem AI: drafting circuit breaker is OPEN for {provider.name}/{provider.model_name} "
+            f"-- the model has failed repeatedly and is being avoided for a cooldown.",
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="The drafting model has failed repeatedly and is being avoided for a short cooldown -- try again shortly",
@@ -386,6 +440,7 @@ async def publish_postmortem(
     incident_id: str,
     database: Database = Depends(get_database),
     user: User = Depends(require_active_subscription),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     await require_incident(database, incident_id, user.email)
     now = int(time.time() * 1000)
@@ -397,7 +452,17 @@ async def publish_postmortem(
     )
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No draft postmortem to publish")
-    return await _load_postmortem(database, incident_id)
+
+    published = await _load_postmortem(database, incident_id)
+    # Best-effort, never blocks the publish response -- a failure here
+    # only means this postmortem won't surface as RAG context for future
+    # drafts, not that publishing itself failed.
+    try:
+        text = f"{published.get('summary')}\n{published.get('root_cause')}"
+        await embed_and_store_postmortem(database, settings.gemini_api_key, str(published["id"]), text)
+    except Exception:
+        logger.warning("postmortem_embedding_failed", extra={"incident_id": incident_id}, exc_info=True)
+    return published
 
 
 async def _load_postmortem(database: Database, incident_id: str) -> dict[str, object]:

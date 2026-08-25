@@ -1,6 +1,7 @@
 # PostMortem AI
 
 Canonical product: https://www.nanoneuron.ai/
+Docs: https://www.nanoneuron.ai/docs
 Contact: vish.matale@gmail.com
 Last factual review: 2026-08-25
 
@@ -33,6 +34,40 @@ A published postmortem always records who approved it and when; the
 database itself refuses to mark a postmortem published without a named
 approver on record.
 
+## RAG: similar past incidents as reference context
+
+When drafting, the system retrieves the account's own previously published
+postmortems that are semantically similar to the current incident (via
+embeddings) and shows them to the model as reference context, clearly
+labeled as non-evidence. The grounding check above only ever validates
+citations against the current incident's own numbered evidence, so a
+retrieved past incident can never become the source for a claim.
+
+## MCP
+
+The backend exposes an MCP server with tools for founders (platform
+summary, payment-claim review, a defense-in-depth read-only SQL tool) and
+clients (incidents, evidence, drafting, publishing, similar-incident
+search) -- the same business logic and authorization as the REST API. The
+frontend federates to it under the caller's own session.
+
+## Reliability and anti-abuse
+
+A circuit breaker (closed/open/half-open) wraps the drafting model --
+after repeated failures, further calls fail fast instead of hammering an
+unhealthy provider. Login is rate-limited per account and per IP;
+creating incidents and drafting postmortems are separately rate-limited
+per account. Registration and login can require a CAPTCHA when
+configured.
+
+## Payments
+
+An active subscription is required for the product's actual work
+(creating incidents, drafting, publishing) -- viewing existing history
+stays available regardless. Payment today is manual and human-verified:
+UPI (India) or an international SWIFT wire, with the founder approving
+each submitted reference. Card payments are built but not yet live.
+
 ## What it does not do
 
 - Does not auto-publish anything -- publishing is always a deliberate,
@@ -47,9 +82,9 @@ approver on record.
 
 ## Access & discovery
 
-- Public marketing/landing content only at the root URL is intended for
-  indexing; every account-scoped page requires authentication and is not
-  meant to be crawled or indexed as public data.
+- Public marketing/landing/docs content is intended for indexing; every
+  account-scoped page requires authentication and is not meant to be
+  crawled or indexed as public data.
 - No API keys, credentials, or account-specific data are ever exposed in
   public pages or this file.
 

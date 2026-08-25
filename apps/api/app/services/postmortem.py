@@ -10,7 +10,10 @@ UNSUPPORTED = "Not established by the recorded evidence."
 # incident_postmortems row (see 0004_ai_runs.sql's prompt_version column) so
 # a future prompt change is traceable against which postmortems were
 # drafted under which prompt -- not versioned for its own sake.
-PROMPT_VERSION = "v1"
+# v2 (this one) added the similar-past-incidents RAG section to the
+# prompt; bumped because it changes what the model actually sees, even
+# though the grounding contract (ground_draft) itself is untouched.
+PROMPT_VERSION = "v2"
 
 # Conservative character budget for the rendered evidence body sent to the
 # model, independent of MAX_DRAFT_EVIDENCE_ENTRIES's row-count bound in
@@ -41,7 +44,11 @@ SYSTEM_PROMPT = (
     "3. Do not estimate cost, revenue or customer counts. Do not invent dates, deadlines or "
     "names that are not in the evidence.\n"
     "4. Do not recommend an action the evidence does not support.\n"
-    "5. Reply with JSON only, matching this shape:\n"
+    "5. You may also be shown similar past incidents, clearly labeled as reference "
+    "context. They are NOT evidence and are not numbered -- never cite them, never treat "
+    "them as proof of anything about THIS incident. Use them only to inform how you phrase "
+    "or investigate, never as a source for a claim.\n"
+    "6. Reply with JSON only, matching this shape:\n"
     '{"summary": {"text": str, "citations": [int]},\n'
     ' "root_cause": {"text": str, "citations": [int]},\n'
     ' "detection": {"text": str, "citations": [int]},\n'
@@ -61,6 +68,18 @@ class EvidenceEntry:
     summary: str
     detail: str | None
     authorized_by: str
+
+
+@dataclass(frozen=True)
+class SimilarPostmortem:
+    """A retrieved past incident for RAG context -- reference only, never
+    citable (see SYSTEM_PROMPT rule 5 and ground_draft's docstring: citation
+    validity is checked purely by index into `evidence`, so nothing here
+    can become a citation no matter what the model outputs)."""
+
+    incident_title: str
+    summary: str
+    root_cause: str
 
 
 @dataclass(frozen=True)
@@ -121,14 +140,30 @@ def bound_evidence_by_chars(evidence: list[EvidenceEntry], max_chars: int = MAX_
     return selected
 
 
+def render_similar_postmortems(similar: list[SimilarPostmortem]) -> str:
+    if not similar:
+        return ""
+    blocks = [
+        f"- \"{item.incident_title}\": {item.summary} (root cause: {item.root_cause})" for item in similar
+    ]
+    return (
+        "\n\nSimilar past incidents (reference only -- NOT evidence, not numbered, "
+        "never cite these):\n" + "\n".join(blocks)
+    )
+
+
 def build_draft_request(
-    incident: dict[str, object], evidence: list[EvidenceEntry], model: str | None = None
+    incident: dict[str, object],
+    evidence: list[EvidenceEntry],
+    model: str | None = None,
+    similar_past_incidents: list[SimilarPostmortem] | None = None,
 ) -> ModelRequest:
     body = (
         f"Incident: {incident.get('title')}\n"
         f"Severity: {incident.get('severity')}\n"
         f"Stated impact: {incident.get('impact')}\n\n"
         f"Evidence entries:\n{render_evidence(evidence)}"
+        f"{render_similar_postmortems(similar_past_incidents or [])}"
     )
     return ModelRequest(
         messages=[ModelMessage(role="user", content=body)],

@@ -65,6 +65,19 @@ class Settings(BaseSettings):
     wire_eur_nostro_account: str = Field(default="", alias="WIRE_EUR_NOSTRO_ACCOUNT")
     wire_eur_iban: str = Field(default="", alias="WIRE_EUR_IBAN")
 
+    # Real alerting for when the drafting model is actually broken (the
+    # circuit breaker has opened after repeated failures) -- a plain HTTP
+    # webhook (Slack incoming webhook, Discord webhook, or anything that
+    # accepts a JSON POST). Optional: unset means no-op, same stance as
+    # every other "not configured yet" setting above.
+    alert_webhook_url: str | None = Field(default=None, alias="ALERT_WEBHOOK_URL")
+
+    # Cloudflare Turnstile CAPTCHA on register/login -- optional, same
+    # "unset means disabled" stance as everything else above. site_key is
+    # public (shipped to the browser); secret_key stays server-only.
+    turnstile_site_key: str | None = Field(default=None, alias="TURNSTILE_SITE_KEY")
+    turnstile_secret_key: str | None = Field(default=None, alias="TURNSTILE_SECRET_KEY")
+
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins_raw.split(",") if origin.strip()]
