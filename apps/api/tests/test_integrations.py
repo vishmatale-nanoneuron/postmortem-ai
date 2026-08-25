@@ -85,6 +85,35 @@ async def test_linear_create_issue_returns_none_on_graphql_error(monkeypatch: py
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"data": {"issueCreate": {"success": True}}},  # success but no issue
+        {"data": None},  # a key present with an explicit null, not a missing key
+        {"data": {"issueCreate": []}},  # wrong shape entirely
+        [1, 2, 3],  # top-level body is not even an object
+    ],
+    ids=["empty-body", "success-no-issue", "data-is-null", "issueCreate-is-a-list", "top-level-is-a-list"],
+)
+async def test_linear_create_issue_never_raises_on_a_malformed_response(
+    monkeypatch: pytest.MonkeyPatch, body: object
+) -> None:
+    # Regression test for a real crash found via a self-directed adversarial
+    # audit: `.get("data", {})` does NOT default to {} when the key is
+    # present with an explicit `null` value -- it returns None, and
+    # `.get()` on None (or on a list, for the wrong-shape cases) raised
+    # AttributeError, violating this function's own "Never raises" promise
+    # and, in the real call site, silently dropping every action item's
+    # Linear ticket after whichever action happened to trigger it.
+    async def fake_post(self, url, headers=None, json=None, **kwargs):
+        return httpx.Response(200, json=body, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    assert await create_linear_issue("real-key", "team-1", "title", "description") is None
+
+
+@pytest.mark.asyncio
 async def test_linear_create_issue_returns_none_on_network_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_post(self, url, headers=None, json=None, **kwargs):
         raise httpx.ConnectError("refused")

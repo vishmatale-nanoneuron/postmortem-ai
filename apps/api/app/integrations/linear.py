@@ -51,11 +51,23 @@ async def create_linear_issue(
         logger.warning("linear_issue_create_failed", exc_info=True)
         return None
 
+    if not isinstance(body, dict):
+        logger.warning("linear_issue_create_failed", extra={"reason": "non-dict response body"})
+        return None
     if body.get("errors"):
         logger.warning("linear_issue_create_failed", extra={"errors": body["errors"]})
         return None
 
-    result = body.get("data", {}).get("issueCreate", {})
-    if not result.get("success"):
+    # `.get("data", {})` looks like it defaults to {} on a missing key, but
+    # a key present with an explicit `null` value (a real, adversarially-
+    # tested case: `{"data": null}`) makes `.get` return None regardless
+    # of the default, and .get() on None/a list crashes -- found via a
+    # direct adversarial test against this function, not by inspection.
+    # `or {}` catches both None and a missing key; the isinstance guard
+    # catches Linear (or a hostile response) returning the wrong shape
+    # entirely (e.g. issueCreate as a list).
+    data = body.get("data") or {}
+    result = data.get("issueCreate") if isinstance(data, dict) else None
+    if not isinstance(result, dict) or not result.get("success"):
         return None
     return result.get("issue")
