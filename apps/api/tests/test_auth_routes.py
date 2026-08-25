@@ -68,6 +68,41 @@ async def test_registering_the_same_email_twice_is_a_conflict(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_email_case_is_normalized_so_a_case_variant_cannot_double_register(context) -> None:
+    # Real bug this guards against: "User@Example.com" and
+    # "user@example.com" previously registered as two separate accounts
+    # sharing the same real inbox.
+    client, database = context
+    await database.execute("DELETE FROM users WHERE email=%s", ("auth-test-case@example.com",))
+
+    first = await client.post(
+        "/v1/auth/register", json={"email": "Auth-Test-Case@Example.com", "password": "correct-horse-battery"}
+    )
+    assert first.status_code == 201, first.text
+    assert first.json()["email"] == "auth-test-case@example.com"
+
+    conflict = await client.post(
+        "/v1/auth/register", json={"email": "AUTH-TEST-CASE@EXAMPLE.COM", "password": "a-different-password"}
+    )
+    assert conflict.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_login_email_case_is_normalized_too(context) -> None:
+    client, database = context
+    await database.execute("DELETE FROM users WHERE email=%s", ("auth-test-login-case@example.com",))
+    await client.post(
+        "/v1/auth/register", json={"email": "auth-test-login-case@example.com", "password": "correct-horse-battery"}
+    )
+    client.cookies.clear()
+
+    response = await client.post(
+        "/v1/auth/login", json={"email": "Auth-Test-Login-Case@Example.com", "password": "correct-horse-battery"}
+    )
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.asyncio
 async def test_login_with_correct_password_succeeds(context) -> None:
     client, _ = context
     await client.post(

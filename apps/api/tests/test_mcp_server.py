@@ -181,6 +181,18 @@ async def test_run_read_only_sql_rejects_a_write_statement(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_read_only_sql_rejects_a_data_modifying_cte(context) -> None:
+    # A WITH clause can legally contain a data-modifying CTE -- single
+    # statement, starts with "with", would otherwise pass the naive check.
+    app, founder_token, _client_token = context
+    async with mcp_session(app, token=founder_token) as session:
+        result = await session.call_tool(
+            "run_read_only_sql", {"sql": "WITH d AS (DELETE FROM users RETURNING id) SELECT * FROM d"}
+        )
+    assert result.isError is True
+
+
+@pytest.mark.asyncio
 async def test_run_read_only_sql_redacts_password_hash(context) -> None:
     app, founder_token, _client_token = context
     async with mcp_session(app, token=founder_token) as session:

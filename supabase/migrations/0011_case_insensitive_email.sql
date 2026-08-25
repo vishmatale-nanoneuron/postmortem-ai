@@ -1,0 +1,15 @@
+-- Real bug found via a self-directed excellence audit, not a bug report:
+-- "User@Example.com" and "user@example.com" registered as two separate
+-- accounts sharing the same real inbox, since Postgres text equality is
+-- case-sensitive and nothing normalized email case before this. The
+-- application layer now normalizes to lowercase before every query
+-- (apps/api/app/api/v1/auth.py's RegisterRequest/LoginRequest validators)
+-- -- this index is defense-in-depth: even if that normalization were ever
+-- bypassed or a future code path forgot it, the database itself refuses a
+-- case-variant duplicate.
+--
+-- Any existing case-variant duplicate rows would make this CREATE UNIQUE
+-- INDEX fail outright rather than silently succeed over broken data --
+-- acceptable and correct for a database with zero real registered users
+-- as of this migration (confirmed: no real clients yet).
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_idx ON public.users (lower(email));

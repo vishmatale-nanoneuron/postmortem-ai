@@ -2,7 +2,7 @@ import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from ...auth import SESSION_COOKIE_NAME, User, _is_founder, current_user
 from ...database import Database
@@ -42,11 +42,29 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=200)
     captcha_token: str | None = None
 
+    # Real bug this closes: without normalizing case, "User@Example.com"
+    # and "user@example.com" registered as two separate accounts sharing
+    # the same real inbox -- found via a self-directed audit, not a bug
+    # report. Only the local part's case is normalized (lowercased);
+    # per RFC 5321 the local part is technically case-sensitive, but every
+    # mail provider that matters in practice treats it case-insensitively,
+    # and consistent lowercasing is what actually prevents the duplicate-
+    # account problem here.
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
+
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=200)
     captcha_token: str | None = None
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
 
 
 class UserOut(BaseModel):

@@ -17,6 +17,7 @@ an MCP client gets no more access than a browser session would.
 import contextvars
 import functools
 import logging
+import re
 from collections.abc import Awaitable, Callable
 
 from mcp.server.fastmcp import FastMCP
@@ -206,6 +207,15 @@ def build_mcp_server(get_database: Callable[[], Database], settings: Settings) -
         lowered = trimmed.lower().lstrip()
         if not lowered.startswith(("select", "with")):
             raise ValueError("Only a single SELECT or WITH statement is allowed")
+        # A WITH clause can legally contain a data-modifying CTE (e.g.
+        # `WITH d AS (DELETE FROM users RETURNING id) SELECT * FROM d`) --
+        # single statement, starts with "with", passes both checks above.
+        # Postgres's own read-only transaction refuses it regardless
+        # (verified directly against a real database, not assumed), but
+        # rejecting it here too gives a clean validation error instead of
+        # a raw database error leaking through.
+        if lowered.startswith("with") and re.search(r"\b(insert|update|delete|merge)\b", lowered):
+            raise ValueError("Data-modifying CTEs are not allowed, even inside a WITH clause")
 
         wrapped = f"SELECT * FROM ({trimmed}) AS mcp_subquery LIMIT 500"
         async with database.read_only_transaction() as tx:
