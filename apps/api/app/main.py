@@ -18,7 +18,19 @@ logger = logging.getLogger("postmortem_ai")
 
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.exception("Unhandled exception on %s %s", request.method, request.url.path, exc_info=exc)
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    # A handler registered for the base Exception class is run by
+    # Starlette's ServerErrorMiddleware, which sits OUTSIDE CORSMiddleware
+    # -- so CORSMiddleware never gets a chance to add its headers to this
+    # response, and every unhandled 500 looks like "Failed to fetch" /
+    # a CORS error to the browser instead of a readable error. Add the
+    # same headers CORSMiddleware would have, by hand, only here.
+    origin = request.headers.get("origin")
+    if origin and origin in get_settings().cors_origins:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Vary"] = "Origin"
+    return response
 
 
 @asynccontextmanager
