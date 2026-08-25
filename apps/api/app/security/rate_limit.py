@@ -52,6 +52,38 @@ async def record_login_attempt(database: Database, email: str, ip: str, succeede
     )
 
 
+# Registration had no rate limiting at all before this -- creating an
+# account is free and instant (no email verification, no KYC), which meant
+# billing/upi/info and billing/wire/info (see postmortems.py's paywall,
+# gated behind "any signed-in user" because a genuine unpaid client needs
+# to see the real payment details to become a paying one) were only ever
+# one trivial free registration away from anyone, not a real barrier.
+# CAPTCHA (security/captcha.py) is the stronger defense and is already
+# wired into register() -- but it's optional/unconfigured until a real
+# Cloudflare Turnstile key is set. This is the defense that's active
+# regardless: same atomic check-and-record pattern as try_record_action,
+# to avoid the same TOCTOU race a naive check-then-insert would have.
+MAX_REGISTRATIONS_PER_IP = 5
+REGISTRATION_WINDOW_MS = 60 * 60 * 1000
+
+
+async def try_record_registration_attempt(database: Database, ip: str) -> bool:
+    """Atomically check-and-record. Returns True if this IP is still under
+    the per-hour registration limit (and the attempt is now recorded),
+    False if it should be rejected."""
+    now = int(time.time() * 1000)
+    async with database.transaction() as tx:
+        await tx.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"register:{ip}",))
+        row = await tx.fetch_one(
+            "SELECT count(*) AS n FROM registration_attempts WHERE ip=%s AND created_at > %s",
+            (ip, now - REGISTRATION_WINDOW_MS),
+        )
+        if row and row["n"] >= MAX_REGISTRATIONS_PER_IP:
+            return False
+        await tx.execute("INSERT INTO registration_attempts (ip, created_at) VALUES (%s, %s)", (ip, now))
+        return True
+
+
 # Generic per-account action rate limiting -- separate from login's own
 # email/IP-based limiter (a different threat model: this bounds how often
 # an already-authenticated account can call a specific action, regardless

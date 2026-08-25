@@ -181,3 +181,28 @@ async def test_logout_clears_the_session(context) -> None:
     client.cookies.clear()
     me = await client.get("/v1/auth/me")
     assert me.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_registration_is_rate_limited_per_ip(context) -> None:
+    # Regression for a real gap: registration is free and instant (no
+    # email verification, no KYC) -- it was the only thing standing between
+    # "anyone on the internet" and billing/upi/info + billing/wire/info
+    # (which require a signed-in caller, but any account qualifies). This
+    # is the deployed-by-default defense against mass throwaway-account
+    # creation; CAPTCHA (security/captcha.py) is the stronger one but is
+    # optional/unconfigured until a real Cloudflare key is set.
+    client, _ = context
+    for i in range(5):
+        response = await client.post(
+            "/v1/auth/register",
+            json={"email": f"auth-test-rate-limit-{i}@example.com", "password": "correct-horse-battery"},
+        )
+        assert response.status_code == 201, response.text
+        client.cookies.clear()
+
+    blocked = await client.post(
+        "/v1/auth/register",
+        json={"email": "auth-test-rate-limit-6th@example.com", "password": "correct-horse-battery"},
+    )
+    assert blocked.status_code == 429

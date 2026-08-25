@@ -13,6 +13,7 @@ from ...security.rate_limit import (
     client_ip,
     is_login_rate_limited,
     record_login_attempt,
+    try_record_registration_attempt,
 )
 from ...security.tokens import issue_token
 from ...settings import Settings, get_settings
@@ -127,6 +128,8 @@ async def register(
 ) -> UserOut:
     if not await verify_turnstile(settings.turnstile_secret_key, payload.captcha_token, client_ip(request)):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=CAPTCHA_FAILURE_DETAIL)
+    if not await try_record_registration_attempt(database, client_ip(request)):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
 
     is_founder_email = _is_founder(payload.email, settings.founder_email)
     existing = await database.fetch_one("SELECT id FROM users WHERE email=%s", (payload.email,))
