@@ -1,7 +1,6 @@
 import time
 
 import jwt
-
 from app.security.tokens import ALGORITHM, issue_token, verify_token
 
 SECRET = "test-secret-do-not-use-in-production"
@@ -38,7 +37,15 @@ def test_a_non_ascii_email_round_trips_without_crashing() -> None:
 def test_a_tampered_signature_is_rejected() -> None:
     token = issue_token(SECRET, user_id="u1", email="user@example.com")
     header, payload_segment, signature = token.split(".")
-    tampered = f"{header}.{payload_segment}.{signature[:-1]}x"
+    # Flip the FIRST character of the signature, not the last. The last
+    # base64url character of a 32-byte HMAC-SHA256 signature only encodes
+    # 2 significant bits (256 bits doesn't divide evenly into 6-bit
+    # groups), so corrupting it had a real chance of decoding to the exact
+    # same byte string -- a flaky false pass, reproduced multiple times.
+    # The first character always encodes a full 6 bits, so any
+    # substitution reliably changes the decoded signature.
+    replacement = "a" if signature[0] != "a" else "b"
+    tampered = f"{header}.{payload_segment}.{replacement}{signature[1:]}"
     assert verify_token(SECRET, tampered) is None
 
 
