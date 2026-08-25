@@ -57,6 +57,16 @@ class Settings(BaseSettings):
     founder_upi_payee_name: str = Field(default="PostMortem AI", alias="FOUNDER_UPI_PAYEE_NAME")
     subscription_price_inr: int = Field(default=999, alias="SUBSCRIPTION_PRICE_INR")
 
+    # Bank-alert auto-verification (bank_alerts.py): a client's bank alert
+    # (forwarded by the founder from their real inbox to an email-routing
+    # provider's inbound webhook) is the actual proof a payment happened --
+    # no gateway, no KYC, and unlike a founder clicking "approve", it can't
+    # be granted by mistake, since it requires text that only arrives after
+    # a real credit. Unset means the endpoint is disabled (any request
+    # rejected), same "unconfigured means off" stance as every other
+    # not-yet-provisioned integration in this codebase.
+    bank_alert_webhook_secret: str | None = Field(default=None, alias="BANK_ALERT_WEBHOOK_SECRET")
+
     # Manual international wire (SWIFT) payment -- same pattern as UPI:
     # client wires the money directly, submits a reference, founder
     # approves. Beneficiary details are shared across currencies; the

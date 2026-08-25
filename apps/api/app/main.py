@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .api.v1.auth import router as auth_router
+from .api.v1.bank_alerts import router as bank_alerts_router
 from .api.v1.billing import router as billing_router
 from .api.v1.founder import router as founder_router
 from .api.v1.integrations import router as integrations_router
@@ -85,6 +86,7 @@ def create_app() -> FastAPI:
         return response
 
     app.include_router(auth_router)
+    app.include_router(bank_alerts_router)
     app.include_router(billing_router)
     app.include_router(founder_router)
     app.include_router(integrations_router)

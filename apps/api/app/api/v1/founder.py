@@ -6,14 +6,9 @@ from pydantic import BaseModel
 from ...auth import User, current_founder
 from ...database import Database
 from ...dependencies import get_database
+from ...services.billing import activate_manual_subscription
 
 router = APIRouter(prefix="/v1/founder", tags=["founder"])
-
-# A manual approval is treated as an indefinite-ish subscription that
-# renews every 30 days -- there is no gateway enforcing an actual billing
-# cycle here, so this is the founder's own reminder window, re-extended
-# each time a new claim for the same account is approved.
-MANUAL_SUBSCRIPTION_PERIOD_SECONDS = 30 * 24 * 60 * 60
 
 
 @router.get("/summary")
@@ -112,7 +107,6 @@ async def approve_payment_claim(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
 
     now = int(time.time() * 1000)
-    period_end = int(time.time()) + MANUAL_SUBSCRIPTION_PERIOD_SECONDS
     async with database.transaction() as tx:
         await tx.execute(
             "UPDATE payment_claims SET status='approved', reviewed_by=%s, reviewed_at=%s WHERE id=%s",
@@ -121,11 +115,9 @@ async def approve_payment_claim(
         # 'active' is one of the statuses require_active_subscription treats
         # as paid (see auth.ACTIVE_SUBSCRIPTION_STATUSES) -- a manually
         # approved claim grants access exactly the same way a Stripe
-        # webhook would, through the same field.
-        await tx.execute(
-            "UPDATE users SET subscription_status='active', current_period_end=%s WHERE id=%s",
-            (period_end, claim["user_id"]),
-        )
+        # webhook would, through the same field. Shared with bank_alerts.py's
+        # auto-approval so both grant access exactly the same way.
+        await activate_manual_subscription(tx, claim["user_id"])
     return PaymentClaimOut(**{**claim, "status": "approved"})
 
 
