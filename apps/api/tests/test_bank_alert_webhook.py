@@ -127,6 +127,46 @@ async def test_an_amount_mismatch_refuses_to_auto_approve(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_real_matching_alert_via_query_param_secret_and_form_body(context) -> None:
+    # SMS-forwarder apps typically can't set custom headers or build JSON
+    # -- a fixed webhook URL with the secret as a query param, and the
+    # message as a form field, is the shape those apps can actually send.
+    client, _ = context
+    await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+    await client.post("/v1/billing/upi/claim", json={"reference": "SMSFORM123456"})
+
+    response = await client.post(
+        f"/v1/billing/bank-alert?secret={WEBHOOK_SECRET}",
+        data={"message": "Rs.999.00 credited to your A/c. UPI Ref No SMSFORM123456."},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["matched"] is True
+
+    me = await client.get("/v1/auth/me")
+    assert me.json()["has_active_subscription"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_real_matching_alert_via_raw_plain_text_body(context) -> None:
+    # The simplest possible contract: an app that can only POST the raw
+    # SMS text with no structure at all, secret in the query string.
+    client, _ = context
+    await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+    await client.post("/v1/billing/upi/claim", json={"reference": "SMSPLAIN123456"})
+
+    response = await client.post(
+        f"/v1/billing/bank-alert?secret={WEBHOOK_SECRET}",
+        content=b"Rs.999.00 credited to your A/c. UPI Ref No SMSPLAIN123456.",
+        headers={"content-type": "text/plain"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["matched"] is True
+
+    me = await client.get("/v1/auth/me")
+    assert me.json()["has_active_subscription"] is True
+
+
+@pytest.mark.asyncio
 async def test_a_reference_with_no_matching_pending_claim_does_not_error(context) -> None:
     client, _ = context
     response = await client.post(
