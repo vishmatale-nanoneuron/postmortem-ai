@@ -23,7 +23,7 @@ from ...database import Database
 from ...dependencies import get_database
 from ...integrations.linear import create_linear_issue
 from ...integrations.slack import notify_slack
-from ...security.rate_limit import is_action_rate_limited, record_action
+from ...security.rate_limit import try_record_action
 from ...services.postmortem import (
     PROMPT_VERSION,
     EvidenceEntry,
@@ -112,9 +112,8 @@ async def create_incident(
     database: Database = Depends(get_database),
     user: User = Depends(require_active_subscription),
 ) -> dict[str, object]:
-    if await is_action_rate_limited(database, user.id, "create_incident", MAX_INCIDENTS_PER_HOUR, 60 * 60 * 1000):
+    if not await try_record_action(database, user.id, "create_incident", MAX_INCIDENTS_PER_HOUR, 60 * 60 * 1000):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
-    await record_action(database, user.id, "create_incident")
 
     incident_id = f"inc-{int(time.time() * 1000)}"
     now = int(time.time() * 1000)
@@ -149,11 +148,10 @@ async def update_incident_status(
     database: Database = Depends(get_database),
     user: User = Depends(require_active_subscription),
 ) -> dict[str, object]:
-    if await is_action_rate_limited(
+    if not await try_record_action(
         database, user.id, "update_incident_status", MAX_STATUS_CHANGES_PER_HOUR, 60 * 60 * 1000
     ):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
-    await record_action(database, user.id, "update_incident_status")
 
     await require_incident(database, incident_id, user.email)
     now = int(time.time() * 1000)
@@ -209,9 +207,8 @@ async def record_evidence(
     database: Database = Depends(get_database),
     user: User = Depends(require_active_subscription),
 ) -> dict[str, object]:
-    if await is_action_rate_limited(database, user.id, "record_evidence", MAX_EVIDENCE_PER_HOUR, 60 * 60 * 1000):
+    if not await try_record_action(database, user.id, "record_evidence", MAX_EVIDENCE_PER_HOUR, 60 * 60 * 1000):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
-    await record_action(database, user.id, "record_evidence")
 
     await require_incident(database, incident_id, user.email)
     now = int(time.time() * 1000)
@@ -263,9 +260,8 @@ async def draft_postmortem(
     by a cited evidence entry is replaced or removed, never kept. The result is
     always a draft -- publishing is a separate, human act.
     """
-    if await is_action_rate_limited(database, user.id, "draft_postmortem", MAX_DRAFTS_PER_HOUR, 60 * 60 * 1000):
+    if not await try_record_action(database, user.id, "draft_postmortem", MAX_DRAFTS_PER_HOUR, 60 * 60 * 1000):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
-    await record_action(database, user.id, "draft_postmortem")
 
     incident = await require_incident(database, incident_id, user.email)
     evidence = await load_evidence(database, incident_id)

@@ -124,29 +124,49 @@ async def action_user(database):
 
 @pytest.mark.asyncio
 async def test_action_rate_limiting_is_not_limited_below_the_threshold(database, action_user) -> None:
-    from app.security.rate_limit import is_action_rate_limited, record_action
+    from app.security.rate_limit import try_record_action
 
     for _ in range(3):
-        await record_action(database, action_user, "draft_postmortem")
-    assert not await is_action_rate_limited(database, action_user, "draft_postmortem", max_per_window=5, window_ms=60_000)
+        assert await try_record_action(database, action_user, "draft_postmortem", max_per_window=5, window_ms=60_000)
 
 
 @pytest.mark.asyncio
 async def test_action_rate_limiting_trips_at_the_threshold(database, action_user) -> None:
-    from app.security.rate_limit import is_action_rate_limited, record_action
+    from app.security.rate_limit import try_record_action
 
     for _ in range(5):
-        await record_action(database, action_user, "draft_postmortem")
-    assert await is_action_rate_limited(database, action_user, "draft_postmortem", max_per_window=5, window_ms=60_000)
+        assert await try_record_action(database, action_user, "draft_postmortem", max_per_window=5, window_ms=60_000)
+    assert not await try_record_action(database, action_user, "draft_postmortem", max_per_window=5, window_ms=60_000)
 
 
 @pytest.mark.asyncio
 async def test_action_rate_limiting_is_scoped_per_action(database, action_user) -> None:
     # Hitting the limit on one action must not block a different action
     # for the same account.
-    from app.security.rate_limit import is_action_rate_limited, record_action
+    from app.security.rate_limit import try_record_action
 
     for _ in range(5):
-        await record_action(database, action_user, "draft_postmortem")
-    assert await is_action_rate_limited(database, action_user, "draft_postmortem", max_per_window=5, window_ms=60_000)
-    assert not await is_action_rate_limited(database, action_user, "create_incident", max_per_window=5, window_ms=60_000)
+        assert await try_record_action(database, action_user, "draft_postmortem", max_per_window=5, window_ms=60_000)
+    assert not await try_record_action(database, action_user, "draft_postmortem", max_per_window=5, window_ms=60_000)
+    assert await try_record_action(database, action_user, "create_incident", max_per_window=5, window_ms=60_000)
+
+
+@pytest.mark.asyncio
+async def test_a_concurrent_burst_cannot_exceed_the_limit(database, action_user) -> None:
+    # Regression for a real TOCTOU race: the old is_action_rate_limited() +
+    # record_action() pair were two separate queries, so a burst of
+    # concurrent callers could all pass the check before any of their
+    # inserts committed, letting the burst blow past max_per_window. Firing
+    # genuinely concurrent calls (asyncio.gather) against a limit of 5
+    # proves at most 5 of 20 concurrent attempts are ever allowed through.
+    import asyncio
+
+    from app.security.rate_limit import try_record_action
+
+    results = await asyncio.gather(
+        *[
+            try_record_action(database, action_user, "draft_postmortem", max_per_window=5, window_ms=60_000)
+            for _ in range(20)
+        ]
+    )
+    assert sum(1 for allowed in results if allowed) == 5
