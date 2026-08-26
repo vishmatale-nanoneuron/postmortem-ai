@@ -108,9 +108,29 @@ class Settings(BaseSettings):
     turnstile_site_key: str | None = Field(default=None, alias="TURNSTILE_SITE_KEY")
     turnstile_secret_key: str | None = Field(default=None, alias="TURNSTILE_SECRET_KEY")
 
+    # The MCP SDK enforces DNS-rebinding protection (Host-header allowlist)
+    # once TransportSecuritySettings is passed explicitly (mcp_server.py
+    # does, deliberately, rather than leaving DNS-rebinding protection
+    # disabled for "backwards compatibility" as the SDK does when left
+    # unset) -- so the real production host must be a real default here,
+    # not left to an env var that might never get set: an empty default
+    # would 421 every legitimate MCP request the moment this deploys,
+    # including from an authenticated, bearer-token-holding client, since
+    # the SDK's Host check runs before this app's own auth middleware ever
+    # does. Comma-separated, matching cors_origins_raw's shape; a bare host
+    # (no scheme/port). Override via MCP_ALLOWED_HOSTS only if the API's
+    # domain ever changes.
+    mcp_allowed_hosts_raw: str = Field(
+        default="postmortem-ai-api.vercel.app,127.0.0.1:8000,localhost:8000", alias="MCP_ALLOWED_HOSTS"
+    )
+
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins_raw.split(",") if origin.strip()]
+
+    @property
+    def mcp_allowed_hosts(self) -> list[str]:
+        return [host.strip() for host in self.mcp_allowed_hosts_raw.split(",") if host.strip()]
 
 
 @lru_cache

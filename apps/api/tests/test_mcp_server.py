@@ -42,6 +42,13 @@ async def context(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
     monkeypatch.setenv("COOKIE_SECURE", "false")
     monkeypatch.setenv("FOUNDER_EMAIL", FOUNDER_EMAIL)
+    # httpx's ASGITransport sends "test" as the Host header (from
+    # base_url="http://test" below) -- the MCP SDK's DNS-rebinding
+    # protection (settings.mcp_allowed_hosts) would 421 every request in
+    # this file otherwise. Production's real default is the actual API
+    # domain (see settings.py); this is a test-only addition, same as
+    # COOKIE_SECURE=false above.
+    monkeypatch.setenv("MCP_ALLOWED_HOSTS", "test,postmortem-ai-api.vercel.app,127.0.0.1:8000,localhost:8000")
 
     # RAG's embedding call (draft/publish) is best-effort but would
     # otherwise attempt a real network call in every test here -- fake it

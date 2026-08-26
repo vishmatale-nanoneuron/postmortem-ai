@@ -10,7 +10,14 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17
+        # Plain postgres:17 doesn't ship the pgvector extension -- a real
+        # migration (RAG/embeddings) needs `CREATE EXTENSION vector`, which
+        # fails on the stock image with "extension is not available", not
+        # "already exists". This broke the backend job silently for however
+        # long pgvector's been in the migration history -- caught by
+        # actually watching a real run rather than trusting the workflow
+        # file's presence.
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: postmortem_ai

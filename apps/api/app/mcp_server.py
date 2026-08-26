@@ -21,6 +21,7 @@ import re
 from collections.abc import Awaitable, Callable
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -152,7 +153,15 @@ def build_mcp_server(get_database: Callable[[], Database], settings: Settings) -
     # way MCP streamable-http is used; a session that needs to outlive a
     # cold start is not a supported use case here, same tradeoff as
     # everything else in-memory in this deployment.
-    mcp = FastMCP(name="postmortem-ai")
+    # DNS-rebinding protection stays ON (the SDK's own secure default) --
+    # explicitly allowlisting the real host(s) rather than disabling the
+    # check entirely, since disabling it would remove a real defense for a
+    # dependency-upgrade convenience. See settings.mcp_allowed_hosts's own
+    # comment for why this exists at all.
+    mcp = FastMCP(
+        name="postmortem-ai",
+        transport_security=TransportSecuritySettings(allowed_hosts=settings.mcp_allowed_hosts),
+    )
 
     # ---- Founder-only tools ----------------------------------------
 
