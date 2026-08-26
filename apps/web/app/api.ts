@@ -190,6 +190,13 @@ export const integrations = {
     request<Integrations>("/v1/integrations", { method: "PUT", body: JSON.stringify(payload) }),
 };
 
+export type WebhookToken = { token: string };
+
+export const webhooks = {
+  token: () => request<WebhookToken>("/v1/webhooks/token"),
+  rotate: () => request<WebhookToken>("/v1/webhooks/token/rotate", { method: "POST" }),
+};
+
 export const api = {
   listIncidents: () => request<Incident[]>("/v1/postmortems/incidents"),
   summary: () => request<DashboardSummary>("/v1/postmortems/summary"),
