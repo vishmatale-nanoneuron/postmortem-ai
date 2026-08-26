@@ -381,8 +381,11 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
       <GroundingExample />
       <HowItWorks />
       <div id="get-started" className="mx-auto mb-16 max-w-sm px-4">
-        <div className={card}>
-          <h2 className="mb-3 text-lg font-semibold">{mode === "login" ? "Log in" : "Create an account"}</h2>
+        <div className="rounded-xl border border-line bg-white p-6 shadow-lg shadow-ink/5">
+          <h2 className="mb-1 text-lg font-semibold text-ink">{mode === "login" ? "Welcome back" : "Get started free"}</h2>
+          <p className="mb-4 text-sm text-muted">
+            {mode === "login" ? "Log in to your account." : "Create your account — your first postmortem is free."}
+          </p>
           <form action={submit}>
             <label className={fieldLabel}>Email</label>
             <input className={fieldInput} name="email" type="email" required />
