@@ -1,6 +1,6 @@
 """Shared, autouse test setup.
 
-registration_attempts and login_attempts (security/rate_limit.py) are real
+registration_attempts, login_attempts, and password_reset_attempts (security/rate_limit.py) are real
 Postgres tables, and every test file's own ASGI test client reports the same
 client_ip() -- httpx's ASGITransport doesn't set request.client, so
 client_ip() falls back to "unknown" for literally every test request in the
@@ -32,4 +32,5 @@ def _clear_rate_limit_tables():
         with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
             connection.execute("DELETE FROM registration_attempts")
             connection.execute("DELETE FROM login_attempts")
+            connection.execute("DELETE FROM password_reset_attempts")
     yield

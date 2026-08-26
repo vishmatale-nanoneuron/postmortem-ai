@@ -1,6 +1,7 @@
 import logging
 import time
 
+import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -13,9 +14,11 @@ from ...security.rate_limit import (
     client_ip,
     is_login_rate_limited,
     record_login_attempt,
+    try_record_password_reset_attempt,
     try_record_registration_attempt,
 )
-from ...security.tokens import issue_token
+from ...security.tokens import issue_password_reset_token, issue_token, verify_password_reset_token
+from ...services.email import EmailNotConfiguredError, send_password_reset_email
 from ...settings import Settings, get_settings
 
 logger = logging.getLogger("postmortem_ai")
@@ -327,6 +330,98 @@ async def delete_account(
     # app's append-only-history stance elsewhere (payment_claim_events).
     await database.execute("DELETE FROM users WHERE id=%s", (user.id,))
     response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
+
+
+class PasswordResetRequestIn(BaseModel):
+    email: EmailStr
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+@router.post("/password-reset/request", status_code=status.HTTP_202_ACCEPTED)
+async def request_password_reset(
+    payload: PasswordResetRequestIn,
+    request: Request,
+    database: Database = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, bool]:
+    """Always returns 202, whether or not the email belongs to a real
+    account -- responding differently for "no such account" vs. "email
+    sent" would let this endpoint be used to enumerate registered emails,
+    the same reasoning as login's identical failure message for a wrong
+    password vs. an unknown email. Unconfigured (no RESEND_API_KEY) means
+    this 503s instead -- same "unconfigured means off" stance as every
+    other optional integration in this app, but the client-visible
+    behavior is deliberately NOT the same as the account-not-found case:
+    a 503 here reflects a real operational fact (email isn't set up at
+    all), not information about any specific account."""
+    if not await try_record_password_reset_attempt(database, client_ip(request)):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
+
+    row = await database.fetch_one(
+        "SELECT id::text, email, password_hash FROM users WHERE email=%s", (payload.email,)
+    )
+    if row:
+        token = issue_password_reset_token(settings.session_secret, row["id"], row["email"], row["password_hash"])
+        reset_url = f"{settings.frontend_url}/reset-password?token={token}"
+        try:
+            send_password_reset_email(settings, row["email"], reset_url)
+        except EmailNotConfiguredError as error:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Email is not configured") from error
+        logger.info("password_reset_requested")
+    # No matching account: silently no-op (not even a log line naming the
+    # email) -- same reasoning as above, and avoids logging an address
+    # that was never actually verified to exist.
+    return {"ok": True}
+
+
+class PasswordResetConfirmIn(BaseModel):
+    token: str
+    new_password: str = Field(min_length=8, max_length=200)
+
+
+@router.post("/password-reset/confirm", status_code=status.HTTP_200_OK)
+async def confirm_password_reset(
+    payload: PasswordResetConfirmIn,
+    database: Database = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, bool]:
+    """The token embeds a fingerprint of the password_hash it was issued
+    against (see security/tokens.py) -- fetching the CURRENT hash here,
+    not trusting anything cached, is what makes a token single-use: once
+    this call updates password_hash, the same token's fingerprint no
+    longer matches and a second attempt (a captured/leaked link, or a
+    stale browser tab) fails verification below rather than silently
+    resetting the password again."""
+    # user_id isn't known yet (it's inside the token, which needs a real
+    # password_hash to verify against) -- look up by decoding first,
+    # unverified, purely to fetch which row's password_hash to check
+    # against; verify_password_reset_token repeats the signature/claims
+    # check for real immediately after.
+    try:
+        unverified = jwt.decode(payload.token, options={"verify_signature": False})
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset link") from None
+    user_id = unverified.get("sub")
+    if not isinstance(user_id, str):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset link")
+
+    row = await database.fetch_one("SELECT id::text, email, password_hash FROM users WHERE id=%s", (user_id,))
+    if not row:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset link")
+
+    reset_payload = verify_password_reset_token(settings.session_secret, payload.token, row["password_hash"])
+    if reset_payload is None or reset_payload.user_id != row["id"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset link")
+
+    await database.execute(
+        "UPDATE users SET password_hash=%s WHERE id=%s", (hash_password(payload.new_password), row["id"])
+    )
+    logger.info("password_reset_completed")
+    return {"ok": True}
 
 
 @router.get("/captcha-config")
