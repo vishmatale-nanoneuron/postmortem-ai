@@ -40,6 +40,31 @@ async def founder_summary(
                   avg(latency_ms) FILTER (WHERE status = 'succeeded') AS avg_latency_ms
            FROM ai_runs"""
     )
+    # Last 24h, separately from the all-time totals above -- an all-time
+    # success rate stays reassuringly high for months even while something
+    # is actively broken right now; this is the "is it broken today" view.
+    day_ago = int(time.time() * 1000) - 24 * 60 * 60 * 1000
+    ai_run_counts_24h = await database.fetch_one(
+        """SELECT count(*) AS total,
+                  count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
+                  count(*) FILTER (WHERE status = 'failed') AS failed,
+                  avg(latency_ms) FILTER (WHERE status = 'succeeded') AS avg_latency_ms
+           FROM ai_runs WHERE created_at >= %s""",
+        (day_ago,),
+    )
+    # Broken out by prompt_version -- drafting (PROMPT_VERSION, currently
+    # "v2") and evidence extraction (EXTRACTION_PROMPT_VERSION, "extract-v1")
+    # are two different model calls with independent failure modes; a
+    # single blended success rate can hide one of them being broken while
+    # the other masks it in the average.
+    ai_runs_by_feature = await database.fetch_all(
+        """SELECT prompt_version,
+                  count(*) AS total,
+                  count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
+                  count(*) FILTER (WHERE status = 'failed') AS failed,
+                  avg(latency_ms) FILTER (WHERE status = 'succeeded') AS avg_latency_ms
+           FROM ai_runs GROUP BY prompt_version ORDER BY count(*) DESC"""
+    )
     pending_claims = await database.fetch_one(
         "SELECT count(*) AS total FROM payment_claims WHERE status='pending'"
     )
@@ -50,6 +75,10 @@ async def founder_summary(
         """SELECT id::text, incident_id, provider, model, status, error_type, latency_ms, created_at
            FROM ai_runs ORDER BY created_at DESC LIMIT 10"""
     )
+    def _latency(row: dict | None) -> float | None:
+        value = (row or {}).get("avg_latency_ms")
+        return round(float(value), 1) if value is not None else None
+
     avg_latency = (ai_run_counts or {}).get("avg_latency_ms")
     return {
         "total_users": (user_counts or {}).get("total", 0),
@@ -62,6 +91,20 @@ async def founder_summary(
         "ai_runs_succeeded": (ai_run_counts or {}).get("succeeded", 0),
         "ai_runs_failed": (ai_run_counts or {}).get("failed", 0),
         "ai_runs_avg_latency_ms": round(float(avg_latency), 1) if avg_latency is not None else None,
+        "ai_runs_24h_total": (ai_run_counts_24h or {}).get("total", 0),
+        "ai_runs_24h_succeeded": (ai_run_counts_24h or {}).get("succeeded", 0),
+        "ai_runs_24h_failed": (ai_run_counts_24h or {}).get("failed", 0),
+        "ai_runs_24h_avg_latency_ms": _latency(ai_run_counts_24h),
+        "ai_runs_by_feature": [
+            {
+                "prompt_version": row["prompt_version"],
+                "total": row["total"],
+                "succeeded": row["succeeded"],
+                "failed": row["failed"],
+                "avg_latency_ms": _latency(row),
+            }
+            for row in ai_runs_by_feature
+        ],
         "pending_payment_claims": (pending_claims or {}).get("total", 0),
         "recent_users": recent_users,
         "recent_ai_runs": recent_ai_runs,

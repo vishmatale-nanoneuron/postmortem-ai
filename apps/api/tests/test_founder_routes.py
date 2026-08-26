@@ -90,6 +90,69 @@ async def test_the_founder_summary_reports_real_platform_aggregates(context) -> 
 
 
 @pytest.mark.asyncio
+async def test_ai_run_health_is_broken_out_by_24h_window_and_feature(context) -> None:
+    import time
+
+    client, database = context
+    await client.post("/v1/auth/register", json={"email": FOUNDER_EMAIL, "password": "correct-horse-battery"})
+
+    incident = await client.post(
+        "/v1/postmortems/incidents", json={"title": "AI health test incident", "severity": "sev2"}
+    )
+    incident_id = incident.json()["id"]
+
+    # ai_runs is a global, unscoped table -- other test files' drafting/
+    # extraction tests (real prompt_version values "v2"/"extract-v1") also
+    # write rows to it in this same shared database. Baseline before
+    # inserting, then assert deltas -- not absolute counts, which would be
+    # flaky depending on test run order/parallelism.
+    baseline = await client.get("/v1/founder/summary")
+    baseline_body = baseline.json()
+    baseline_24h_total = baseline_body["ai_runs_24h_total"]
+    baseline_24h_succeeded = baseline_body["ai_runs_24h_succeeded"]
+    baseline_24h_failed = baseline_body["ai_runs_24h_failed"]
+    baseline_by_feature = {row["prompt_version"]: row for row in baseline_body["ai_runs_by_feature"]}
+
+    now = int(time.time() * 1000)
+    two_days_ago = now - 2 * 24 * 60 * 60 * 1000
+
+    async def insert_run(prompt_version: str, status_value: str, latency_ms: int, created_at: int) -> None:
+        await database.execute(
+            """INSERT INTO ai_runs
+                 (id,incident_id,provider,model,prompt_version,input_chars,
+                  output_tokens,latency_ms,status,error_type,created_at)
+               VALUES (gen_random_uuid(),%s,'fake','fake-model',%s,10,5,%s,%s,%s,%s)""",
+            (incident_id, prompt_version, latency_ms, status_value, None if status_value == "succeeded" else "test_error", created_at),
+        )
+
+    # Recent: one succeeded draft, one failed extraction.
+    await insert_run("v2", "succeeded", 100, now)
+    await insert_run("extract-v1", "failed", 50, now)
+    # Old (outside the 24h window): must not count toward the 24h figures,
+    # but must still count toward all-time and the per-feature totals.
+    await insert_run("v2", "succeeded", 200, two_days_ago)
+
+    summary = await client.get("/v1/founder/summary")
+    assert summary.status_code == 200
+    body = summary.json()
+
+    assert body["ai_runs_24h_total"] - baseline_24h_total == 2
+    assert body["ai_runs_24h_succeeded"] - baseline_24h_succeeded == 1
+    assert body["ai_runs_24h_failed"] - baseline_24h_failed == 1
+
+    by_feature = {row["prompt_version"]: row for row in body["ai_runs_by_feature"]}
+    v2_baseline_total = baseline_by_feature.get("v2", {}).get("total", 0)
+    v2_baseline_succeeded = baseline_by_feature.get("v2", {}).get("succeeded", 0)
+    extract_baseline_total = baseline_by_feature.get("extract-v1", {}).get("total", 0)
+    extract_baseline_failed = baseline_by_feature.get("extract-v1", {}).get("failed", 0)
+
+    assert by_feature["v2"]["total"] - v2_baseline_total == 2  # both v2 runs, including the 2-day-old one
+    assert by_feature["v2"]["succeeded"] - v2_baseline_succeeded == 2
+    assert by_feature["extract-v1"]["total"] - extract_baseline_total == 1
+    assert by_feature["extract-v1"]["failed"] - extract_baseline_failed == 1
+
+
+@pytest.mark.asyncio
 async def test_a_founder_summary_call_without_a_session_is_unauthorized(context) -> None:
     client, _ = context
     response = await client.get("/v1/founder/summary")

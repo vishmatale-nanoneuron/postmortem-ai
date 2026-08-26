@@ -139,9 +139,34 @@ function FounderDashboard() {
     ["Pending payment claims", summary.pending_payment_claims],
   ];
 
+  // All-time totals stay reassuringly high for months even while
+  // something is actively broken right now -- this is "is it broken
+  // today," shown separately so a real ongoing incident can't hide inside
+  // a lifetime average.
+  const health24hLabel =
+    summary.ai_runs_24h_total === 0
+      ? "No AI calls in the last 24h"
+      : `${summary.ai_runs_24h_succeeded}/${summary.ai_runs_24h_total} succeeded in the last 24h`;
+  const health24hOk = summary.ai_runs_24h_failed === 0;
+
   return (
     <section className={card}>
       <h2 className="mb-3 text-base font-semibold">Founder dashboard</h2>
+      <div
+        className={cn(
+          "mb-4 flex items-center justify-between rounded-md px-3 py-2 text-sm",
+          summary.ai_runs_24h_total === 0
+            ? "bg-paper text-muted"
+            : health24hOk
+              ? "bg-accent/10 text-accent"
+              : "bg-red-50 text-red-700",
+        )}
+      >
+        <span className="font-medium">{health24hLabel}</span>
+        {summary.ai_runs_24h_avg_latency_ms != null && (
+          <span>avg {summary.ai_runs_24h_avg_latency_ms} ms</span>
+        )}
+      </div>
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         {stats.map(([label, value]) => (
           <div key={label} className="rounded-md bg-paper px-3 py-2">
@@ -150,6 +175,23 @@ function FounderDashboard() {
           </div>
         ))}
       </div>
+      {summary.ai_runs_by_feature.length > 0 && (
+        <>
+          <h3 className="mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">AI features (by prompt version)</h3>
+          <ul className="mb-4 space-y-1 text-sm">
+            {summary.ai_runs_by_feature.map((feature) => (
+              <li key={feature.prompt_version} className="flex justify-between rounded-md bg-paper px-3 py-1.5">
+                <span className="font-mono text-xs">{feature.prompt_version}</span>
+                <span>
+                  {feature.succeeded}/{feature.total} ok
+                  {feature.failed > 0 && <span className="text-red-600"> -- {feature.failed} failed</span>}
+                  {feature.avg_latency_ms != null && <span className="text-muted"> -- avg {feature.avg_latency_ms} ms</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       <h3 className="mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">Recent signups</h3>
       <ul className="mb-4 space-y-1 text-sm">
         {summary.recent_users.length === 0 ? (

@@ -75,6 +75,17 @@ export type FounderSummary = {
   ai_runs_succeeded: number;
   ai_runs_failed: number;
   ai_runs_avg_latency_ms: number | null;
+  ai_runs_24h_total: number;
+  ai_runs_24h_succeeded: number;
+  ai_runs_24h_failed: number;
+  ai_runs_24h_avg_latency_ms: number | null;
+  ai_runs_by_feature: {
+    prompt_version: string;
+    total: number;
+    succeeded: number;
+    failed: number;
+    avg_latency_ms: number | null;
+  }[];
   pending_payment_claims: number;
   recent_users: { id: string; email: string; created_at: number }[];
   recent_ai_runs: {
