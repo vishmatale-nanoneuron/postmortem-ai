@@ -13,6 +13,13 @@ class Settings(BaseSettings):
     database_url: str = Field(alias="DATABASE_URL")
     gemini_api_key: str = Field(alias="GEMINI_API_KEY")
     gemini_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_MODEL")
+    # Optional -- when unset, drafting/extraction run on Gemini alone
+    # (unchanged prior behavior). When set, Claude is used as a real
+    # fallback provider for exactly the calls where Gemini's own call
+    # fails (see ai/fallback_provider.py) -- never a second, independent
+    # code path with its own bugs to keep in sync.
+    anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
+    anthropic_model: str = Field(default="claude-sonnet-5", alias="ANTHROPIC_MODEL")
     session_secret: str = Field(alias="SESSION_SECRET")
 
     @field_validator("session_secret")

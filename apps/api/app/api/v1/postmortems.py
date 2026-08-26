@@ -4,6 +4,7 @@ import re
 import secrets
 import time
 
+import anthropic
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from google.genai import errors as genai_errors
@@ -342,7 +343,7 @@ async def extract_evidence(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The extraction model returned an unreadable response",
         ) from error
-    except (httpx.HTTPError, genai_errors.APIError) as error:
+    except (httpx.HTTPError, genai_errors.APIError, anthropic.APIError, anthropic.APIConnectionError) as error:
         logger.warning(
             "evidence_extraction_failed", extra={"incident_id": incident_id, "error_type": type(error).__name__}
         )
@@ -472,15 +473,20 @@ async def draft_postmortem(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The drafting model returned an unreadable response",
         ) from error
-    except (httpx.HTTPError, genai_errors.APIError) as error:
+    except (httpx.HTTPError, genai_errors.APIError, anthropic.APIError, anthropic.APIConnectionError) as error:
         # httpx.HTTPError covers a generic ModelProvider's own request
         # failures; google.genai.errors.APIError is the Gemini SDK's own
         # common base (auth errors, rate limits, server errors) and is NOT a
-        # subclass of httpx.HTTPError, so it needs its own catch -- this
-        # codebase previously ran the same swap against Anthropic, where a
-        # live smoke test against a real (invalid) API key surfaced an
-        # uncaught 500 before the equivalent catch was added; added
-        # proactively here rather than waiting to rediscover the same gap.
+        # subclass of httpx.HTTPError, so it needs its own catch -- found the
+        # hard way via a live smoke test against a real (invalid) API key
+        # surfacing an uncaught 500 before this catch existed at all.
+        # anthropic.APIError/APIConnectionError are the same story for
+        # Claude, added proactively this time (not after another live
+        # surprise): Claude is now a real fallback provider FallbackProvider
+        # can actually reach (see ai/model_router.py), not just a historical
+        # note, and in Python APIConnectionError is a SIBLING of APIError,
+        # not a subclass of it -- catching only APIError would still miss a
+        # real Claude network failure.
         logger.warning(
             "postmortem_draft_failed",
             extra={"incident_id": incident_id, "error_type": type(error).__name__},
