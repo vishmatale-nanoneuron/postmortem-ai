@@ -50,9 +50,15 @@ async def context(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-async def test_an_unpaid_account_cannot_create_an_incident(context) -> None:
+async def test_an_unpaid_account_cannot_create_a_second_incident(context) -> None:
+    # A brand new unpaid account can create exactly one incident for free
+    # (see test_free_incident.py for the full free-tier flow) -- the
+    # paywall is real starting from the second one.
     client, _ = context
     await client.post("/v1/auth/register", json={"email": UNPAID_EMAIL, "password": "correct-horse-battery"})
+
+    first = await client.post("/v1/postmortems/incidents", json={"title": "Free incident", "severity": "sev2"})
+    assert first.status_code == 201, first.text
 
     response = await client.post("/v1/postmortems/incidents", json={"title": "Should be blocked", "severity": "sev2"})
     assert response.status_code == 402

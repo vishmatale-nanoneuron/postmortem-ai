@@ -99,11 +99,15 @@ export default function Workspace() {
         />
       )}
       {user.is_founder && <FounderDashboard />}
-      {user.has_active_subscription ? (
-        <IncidentWorkspace isFounder={user.is_founder} />
-      ) : (
-        <SubscribeGate />
-      )}
+      {/* Unlike before, an unsubscribed account still sees the real
+          workspace underneath -- the free-tier account's one incident
+          (once created) needs to stay reachable for adding evidence and
+          drafting, not just its creation. SubscribeGate is now an upsell
+          shown alongside it, not an exclusive alternative to it; the
+          actual free-tier boundary (one incident, no publishing) is
+          enforced server-side regardless of what renders here. */}
+      {!user.has_active_subscription && <SubscribeGate hasFreeIncidentAvailable={user.has_free_incident_available} />}
+      <IncidentWorkspace isFounder={user.is_founder} />
     </main>
   );
 }
@@ -410,7 +414,7 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
   );
 }
 
-function SubscribeGate() {
+function SubscribeGate({ hasFreeIncidentAvailable }: { hasFreeIncidentAvailable: boolean }) {
   const [tab, setTab] = useState<"upi" | "wire">("upi");
   const [status, setStatus] = useState<BillingStatus | null>(null);
 
@@ -426,12 +430,18 @@ function SubscribeGate() {
   return (
     <section className={card}>
       <h2 className="mb-2 text-base font-semibold">
-        {expired ? "Your subscription has expired" : "Subscribe to use PostMortem AI"}
+        {expired
+          ? "Your subscription has expired"
+          : hasFreeIncidentAvailable
+            ? "Your first postmortem is free"
+            : "Subscribe to publish and create another postmortem"}
       </h2>
       <p className="mb-3 text-sm text-muted">
         {expired && status?.current_period_end
           ? `Your access expired on ${new Date(status.current_period_end * 1000).toLocaleDateString()}. Make a new payment below to reactivate -- creating incidents, recording evidence, drafting, and publishing all require an active subscription; viewing your existing history stays available either way.`
-          : "An active subscription is required to create incidents, record evidence, draft, and publish postmortems -- viewing your existing history stays available either way."}
+          : hasFreeIncidentAvailable
+            ? "Create one incident, record evidence, and draft a grounded postmortem with no payment -- see the real output before you decide. Publishing it (making it a permanent, citable record) and creating a second incident both require a subscription."
+            : "You've used your free postmortem. Subscribe below to publish it, or to create another incident -- your existing history stays available either way."}
       </p>
       <div className="mb-3 flex gap-1.5">
         <button
