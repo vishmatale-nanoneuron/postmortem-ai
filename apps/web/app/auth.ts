@@ -77,4 +77,18 @@ export const auth = {
     }
     await fetch("/api/session", { method: "DELETE" }).catch(() => {});
   },
+  // Always resolves (202) whether or not the email belongs to a real
+  // account -- see the backend's own docstring for why. Never throws for
+  // "no such account"; only a real error (e.g. rate limited, email not
+  // configured) surfaces as a thrown Error via authRequest's own handling.
+  requestPasswordReset: (email: string) =>
+    authRequest<{ ok: boolean }>("/v1/auth/password-reset/request", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+  confirmPasswordReset: (token: string, newPassword: string) =>
+    authRequest<{ ok: boolean }>("/v1/auth/password-reset/confirm", {
+      method: "POST",
+      body: JSON.stringify({ token, new_password: newPassword }),
+    }),
 };

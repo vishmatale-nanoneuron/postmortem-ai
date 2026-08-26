@@ -108,6 +108,15 @@ class Settings(BaseSettings):
     turnstile_site_key: str | None = Field(default=None, alias="TURNSTILE_SITE_KEY")
     turnstile_secret_key: str | None = Field(default=None, alias="TURNSTILE_SECRET_KEY")
 
+    # Password reset emails via Resend (see services/email.py) -- optional,
+    # same "unset means disabled" stance as everything else above: the
+    # request endpoint 503s rather than crashing when unconfigured, same
+    # pattern as billing._client()'s Stripe check. resend_email_domain is
+    # the real, verified sending domain provisioned via the Vercel
+    # Marketplace Resend integration -- never a guessed/hardcoded domain.
+    resend_api_key: str | None = Field(default=None, alias="RESEND_API_KEY")
+    resend_email_domain: str | None = Field(default=None, alias="RESEND_EMAIL_DOMAIN")
+
     # The MCP SDK enforces DNS-rebinding protection (Host-header allowlist)
     # once TransportSecuritySettings is passed explicitly (mcp_server.py
     # does, deliberately, rather than leaving DNS-rebinding protection

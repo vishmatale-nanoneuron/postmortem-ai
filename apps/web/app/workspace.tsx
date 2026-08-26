@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { GroundingExample, Hero, HowItWorks, WhatThisIsnt } from "./landing";
 import { usePolling } from "./use-polling";
 import {
+  emailOnlySchema,
   evidenceSchema,
   firstError,
   incidentSchema,
@@ -352,13 +353,33 @@ function PaymentClaimsReview() {
 }
 
 function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const [mode, setMode] = useState<"login" | "register" | "forgot">("login");
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function submit(form: FormData) {
     setError("");
+    setMessage("");
     const email = String(form.get("email"));
+
+    if (mode === "forgot") {
+      const validationError = firstError(emailOnlySchema, { email });
+      if (validationError) return setError(validationError);
+      setBusy(true);
+      try {
+        await auth.requestPasswordReset(email);
+        // Always the same message whether or not the email is registered
+        // -- the backend never reveals that distinction either.
+        setMessage("If an account exists for that email, a reset link is on its way.");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not send the reset email.");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     const password = String(form.get("password"));
     const schema = mode === "login" ? loginSchema : registerSchema;
     const validationError = firstError(schema, { email, password });
@@ -375,6 +396,8 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
     }
   }
 
+  const heading = mode === "login" ? "Log in" : mode === "register" ? "Create an account" : "Reset your password";
+
   return (
     <main>
       <Hero />
@@ -382,30 +405,91 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
       <HowItWorks />
       <div id="get-started" className="mx-auto mb-16 max-w-sm px-4">
         <div className={card}>
-          <h2 className="mb-3 text-lg font-semibold">{mode === "login" ? "Log in" : "Create an account"}</h2>
+          <h2 className="mb-3 text-lg font-semibold">{heading}</h2>
           <form action={submit}>
             <label className={fieldLabel}>Email</label>
             <input className={fieldInput} name="email" type="email" required />
-            <label className={fieldLabel}>Password</label>
-            <input className={fieldInput} name="password" type="password" minLength={8} required />
+            {mode !== "forgot" && (
+              <>
+                <label className={fieldLabel}>Password</label>
+                <input className={fieldInput} name="password" type="password" minLength={8} required />
+              </>
+            )}
             <button className={`${primaryButton} w-full`} disabled={busy} type="submit">
-              {mode === "login" ? "Log in" : "Create account"}
+              {mode === "login" ? "Log in" : mode === "register" ? "Create account" : "Send reset link"}
             </button>
           </form>
+          {message && (
+            <p role="status" className="mt-3 text-sm text-accent">
+              {message}
+            </p>
+          )}
           {error && (
             <p role="status" className="mt-3 text-sm text-red-600">
               {error}
             </p>
           )}
+          {mode === "login" && (
+            <p className="mt-2 text-sm text-muted">
+              <button
+                className="font-medium text-ink underline underline-offset-2"
+                type="button"
+                onClick={() => {
+                  setMode("forgot");
+                  setError("");
+                  setMessage("");
+                }}
+              >
+                Forgot password?
+              </button>
+            </p>
+          )}
           <p className="mt-3 text-sm text-muted">
-            {mode === "login" ? "No account yet? " : "Already have an account? "}
-            <button
-              className="font-medium text-ink underline underline-offset-2"
-              type="button"
-              onClick={() => setMode(mode === "login" ? "register" : "login")}
-            >
-              {mode === "login" ? "Create one" : "Log in"}
-            </button>
+            {mode === "login" && (
+              <>
+                No account yet?{" "}
+                <button
+                  className="font-medium text-ink underline underline-offset-2"
+                  type="button"
+                  onClick={() => {
+                    setMode("register");
+                    setError("");
+                    setMessage("");
+                  }}
+                >
+                  Create one
+                </button>
+              </>
+            )}
+            {mode === "register" && (
+              <>
+                Already have an account?{" "}
+                <button
+                  className="font-medium text-ink underline underline-offset-2"
+                  type="button"
+                  onClick={() => {
+                    setMode("login");
+                    setError("");
+                    setMessage("");
+                  }}
+                >
+                  Log in
+                </button>
+              </>
+            )}
+            {mode === "forgot" && (
+              <button
+                className="font-medium text-ink underline underline-offset-2"
+                type="button"
+                onClick={() => {
+                  setMode("login");
+                  setError("");
+                  setMessage("");
+                }}
+              >
+                Back to log in
+              </button>
+            )}
           </p>
         </div>
       </div>

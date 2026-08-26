@@ -84,6 +84,34 @@ async def try_record_registration_attempt(database: Database, ip: str) -> bool:
         return True
 
 
+# Password-reset requests send a real email per call -- bounding this
+# matters for a different reason than registration's own limit: an
+# unbounded endpoint here is a way to spam an arbitrary inbox (the
+# endpoint is deliberately unauthenticated, since the whole point is
+# recovering an account you're locked out of) as much as it's an abuse
+# vector against this app itself. Same atomic pattern as the two limiters
+# above, own table so this can never cross-contaminate registration's or
+# login's own counts.
+MAX_PASSWORD_RESET_REQUESTS_PER_IP = 5
+PASSWORD_RESET_WINDOW_MS = 60 * 60 * 1000
+
+
+async def try_record_password_reset_attempt(database: Database, ip: str) -> bool:
+    """Atomically check-and-record, same shape as
+    try_record_registration_attempt above."""
+    now = int(time.time() * 1000)
+    async with database.transaction() as tx:
+        await tx.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"password_reset:{ip}",))
+        row = await tx.fetch_one(
+            "SELECT count(*) AS n FROM password_reset_attempts WHERE ip=%s AND created_at > %s",
+            (ip, now - PASSWORD_RESET_WINDOW_MS),
+        )
+        if row and row["n"] >= MAX_PASSWORD_RESET_REQUESTS_PER_IP:
+            return False
+        await tx.execute("INSERT INTO password_reset_attempts (ip, created_at) VALUES (%s, %s)", (ip, now))
+        return True
+
+
 # Generic per-account action rate limiting -- separate from login's own
 # email/IP-based limiter (a different threat model: this bounds how often
 # an already-authenticated account can call a specific action, regardless

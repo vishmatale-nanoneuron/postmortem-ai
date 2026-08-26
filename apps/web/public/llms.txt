@@ -9,7 +9,10 @@ Last factual review: 2026-08-26
 
 An incident postmortem tool: record evidence about an incident, generate an
 AI-drafted postmortem, publish it once a named human approves. Signed-in
-users only -- account required (email + password).
+users only -- account required (email + password). A forgotten password
+can be reset via a real emailed link (Resend) -- a single-use, 30-minute
+token, sent only if the address belongs to a real account, though the
+request endpoint never reveals which case it was.
 
 ## The core guarantee: grounded drafting, not free-text generation
 
