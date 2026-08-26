@@ -411,8 +411,9 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
 }
 
 function SubscribeGate() {
-  const [tab, setTab] = useState<"upi" | "wire">("upi");
+  const [tab, setTab] = useState<"card" | "upi" | "wire">("upi");
   const [status, setStatus] = useState<BillingStatus | null>(null);
+  const [cardConfigured, setCardConfigured] = useState(false);
 
   // Distinguishes a brand new unpaid account from one whose real, once-
   // active subscription lapsed -- otherwise a client who paid before sees
@@ -421,6 +422,23 @@ function SubscribeGate() {
   useEffect(() => {
     billing.status().then(setStatus).catch(() => setStatus(null));
   }, []);
+
+  // Real Stripe checkout has existed on the backend for a while, but no
+  // client-facing tab ever called it -- everyone only ever saw the manual
+  // UPI/wire flow. Card checkout is instant (no waiting on the founder to
+  // review a claim) so it's offered first, but only once /card/pricing
+  // confirms Stripe is actually configured in this environment; falls
+  // back to defaulting on UPI when it isn't (unchanged prior behavior).
+  useEffect(() => {
+    billing
+      .cardPricing()
+      .then((p) => {
+        setCardConfigured(p.configured);
+        if (p.configured) setTab("card");
+      })
+      .catch(() => setCardConfigured(false));
+  }, []);
+
   const expired = status?.subscription_status === "expired";
 
   return (
@@ -434,6 +452,15 @@ function SubscribeGate() {
           : "An active subscription is required to create incidents, record evidence, draft, and publish postmortems -- viewing your existing history stays available either way."}
       </p>
       <div className="mb-3 flex gap-1.5">
+        {cardConfigured && (
+          <button
+            className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === "card" ? "bg-ink text-paper" : "border border-line text-muted"}`}
+            onClick={() => setTab("card")}
+            type="button"
+          >
+            Card (instant)
+          </button>
+        )}
         <button
           className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === "upi" ? "bg-ink text-paper" : "border border-line text-muted"}`}
           onClick={() => setTab("upi")}
@@ -449,8 +476,38 @@ function SubscribeGate() {
           International wire (SWIFT)
         </button>
       </div>
-      {tab === "upi" ? <UpiPayment /> : <WirePayment />}
+      {tab === "card" ? <CardPayment /> : tab === "upi" ? <UpiPayment /> : <WirePayment />}
     </section>
+  );
+}
+
+function CardPayment() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function subscribe() {
+    setBusy(true);
+    setError("");
+    try {
+      const { url } = await billing.checkout();
+      window.location.href = url; // real Stripe Checkout -- leaves the app
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start checkout.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-md bg-paper px-3 py-2 text-sm">
+      <p className="mb-2 text-muted">
+        Pay by card via Stripe -- access activates immediately after payment, no waiting on manual review. You can
+        cancel or update your card anytime from account settings.
+      </p>
+      <button className={primaryButton} disabled={busy} type="button" onClick={() => void subscribe()}>
+        {busy ? "Redirecting…" : "Subscribe with card"}
+      </button>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    </div>
   );
 }
 
@@ -695,10 +752,37 @@ function WirePayment() {
 
 function ManageBilling() {
   const [status, setStatus] = useState<BillingStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  // Whether a Stripe-backed billing account exists is only knowable by
+  // trying the portal and reading the result -- BillingStatus doesn't
+  // carry a payment-method field. Starts "unknown" so the button always
+  // renders (a client who paid by card should always see it); a 404 from
+  // the backend (no stripe_customer_id -- i.e. paid via UPI/wire instead)
+  // flips this off so the button doesn't stay there promising something
+  // that will only ever fail for that account.
+  const [hasStripeAccount, setHasStripeAccount] = useState(true);
 
   useEffect(() => {
     billing.status().then(setStatus).catch(() => setStatus(null));
   }, []);
+
+  async function openPortal() {
+    setBusy(true);
+    setError("");
+    try {
+      const { url } = await billing.portal();
+      window.location.href = url; // real Stripe Customer Portal -- cancel, update card, view invoices
+    } catch (err) {
+      // /v1/billing/portal 404s specifically when there's no
+      // stripe_customer_id on this account -- i.e. this client paid via
+      // the manual UPI/wire flow, not Stripe, so there's genuinely no
+      // portal to open (not a transient failure worth retrying).
+      setHasStripeAccount(false);
+      setError(err instanceof Error ? err.message : "Could not open billing portal.");
+      setBusy(false);
+    }
+  }
 
   if (!status) return null;
 
@@ -714,11 +798,24 @@ function ManageBilling() {
           </span>
         )}
       </div>
-      <p className="mt-1 text-xs text-muted">
-        {status.subscription_status === "expired"
-          ? "Your access has expired -- contact the founder to make a new payment and reactivate."
-          : "Paid via UPI -- to renew or ask a question, contact the founder directly."}
-      </p>
+      {hasStripeAccount ? (
+        <>
+          <button className={cn(secondaryButton, "mt-2")} disabled={busy} type="button" onClick={() => void openPortal()}>
+            {busy ? "Opening…" : "Manage billing"}
+          </button>
+          {error && (
+            <p className="mt-2 text-xs text-muted">
+              Paid via UPI/wire instead? Contact the founder directly to renew or ask a question.
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="mt-1 text-xs text-muted">
+          {status.subscription_status === "expired"
+            ? "Your access has expired -- contact the founder to make a new payment and reactivate."
+            : "Paid via UPI/wire -- to renew or ask a question, contact the founder directly."}
+        </p>
+      )}
     </section>
   );
 }

@@ -107,6 +107,30 @@ async def test_the_billing_portal_404s_before_any_checkout_has_happened(context)
 
 
 @pytest.mark.asyncio
+async def test_card_pricing_reports_configured_when_stripe_env_is_set(context) -> None:
+    # Public, unauthenticated -- the frontend uses this to decide whether to
+    # show a "Card" subscribe option at all, without needing to sign in or
+    # trigger the 503 from POST /checkout just to find out.
+    client, _ = context
+    response = await client.get("/v1/billing/card/pricing")
+    assert response.status_code == 200
+    assert response.json() == {"configured": True}
+
+
+@pytest.mark.asyncio
+async def test_card_pricing_reports_unconfigured_without_a_stripe_price_id(context, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.settings import get_settings
+
+    monkeypatch.delenv("STRIPE_PRICE_ID", raising=False)
+    get_settings.cache_clear()
+    client, _ = context
+    response = await client.get("/v1/billing/card/pricing")
+    assert response.status_code == 200
+    assert response.json() == {"configured": False}
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
 async def test_a_manually_approved_subscription_stops_granting_access_after_its_period_ends(context) -> None:
     # Regression for a real bug: approve_payment_claim (founder.py) computes
     # a 30-day current_period_end but, before this fix, nothing ever
