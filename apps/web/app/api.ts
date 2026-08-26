@@ -27,6 +27,8 @@ export type Evidence = {
   authorized_by: string;
 };
 
+export type ExtractedEvidence = { source: string; summary: string; detail: string | null };
+
 export type PostmortemAction = {
   id: string;
   title: string;
@@ -201,6 +203,11 @@ export const api = {
     request<Evidence>(`/v1/postmortems/incidents/${incidentId}/evidence`, {
       method: "POST",
       body: JSON.stringify(input),
+    }),
+  extractEvidence: (incidentId: string, text: string) =>
+    request<ExtractedEvidence[]>(`/v1/postmortems/incidents/${incidentId}/evidence/extract`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
     }),
   draft: (incidentId: string) =>
     request<Postmortem>(`/v1/postmortems/incidents/${incidentId}/draft`, { method: "POST" }),

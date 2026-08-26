@@ -219,6 +219,79 @@ async def test_update_incident_status_is_rate_limited(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_extraction_returns_suggestions_without_saving_them(context) -> None:
+    client, provider, _, _ = context
+    provider.response = {
+        "entries": [
+            {"source": "deploy", "summary": "Release 1.2 shipped at 14:02 UTC", "detail": None},
+            {"source": "alert", "summary": "p99 latency alert fired at 14:04 UTC", "detail": "Threshold 2s"},
+        ]
+    }
+    response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/evidence/extract", json={"text": "some pasted thread"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body) == 2
+    assert body[0]["source"] == "deploy"
+    assert body[1]["detail"] == "Threshold 2s"
+
+    # Nothing was actually saved -- extraction only ever proposes.
+    evidence = await client.get(f"/v1/postmortems/incidents/{INCIDENT}/evidence")
+    assert evidence.json() == []
+
+
+@pytest.mark.asyncio
+async def test_extraction_drops_malformed_entries_instead_of_failing_the_whole_request(context) -> None:
+    client, provider, _, _ = context
+    provider.response = {
+        "entries": [
+            {"source": "deploy", "summary": "A real, well-formed entry", "detail": None},
+            {"source": "not-a-real-source", "summary": "Should be dropped -- bad source", "detail": None},
+            {"source": "log", "summary": "", "detail": None},  # empty summary, should be dropped
+            "not even a dict",
+        ]
+    }
+    response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/evidence/extract", json={"text": "x"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["summary"] == "A real, well-formed entry"
+
+
+@pytest.mark.asyncio
+async def test_extraction_with_no_evidence_in_the_text_returns_an_empty_list(context) -> None:
+    client, provider, _, _ = context
+    provider.response = {"entries": []}
+    response = await client.post(
+        f"/v1/postmortems/incidents/{INCIDENT}/evidence/extract", json={"text": "just chit-chat, nothing factual"}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_extraction_records_an_ai_run(context) -> None:
+    client, provider, database, _ = context
+    provider.response = {"entries": [{"source": "log", "summary": "Something happened", "detail": None}]}
+    response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/evidence/extract", json={"text": "x"})
+    assert response.status_code == 200, response.text
+
+    run = await database.fetch_one(
+        "SELECT status, prompt_version FROM ai_runs WHERE incident_id=%s ORDER BY created_at DESC LIMIT 1",
+        (INCIDENT,),
+    )
+    assert run["status"] == "succeeded"
+    assert run["prompt_version"] == "extract-v1"
+
+
+@pytest.mark.asyncio
+async def test_an_unpaid_account_cannot_extract_evidence(context) -> None:
+    client, _, database, _ = context
+    await database.execute("UPDATE users SET subscription_status='none' WHERE email=%s", (CLIENT_EMAIL,))
+    response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/evidence/extract", json={"text": "x"})
+    assert response.status_code == 402
+
+
+@pytest.mark.asyncio
 async def test_drafting_without_evidence_is_refused(context) -> None:
     client, _, _, _ = context
     response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")

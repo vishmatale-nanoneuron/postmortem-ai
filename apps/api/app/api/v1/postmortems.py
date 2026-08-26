@@ -26,11 +26,14 @@ from ...integrations.linear import create_linear_issue
 from ...integrations.slack import notify_slack
 from ...security.rate_limit import try_record_action
 from ...services.postmortem import (
+    EXTRACTION_PROMPT_VERSION,
     PROMPT_VERSION,
     EvidenceEntry,
     bound_evidence_by_chars,
     build_draft_request,
+    build_extraction_request,
     ground_draft,
+    parse_extracted_evidence,
     parse_model_json,
     render_evidence,
 )
@@ -56,6 +59,7 @@ MAX_INCIDENTS_PER_HOUR = 30
 MAX_EVIDENCE_PER_HOUR = 100
 MAX_STATUS_CHANGES_PER_HOUR = 60
 MAX_DRAFTS_PER_HOUR = 20
+MAX_EXTRACTIONS_PER_HOUR = 20
 RATE_LIMITED_DETAIL = "Too many requests. Try again later."
 
 
@@ -253,6 +257,95 @@ async def list_evidence(
            FROM incident_evidence WHERE incident_id=%s ORDER BY occurred_at, id""",
         (incident_id,),
     )
+
+
+class ExtractEvidenceIn(BaseModel):
+    text: str = Field(min_length=1, max_length=40_000)
+
+
+class ExtractedEvidenceOut(BaseModel):
+    source: str
+    summary: str
+    detail: str | None
+
+
+@router.post("/incidents/{incident_id}/evidence/extract", response_model=list[ExtractedEvidenceOut])
+async def extract_evidence(
+    incident_id: str,
+    payload: ExtractEvidenceIn,
+    database: Database = Depends(get_database),
+    provider: ModelProvider = Depends(get_model_provider),
+    user: User = Depends(require_active_subscription),
+) -> list[ExtractedEvidenceOut]:
+    """Assistive, not autonomous: proposes evidence entries from a pasted
+    thread/log, but never writes to incident_evidence itself. The client
+    reviews, edits, or discards each suggestion and adds it through the
+    existing POST .../evidence endpoint, unchanged by this feature -- same
+    reason ground_draft only ever filters the drafting model's output
+    rather than trusting it directly."""
+    if not await try_record_action(database, user.id, "extract_evidence", MAX_EXTRACTIONS_PER_HOUR, 60 * 60 * 1000):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
+
+    await require_incident(database, incident_id, user.email)
+    started_at = time.monotonic()
+
+    async def record_ai_run(status_value: str, output_tokens: int | None, error_type: str | None) -> None:
+        latency_ms = int((time.monotonic() - started_at) * 1000)
+        await database.execute(
+            """INSERT INTO ai_runs
+                 (id,incident_id,provider,model,prompt_version,input_chars,
+                  output_tokens,latency_ms,status,error_type,created_at)
+               VALUES (gen_random_uuid(),%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (
+                incident_id,
+                provider.name,
+                provider.model_name,
+                EXTRACTION_PROMPT_VERSION,
+                len(payload.text),
+                output_tokens,
+                latency_ms,
+                status_value,
+                error_type,
+                int(time.time() * 1000),
+            ),
+        )
+
+    try:
+        result = await provider.complete(build_extraction_request(payload.text))
+        response = parse_model_json(result.text)
+    except CircuitOpenError as error:
+        logger.warning("evidence_extraction_failed", extra={"incident_id": incident_id, "error_type": "circuit_open"})
+        await record_ai_run("failed", None, "circuit_open")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The extraction model has failed repeatedly and is being avoided for a short cooldown -- try again shortly",
+        ) from error
+    except (ValueError, TypeError) as error:
+        logger.warning(
+            "evidence_extraction_failed", extra={"incident_id": incident_id, "error_type": "unreadable_response"}
+        )
+        await record_ai_run("failed", None, "unreadable_response")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The extraction model returned an unreadable response",
+        ) from error
+    except (httpx.HTTPError, genai_errors.APIError) as error:
+        logger.warning(
+            "evidence_extraction_failed", extra={"incident_id": incident_id, "error_type": type(error).__name__}
+        )
+        await record_ai_run("failed", None, type(error).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The extraction model is temporarily unavailable",
+        ) from error
+
+    extracted = parse_extracted_evidence(response)
+    await record_ai_run("succeeded", result.output_tokens, None)
+    logger.info(
+        "evidence_extraction_succeeded",
+        extra={"incident_id": incident_id, "entries_extracted": len(extracted)},
+    )
+    return [ExtractedEvidenceOut(source=e.source, summary=e.summary, detail=e.detail) for e in extracted]
 
 
 @router.post("/incidents/{incident_id}/draft", status_code=status.HTTP_201_CREATED)

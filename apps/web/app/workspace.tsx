@@ -9,6 +9,7 @@ import {
   type Claim,
   type DashboardSummary,
   type Evidence,
+  type ExtractedEvidence,
   type FounderSummary,
   type Incident,
   type Integrations,
@@ -860,6 +861,119 @@ function IntegrationsSettings() {
   );
 }
 
+// AI-assisted, not autonomous: proposes evidence entries from pasted text
+// (a Slack thread, a log excerpt) but never saves anything on its own --
+// each suggestion is reviewed, optionally edited, and added individually
+// through the same POST .../evidence call the manual form below uses.
+// Discarding a suggestion just removes it from local state; nothing was
+// ever written for it in the first place.
+function EvidenceExtractor({
+  incidentId,
+  onAdded,
+  setMessage,
+}: {
+  incidentId: string;
+  onAdded: () => void;
+  setMessage: (message: string) => void;
+}) {
+  const [text, setText] = useState("");
+  const [suggestions, setSuggestions] = useState<ExtractedEvidence[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function extract() {
+    if (!text.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      const extracted = await api.extractEvidence(incidentId, text);
+      setSuggestions(extracted);
+      if (extracted.length === 0) setError("No factual entries found in that text -- try pasting more detail.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not extract evidence.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addSuggestion(index: number) {
+    const item = suggestions[index];
+    setBusy(true);
+    try {
+      await api.addEvidence(incidentId, {
+        occurred_at: Date.now(),
+        source: item.source,
+        summary: item.summary,
+        detail: item.detail ?? undefined,
+      });
+      setSuggestions((prev) => prev.filter((_, i) => i !== index));
+      onAdded();
+      setMessage("Evidence recorded.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not add evidence.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function discardSuggestion(index: number) {
+    setSuggestions((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function updateSuggestion(index: number, summary: string) {
+    setSuggestions((prev) => prev.map((s, i) => (i === index ? { ...s, summary } : s)));
+  }
+
+  return (
+    <div className="mb-4 rounded-md border border-line bg-paper p-3">
+      <label className={fieldLabel}>Paste a Slack thread, log excerpt, or notes to extract evidence from</label>
+      <textarea
+        className={cn(fieldInput, "min-h-24 font-mono text-xs")}
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        placeholder="[14:02] deploy bot: shipped release 1.2&#10;[14:04] pagerduty: p99 latency alert fired..."
+      />
+      <button className={secondaryButton} disabled={busy || !text.trim()} type="button" onClick={() => void extract()}>
+        {busy ? "Extracting..." : "Extract evidence with AI"}
+      </button>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      {suggestions.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {suggestions.map((item, index) => (
+            <li key={index} className="rounded-md bg-white p-2 shadow-sm">
+              <span className="text-xs font-medium text-accent">[{item.source}]</span>
+              <input
+                className={cn(fieldInput, "mt-1 mb-1")}
+                value={item.summary}
+                onChange={(event) => updateSuggestion(index, event.target.value)}
+              />
+              {item.detail && <p className="mb-1.5 text-xs text-muted">{item.detail}</p>}
+              <div className="flex gap-2">
+                <button
+                  className="rounded-md bg-ink px-2 py-1 text-xs font-medium text-paper disabled:opacity-50"
+                  disabled={busy}
+                  type="button"
+                  onClick={() => void addSuggestion(index)}
+                >
+                  Add
+                </button>
+                <button
+                  className="rounded-md border border-line px-2 py-1 text-xs text-muted disabled:opacity-50"
+                  disabled={busy}
+                  type="button"
+                  onClick={() => discardSuggestion(index)}
+                >
+                  Discard
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1086,6 +1200,7 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
                 ))}
               </ul>
             )}
+            <EvidenceExtractor incidentId={selectedId} onAdded={() => void refreshSelected(selectedId)} setMessage={setMessage} />
             <form action={addEvidence}>
               <label className={fieldLabel}>Source</label>
               <select className={fieldInput} name="source" defaultValue="alert">

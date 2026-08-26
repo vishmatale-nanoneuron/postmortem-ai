@@ -102,6 +102,86 @@ class GroundedDraft:
     unsupported_claims_dropped: int
 
 
+# Bumped independently of PROMPT_VERSION (the drafting prompt) -- this is a
+# separate model call with its own contract, not a variant of drafting.
+EXTRACTION_PROMPT_VERSION = "extract-v1"
+
+EVIDENCE_SOURCES = ("alert", "log", "deploy", "metric", "human_note", "customer_report")
+
+# Same two-layer philosophy as SYSTEM_PROMPT/ground_draft above: this prompt
+# asks the model to extract only what's actually stated, but the real
+# guarantee is downstream -- extract_evidence_from_text() below never saves
+# anything to the database itself. Every suggestion is returned to the
+# client for a human to review, edit, or discard before it becomes a real
+# evidence entry via the existing POST .../evidence endpoint, which is
+# unchanged by this feature. This is assistive extraction, not autonomous
+# recording.
+EXTRACTION_SYSTEM_PROMPT = (
+    "You extract structured incident-evidence entries from raw, informal text (a Slack "
+    "thread, a log excerpt, a string of notes). You are not drafting a postmortem and you "
+    "must not summarize, interpret, or infer beyond what the text actually says.\n"
+    "1. Extract only entries that are actually stated in the text. Do not invent entries, "
+    "dates, names, or numbers that are not present.\n"
+    "2. Each entry needs a `source` (one of: alert, log, deploy, metric, human_note, "
+    "customer_report -- pick the closest match), a `summary` (a single factual sentence, "
+    "under 200 characters), and an optional `detail` (additional specifics, if present in "
+    "the text).\n"
+    "3. If the text contains no extractable factual entries, return an empty list -- do not "
+    "pad the output with invented content.\n"
+    "4. Reply with JSON only, matching this shape:\n"
+    '{"entries": [{"source": str, "summary": str, "detail": str | null}]}'
+)
+
+
+@dataclass(frozen=True)
+class ExtractedEvidence:
+    source: str
+    summary: str
+    detail: str | None
+
+
+def build_extraction_request(raw_text: str, model: str | None = None) -> ModelRequest:
+    return ModelRequest(
+        messages=[ModelMessage(role="user", content=raw_text)],
+        system=EXTRACTION_SYSTEM_PROMPT,
+        model=model,
+        max_tokens=2_048,
+        temperature=0.1,
+    )
+
+
+def parse_extracted_evidence(response: dict) -> list[ExtractedEvidence]:
+    """Same defense-in-depth shape as ground_draft: code, not the prompt, is
+    what enforces the actual contract. Anything malformed is dropped rather
+    than raised -- a partially-unreadable response should still surface
+    whatever entries WERE well-formed, since this only ever produces
+    editable suggestions, never a final record."""
+    raw_entries = response.get("entries")
+    if not isinstance(raw_entries, list):
+        return []
+    extracted: list[ExtractedEvidence] = []
+    for raw in raw_entries:
+        if not isinstance(raw, dict):
+            continue
+        source = raw.get("source")
+        summary = raw.get("summary")
+        detail = raw.get("detail")
+        if source not in EVIDENCE_SOURCES:
+            continue
+        if not isinstance(summary, str) or not summary.strip():
+            continue
+        if not (detail is None or isinstance(detail, str)):
+            detail = None
+        extracted.append(
+            ExtractedEvidence(
+                source=source,
+                summary=summary.strip()[:500],
+                detail=(detail.strip()[:4000] if isinstance(detail, str) and detail.strip() else None),
+            )
+        )
+    return extracted
+
+
 def render_evidence(evidence: list[EvidenceEntry]) -> str:
     lines = []
     for index, entry in enumerate(evidence, start=1):
