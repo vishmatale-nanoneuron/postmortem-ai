@@ -6,6 +6,9 @@ export type AuthUser = {
   is_founder: boolean;
   subscription_status: string;
   has_active_subscription: boolean;
+  // Whether this account can still create its one free incident before
+  // paying -- see apps/api/app/auth.py's User.has_free_incident_available.
+  has_free_incident_available: boolean;
 };
 
 async function authRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -74,4 +77,18 @@ export const auth = {
     }
     await fetch("/api/session", { method: "DELETE" }).catch(() => {});
   },
+  // Always resolves (202) whether or not the email belongs to a real
+  // account -- see the backend's own docstring for why. Never throws for
+  // "no such account"; only a real error (e.g. rate limited, email not
+  // configured) surfaces as a thrown Error via authRequest's own handling.
+  requestPasswordReset: (email: string) =>
+    authRequest<{ ok: boolean }>("/v1/auth/password-reset/request", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+  confirmPasswordReset: (token: string, newPassword: string) =>
+    authRequest<{ ok: boolean }>("/v1/auth/password-reset/confirm", {
+      method: "POST",
+      body: JSON.stringify({ token, new_password: newPassword }),
+    }),
 };

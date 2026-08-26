@@ -144,8 +144,11 @@ export type Claim = {
 
 export type PaymentClaim = Claim & { user_id: string; email: string; bank_verified: boolean };
 
+export type CardPricing = { configured: boolean };
+
 export const billing = {
   status: () => request<BillingStatus>("/v1/billing/status"),
+  cardPricing: () => request<CardPricing>("/v1/billing/card/pricing"),
   checkout: () => request<{ url: string }>("/v1/billing/checkout", { method: "POST" }),
   portal: () => request<{ url: string }>("/v1/billing/portal", { method: "POST" }),
   upiPricing: () => request<UpiPricing>("/v1/billing/upi/pricing"),
@@ -188,6 +191,13 @@ export const integrations = {
   get: () => request<Integrations>("/v1/integrations"),
   update: (payload: { slack_webhook_url?: string; linear_api_key?: string; linear_team_id?: string }) =>
     request<Integrations>("/v1/integrations", { method: "PUT", body: JSON.stringify(payload) }),
+};
+
+export type WebhookToken = { token: string };
+
+export const webhooks = {
+  token: () => request<WebhookToken>("/v1/webhooks/token"),
+  rotate: () => request<WebhookToken>("/v1/webhooks/token/rotate", { method: "POST" }),
 };
 
 export const api = {

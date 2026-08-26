@@ -90,9 +90,21 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --cwd apps/web --frozen-lockfile
 
+      # Also installs the workspace root's own node_modules (react/
+      # react-dom, via the repo's ["apps/web"] workspace) -- vitest.config.mts
+      # pins its React alias there deliberately (see that file's comment for
+      # why); without this, the root path it points at wouldn't exist in
+      # this job, which only otherwise installs apps/web standalone.
+      - name: Install workspace-root dependencies (for vitest's react alias)
+        run: bun install
+
       - name: Typecheck
         working-directory: apps/web
         run: bun x tsc --noEmit -p .
+
+      - name: Test
+        working-directory: apps/web
+        run: bun run test
 
       - name: Build
         run: bun run --cwd apps/web build

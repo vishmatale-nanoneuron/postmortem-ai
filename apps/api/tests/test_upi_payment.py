@@ -109,7 +109,12 @@ async def test_submitting_a_claim_does_not_itself_grant_access(context) -> None:
     assert claim.status_code == 201, claim.text
     assert claim.json()["status"] == "pending"
 
-    # Still blocked -- a submitted claim is not the same as an approved one.
+    # A brand new account can still create its one free incident regardless
+    # of a pending claim (see test_free_incident.py) -- what a submitted-
+    # but-unapproved claim must NOT do is grant a second, paid-tier one.
+    first = await client.post("/v1/postmortems/incidents", json={"title": "Free incident", "severity": "sev2"})
+    assert first.status_code == 201, first.text
+
     blocked = await client.post("/v1/postmortems/incidents", json={"title": "Should be blocked", "severity": "sev2"})
     assert blocked.status_code == 402
 
@@ -180,6 +185,11 @@ async def test_a_founder_rejecting_a_claim_leaves_access_blocked(context) -> Non
     row = await database.fetch_one("SELECT subscription_status FROM users WHERE email=%s", (CLIENT_EMAIL,))
     assert row is not None
     assert row["subscription_status"] == "none"
+
+    # The free incident is still available (a rejected claim doesn't spend
+    # it), but a second one is still genuinely blocked.
+    free_one = await client.post("/v1/postmortems/incidents", json={"title": "Free incident", "severity": "sev2"})
+    assert free_one.status_code == 201, free_one.text
 
     still_blocked = await client.post(
         "/v1/postmortems/incidents", json={"title": "Still blocked", "severity": "sev2"}

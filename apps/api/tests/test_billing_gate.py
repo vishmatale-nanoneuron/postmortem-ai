@@ -50,9 +50,15 @@ async def context(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-async def test_an_unpaid_account_cannot_create_an_incident(context) -> None:
+async def test_an_unpaid_account_cannot_create_a_second_incident(context) -> None:
+    # A brand new unpaid account can create exactly one incident for free
+    # (see test_free_incident.py for the full free-tier flow) -- the
+    # paywall is real starting from the second one.
     client, _ = context
     await client.post("/v1/auth/register", json={"email": UNPAID_EMAIL, "password": "correct-horse-battery"})
+
+    first = await client.post("/v1/postmortems/incidents", json={"title": "Free incident", "severity": "sev2"})
+    assert first.status_code == 201, first.text
 
     response = await client.post("/v1/postmortems/incidents", json={"title": "Should be blocked", "severity": "sev2"})
     assert response.status_code == 402
@@ -104,6 +110,30 @@ async def test_the_billing_portal_404s_before_any_checkout_has_happened(context)
 
     response = await client.post("/v1/billing/portal")
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_card_pricing_reports_configured_when_stripe_env_is_set(context) -> None:
+    # Public, unauthenticated -- the frontend uses this to decide whether to
+    # show a "Card" subscribe option at all, without needing to sign in or
+    # trigger the 503 from POST /checkout just to find out.
+    client, _ = context
+    response = await client.get("/v1/billing/card/pricing")
+    assert response.status_code == 200
+    assert response.json() == {"configured": True}
+
+
+@pytest.mark.asyncio
+async def test_card_pricing_reports_unconfigured_without_a_stripe_price_id(context, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.settings import get_settings
+
+    monkeypatch.delenv("STRIPE_PRICE_ID", raising=False)
+    get_settings.cache_clear()
+    client, _ = context
+    response = await client.get("/v1/billing/card/pricing")
+    assert response.status_code == 200
+    assert response.json() == {"configured": False}
+    get_settings.cache_clear()
 
 
 @pytest.mark.asyncio

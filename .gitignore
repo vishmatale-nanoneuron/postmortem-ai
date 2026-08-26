@@ -13,3 +13,11 @@ build/
 .DS_Store
 .vercel
 .env*
+
+# Reference docs auto-downloaded by Vercel Marketplace integrations
+# (e.g. `vercel integration add resend`/`stripe`) -- not application code,
+# re-fetched on demand by the CLI, no reason to version 100+ markdown
+# files. skills-lock.json (tracked) still records which skills/versions
+# are installed.
+**/.agents/skills/
+**/.claude/skills/

@@ -9,7 +9,10 @@ Last factual review: 2026-08-26
 
 An incident postmortem tool: record evidence about an incident, generate an
 AI-drafted postmortem, publish it once a named human approves. Signed-in
-users only -- account required (email + password).
+users only -- account required (email + password). A forgotten password
+can be reset via a real emailed link (Resend) -- a single-use, 30-minute
+token, sent only if the address belongs to a real account, though the
+request endpoint never reveals which case it was.
 
 ## The core guarantee: grounded drafting, not free-text generation
 
@@ -51,6 +54,20 @@ clients (incidents, evidence, drafting, publishing, similar-incident
 search) -- the same business logic and authorization as the REST API. The
 frontend federates to it under the caller's own session.
 
+## Webhook ingestion
+
+Evidence can also arrive automatically: every account has a real,
+rotatable webhook URL (its own account settings) that any external tool
+(a monitoring alert, a script, a CI job) can POST JSON to. It creates a
+new incident, or appends evidence to an existing open one the caller
+already has the id for -- the same write path and paywall as the
+authenticated app, just authenticated by a per-account token instead of a
+session cookie. There is no source-specific parsing for any named
+monitoring vendor (Datadog, PagerDuty, etc.) -- the accepted shape is
+deliberately generic (source, summary, detail, an optional incident id to
+group related events), matched to what any tool's own "custom webhook"
+option can already send.
+
 ## Reliability and anti-abuse
 
 A circuit breaker (closed/open/half-open) wraps the drafting model --
@@ -66,11 +83,16 @@ configured.
 
 ## Payments
 
-An active subscription is required for the product's actual work
-(creating incidents, drafting, publishing) -- viewing existing history
-stays available regardless. Payment today is manual and human-verified:
-UPI (India) or an international SWIFT wire, with the founder approving
-each submitted reference. Card payments are built but not yet live.
+Every account may create and fully work on one incident for free -- record
+evidence, run AI evidence extraction, draft a grounded postmortem -- with
+no payment. Publishing (making it a permanent, citable record) and
+creating a second incident both require an active subscription. Two ways
+to pay: instant self-serve card payment via Stripe Checkout (access
+activates immediately, no manual step), or a manual UPI (India) /
+international SWIFT wire claim with the founder reviewing and approving
+each submitted reference. Self-serve subscription management (cancel,
+update card, view invoices) is available via the Stripe Customer Portal
+for accounts that paid by card.
 
 ## What it does not do
 
@@ -79,8 +101,11 @@ each submitted reference. Card payments are built but not yet live.
 - Does not estimate cost, revenue, or customer-impact figures the evidence
   didn't state, and the system prompt explicitly instructs the drafting
   model not to.
-- Does not integrate with external incident/monitoring tools (PagerDuty,
-  Datadog, etc.) -- evidence is entered directly by the signed-in user.
+- Does not have named, source-specific parsing for any monitoring vendor
+  (PagerDuty, Datadog, etc.) -- webhook ingestion (above) accepts a
+  generic event shape any tool can be configured to send, not a
+  vendor-specific integration built and tested against that vendor's real
+  payload format.
 - Does not support multiple people on one account or organizations --
   each account is a single user's own incidents.
 

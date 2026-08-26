@@ -16,6 +16,7 @@ import {
   type PaymentClaim,
   type Postmortem,
   type UpiPricing,
+  webhooks,
   type WirePricing,
 } from "./api";
 import { auth, type AuthUser } from "./auth";
@@ -23,6 +24,7 @@ import { cn } from "@/lib/utils";
 import { GroundingExample, Hero, HowItWorks, WhatThisIsnt } from "./landing";
 import { usePolling } from "./use-polling";
 import {
+  emailOnlySchema,
   evidenceSchema,
   firstError,
   incidentSchema,
@@ -99,11 +101,15 @@ export default function Workspace() {
         />
       )}
       {user.is_founder && <FounderDashboard />}
-      {user.has_active_subscription ? (
-        <IncidentWorkspace isFounder={user.is_founder} />
-      ) : (
-        <SubscribeGate />
-      )}
+      {/* Unlike before, an unsubscribed account still sees the real
+          workspace underneath -- the free-tier account's one incident
+          (once created) needs to stay reachable for adding evidence and
+          drafting, not just its creation. SubscribeGate is now an upsell
+          shown alongside it, not an exclusive alternative to it; the
+          actual free-tier boundary (one incident, no publishing) is
+          enforced server-side regardless of what renders here. */}
+      {!user.has_active_subscription && <SubscribeGate hasFreeIncidentAvailable={user.has_free_incident_available} />}
+      <IncidentWorkspace isFounder={user.is_founder} />
     </main>
   );
 }
@@ -348,13 +354,33 @@ function PaymentClaimsReview() {
 }
 
 function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const [mode, setMode] = useState<"login" | "register" | "forgot">("login");
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function submit(form: FormData) {
     setError("");
+    setMessage("");
     const email = String(form.get("email"));
+
+    if (mode === "forgot") {
+      const validationError = firstError(emailOnlySchema, { email });
+      if (validationError) return setError(validationError);
+      setBusy(true);
+      try {
+        await auth.requestPasswordReset(email);
+        // Always the same message whether or not the email is registered
+        // -- the backend never reveals that distinction either.
+        setMessage("If an account exists for that email, a reset link is on its way.");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not send the reset email.");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     const password = String(form.get("password"));
     const schema = mode === "login" ? loginSchema : registerSchema;
     const validationError = firstError(schema, { email, password });
@@ -371,37 +397,108 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
     }
   }
 
+  const heading =
+    mode === "login" ? "Welcome back" : mode === "register" ? "Get started free" : "Reset your password";
+  const subheading =
+    mode === "login"
+      ? "Log in to your account."
+      : mode === "register"
+        ? "Create your account — your first postmortem is free."
+        : "Enter your email and we'll send you a link to choose a new password.";
+
   return (
     <main>
       <Hero />
       <GroundingExample />
       <HowItWorks />
       <div id="get-started" className="mx-auto mb-16 max-w-sm px-4">
-        <div className={card}>
-          <h2 className="mb-3 text-lg font-semibold">{mode === "login" ? "Log in" : "Create an account"}</h2>
+        <div className="rounded-xl border border-line bg-white p-6 shadow-lg shadow-ink/5">
+          <h2 className="mb-1 text-lg font-semibold text-ink">{heading}</h2>
+          <p className="mb-4 text-sm text-muted">{subheading}</p>
           <form action={submit}>
             <label className={fieldLabel}>Email</label>
             <input className={fieldInput} name="email" type="email" required />
-            <label className={fieldLabel}>Password</label>
-            <input className={fieldInput} name="password" type="password" minLength={8} required />
+            {mode !== "forgot" && (
+              <>
+                <label className={fieldLabel}>Password</label>
+                <input className={fieldInput} name="password" type="password" minLength={8} required />
+              </>
+            )}
             <button className={`${primaryButton} w-full`} disabled={busy} type="submit">
-              {mode === "login" ? "Log in" : "Create account"}
+              {mode === "login" ? "Log in" : mode === "register" ? "Create account" : "Send reset link"}
             </button>
           </form>
+          {message && (
+            <p role="status" className="mt-3 text-sm text-accent">
+              {message}
+            </p>
+          )}
           {error && (
             <p role="status" className="mt-3 text-sm text-red-600">
               {error}
             </p>
           )}
+          {mode === "login" && (
+            <p className="mt-2 text-sm text-muted">
+              <button
+                className="font-medium text-ink underline underline-offset-2"
+                type="button"
+                onClick={() => {
+                  setMode("forgot");
+                  setError("");
+                  setMessage("");
+                }}
+              >
+                Forgot password?
+              </button>
+            </p>
+          )}
           <p className="mt-3 text-sm text-muted">
-            {mode === "login" ? "No account yet? " : "Already have an account? "}
-            <button
-              className="font-medium text-ink underline underline-offset-2"
-              type="button"
-              onClick={() => setMode(mode === "login" ? "register" : "login")}
-            >
-              {mode === "login" ? "Create one" : "Log in"}
-            </button>
+            {mode === "login" && (
+              <>
+                No account yet?{" "}
+                <button
+                  className="font-medium text-ink underline underline-offset-2"
+                  type="button"
+                  onClick={() => {
+                    setMode("register");
+                    setError("");
+                    setMessage("");
+                  }}
+                >
+                  Create one
+                </button>
+              </>
+            )}
+            {mode === "register" && (
+              <>
+                Already have an account?{" "}
+                <button
+                  className="font-medium text-ink underline underline-offset-2"
+                  type="button"
+                  onClick={() => {
+                    setMode("login");
+                    setError("");
+                    setMessage("");
+                  }}
+                >
+                  Log in
+                </button>
+              </>
+            )}
+            {mode === "forgot" && (
+              <button
+                className="font-medium text-ink underline underline-offset-2"
+                type="button"
+                onClick={() => {
+                  setMode("login");
+                  setError("");
+                  setMessage("");
+                }}
+              >
+                Back to log in
+              </button>
+            )}
           </p>
         </div>
       </div>
@@ -410,9 +507,10 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
   );
 }
 
-function SubscribeGate() {
-  const [tab, setTab] = useState<"upi" | "wire">("upi");
+function SubscribeGate({ hasFreeIncidentAvailable }: { hasFreeIncidentAvailable: boolean }) {
+  const [tab, setTab] = useState<"card" | "upi" | "wire">("upi");
   const [status, setStatus] = useState<BillingStatus | null>(null);
+  const [cardConfigured, setCardConfigured] = useState(false);
 
   // Distinguishes a brand new unpaid account from one whose real, once-
   // active subscription lapsed -- otherwise a client who paid before sees
@@ -421,19 +519,51 @@ function SubscribeGate() {
   useEffect(() => {
     billing.status().then(setStatus).catch(() => setStatus(null));
   }, []);
+
+  // Real Stripe checkout has existed on the backend for a while, but no
+  // client-facing tab ever called it -- everyone only ever saw the manual
+  // UPI/wire flow. Card checkout is instant (no waiting on the founder to
+  // review a claim) so it's offered first, but only once /card/pricing
+  // confirms Stripe is actually configured in this environment; falls
+  // back to defaulting on UPI when it isn't (unchanged prior behavior).
+  useEffect(() => {
+    billing
+      .cardPricing()
+      .then((p) => {
+        setCardConfigured(p.configured);
+        if (p.configured) setTab("card");
+      })
+      .catch(() => setCardConfigured(false));
+  }, []);
+
   const expired = status?.subscription_status === "expired";
 
   return (
     <section className={card}>
       <h2 className="mb-2 text-base font-semibold">
-        {expired ? "Your subscription has expired" : "Subscribe to use PostMortem AI"}
+        {expired
+          ? "Your subscription has expired"
+          : hasFreeIncidentAvailable
+            ? "Your first postmortem is free"
+            : "Subscribe to publish and create another postmortem"}
       </h2>
       <p className="mb-3 text-sm text-muted">
         {expired && status?.current_period_end
           ? `Your access expired on ${new Date(status.current_period_end * 1000).toLocaleDateString()}. Make a new payment below to reactivate -- creating incidents, recording evidence, drafting, and publishing all require an active subscription; viewing your existing history stays available either way.`
-          : "An active subscription is required to create incidents, record evidence, draft, and publish postmortems -- viewing your existing history stays available either way."}
+          : hasFreeIncidentAvailable
+            ? "Create one incident, record evidence, and draft a grounded postmortem with no payment -- see the real output before you decide. Publishing it (making it a permanent, citable record) and creating a second incident both require a subscription."
+            : "You've used your free postmortem. Subscribe below to publish it, or to create another incident -- your existing history stays available either way."}
       </p>
       <div className="mb-3 flex gap-1.5">
+        {cardConfigured && (
+          <button
+            className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === "card" ? "bg-ink text-paper" : "border border-line text-muted"}`}
+            onClick={() => setTab("card")}
+            type="button"
+          >
+            Card (instant)
+          </button>
+        )}
         <button
           className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === "upi" ? "bg-ink text-paper" : "border border-line text-muted"}`}
           onClick={() => setTab("upi")}
@@ -449,12 +579,42 @@ function SubscribeGate() {
           International wire (SWIFT)
         </button>
       </div>
-      {tab === "upi" ? <UpiPayment /> : <WirePayment />}
+      {tab === "card" ? <CardPayment /> : tab === "upi" ? <UpiPayment /> : <WirePayment />}
     </section>
   );
 }
 
-function PendingClaim({ claim, onChanged }: { claim: Claim; onChanged: () => void | Promise<void> }) {
+function CardPayment() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function subscribe() {
+    setBusy(true);
+    setError("");
+    try {
+      const { url } = await billing.checkout();
+      window.location.href = url; // real Stripe Checkout -- leaves the app
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start checkout.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-md bg-paper px-3 py-2 text-sm">
+      <p className="mb-2 text-muted">
+        Pay by card via Stripe -- access activates immediately after payment, no waiting on manual review. You can
+        cancel or update your card anytime from account settings.
+      </p>
+      <button className={primaryButton} disabled={busy} type="button" onClick={() => void subscribe()}>
+        {busy ? "Redirecting…" : "Subscribe with card"}
+      </button>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+export function PendingClaim({ claim, onChanged }: { claim: Claim; onChanged: () => void | Promise<void> }) {
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -695,10 +855,37 @@ function WirePayment() {
 
 function ManageBilling() {
   const [status, setStatus] = useState<BillingStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  // Whether a Stripe-backed billing account exists is only knowable by
+  // trying the portal and reading the result -- BillingStatus doesn't
+  // carry a payment-method field. Starts "unknown" so the button always
+  // renders (a client who paid by card should always see it); a 404 from
+  // the backend (no stripe_customer_id -- i.e. paid via UPI/wire instead)
+  // flips this off so the button doesn't stay there promising something
+  // that will only ever fail for that account.
+  const [hasStripeAccount, setHasStripeAccount] = useState(true);
 
   useEffect(() => {
     billing.status().then(setStatus).catch(() => setStatus(null));
   }, []);
+
+  async function openPortal() {
+    setBusy(true);
+    setError("");
+    try {
+      const { url } = await billing.portal();
+      window.location.href = url; // real Stripe Customer Portal -- cancel, update card, view invoices
+    } catch (err) {
+      // /v1/billing/portal 404s specifically when there's no
+      // stripe_customer_id on this account -- i.e. this client paid via
+      // the manual UPI/wire flow, not Stripe, so there's genuinely no
+      // portal to open (not a transient failure worth retrying).
+      setHasStripeAccount(false);
+      setError(err instanceof Error ? err.message : "Could not open billing portal.");
+      setBusy(false);
+    }
+  }
 
   if (!status) return null;
 
@@ -714,16 +901,29 @@ function ManageBilling() {
           </span>
         )}
       </div>
-      <p className="mt-1 text-xs text-muted">
-        {status.subscription_status === "expired"
-          ? "Your access has expired -- contact the founder to make a new payment and reactivate."
-          : "Paid via UPI -- to renew or ask a question, contact the founder directly."}
-      </p>
+      {hasStripeAccount ? (
+        <>
+          <button className={cn(secondaryButton, "mt-2")} disabled={busy} type="button" onClick={() => void openPortal()}>
+            {busy ? "Opening…" : "Manage billing"}
+          </button>
+          {error && (
+            <p className="mt-2 text-xs text-muted">
+              Paid via UPI/wire instead? Contact the founder directly to renew or ask a question.
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="mt-1 text-xs text-muted">
+          {status.subscription_status === "expired"
+            ? "Your access has expired -- contact the founder to make a new payment and reactivate."
+            : "Paid via UPI/wire -- to renew or ask a question, contact the founder directly."}
+        </p>
+      )}
     </section>
   );
 }
 
-function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser; onUpdated: (u: AuthUser) => void; onDeleted: () => void }) {
+export function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser; onUpdated: (u: AuthUser) => void; onDeleted: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -898,6 +1098,76 @@ function IntegrationsSettings() {
         </button>
       </form>
       {message && <p className="mt-2 text-sm text-accent">{message}</p>}
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    </section>
+  );
+}
+
+// Real webhook ingestion, not just a description of one -- POSTing this
+// URL from any external tool (a monitoring alert, a script, a CI job)
+// creates an incident or appends evidence to one, the same write path
+// EvidenceExtractor and the manual evidence form use, just authenticated
+// by this per-account token instead of a session cookie. See
+// apps/api/app/api/v1/webhooks.py for the full contract (incident_id
+// grouping, paywall, rate limiting).
+function WebhookSettings() {
+  const [token, setToken] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    webhooks.token().then((t) => setToken(t.token)).catch(() => setToken(null));
+  }, []);
+
+  const url = token ? `${process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000"}/v1/webhooks/incidents/${token}` : "";
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard access can be denied (permissions, non-HTTPS context) --
+      // the URL is still selectable/visible in the input below, so this
+      // isn't the only way to get it.
+    }
+  }
+
+  async function rotate() {
+    if (!window.confirm("Rotate your webhook URL? Any tool still configured with the old one will stop working.")) return;
+    setBusy(true);
+    setError("");
+    try {
+      const t = await webhooks.rotate();
+      setToken(t.token);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not rotate the webhook URL.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!token) return null;
+
+  return (
+    <section className={card}>
+      <h2 className="mb-1 text-base font-semibold">Webhook</h2>
+      <p className="mb-3 text-xs text-muted">
+        POST JSON to this URL from any monitoring tool or script to create an incident or add evidence
+        automatically -- no manual typing required. Body: <code className="font-mono">{"{source, summary, detail?, incident_id?}"}</code>.
+        Omit <code className="font-mono">incident_id</code> to start a new incident; include the one returned by a
+        previous call to group related events together.
+      </p>
+      <div className="flex gap-2">
+        <input className={`${fieldInput} mb-0 font-mono text-xs`} value={url} readOnly />
+        <button className={secondaryButton} type="button" onClick={() => void copy()}>
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <button className="mt-3 text-xs text-red-600 underline underline-offset-2" disabled={busy} type="button" onClick={() => void rotate()}>
+        Rotate URL
+      </button>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
     </section>
   );
@@ -1157,6 +1427,7 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
 
       {!isFounder && <ManageBilling />}
       <IntegrationsSettings />
+      <WebhookSettings />
 
       {summary && (
         <section className={card}>

@@ -17,6 +17,16 @@ export const loginSchema = z.object({
   password: z.string().min(1).max(200),
 });
 
+// Mirrors PasswordResetRequestIn in apps/api/app/api/v1/auth.py.
+export const emailOnlySchema = z.object({
+  email: z.email(),
+});
+
+// Mirrors PasswordResetConfirmIn in apps/api/app/api/v1/auth.py.
+export const passwordResetConfirmSchema = z.object({
+  new_password: z.string().min(8).max(200),
+});
+
 export const incidentSchema = z.object({
   title: z.string().min(1).max(200),
   severity: z.enum(["sev1", "sev2", "sev3", "sev4"]),
