@@ -242,6 +242,75 @@ async def _insert_claim(
     return ClaimOut(**row)
 
 
+class PatchClaimIn(BaseModel):
+    reference: str = Field(min_length=4, max_length=200)
+
+
+@router.patch("/claims/{claim_id}", response_model=ClaimOut)
+async def update_my_claim(
+    claim_id: str,
+    payload: PatchClaimIn,
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> ClaimOut:
+    """Lets a client fix a typo'd reference on their own claim -- only
+    while it's still pending. Once bank_verified or approved/rejected, the
+    reference is exactly what a real bank alert matched against or what a
+    founder reviewed; changing it after the fact would break that link, so
+    this is refused past pending (mirrors why record_claim_event never lets
+    the past be rewritten, just appended to)."""
+    existing = await database.fetch_one(
+        "SELECT id, status FROM payment_claims WHERE id=%s AND user_id=%s", (claim_id, user.id)
+    )
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    if existing["status"] != "pending":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only a pending claim can be edited")
+
+    duplicate = await database.fetch_one(
+        "SELECT id FROM payment_claims WHERE reference=%s AND status != 'rejected' AND id<>%s",
+        (payload.reference, claim_id),
+    )
+    if duplicate:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This reference has already been submitted")
+
+    row = await database.fetch_one(
+        """UPDATE payment_claims SET reference=%s WHERE id=%s
+           RETURNING id::text, method, currency, amount_inr AS amount, reference, status, created_at""",
+        (payload.reference, claim_id),
+    )
+    assert row is not None
+    await record_claim_event(database, claim_id, "annotated", user.email, f"Reference edited to {payload.reference}")
+    return ClaimOut(**row)
+
+
+@router.delete("/claims/{claim_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def cancel_my_claim(
+    claim_id: str,
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> None:
+    """Lets a client withdraw their own claim -- only while pending, same
+    reasoning as the PATCH above. This is a real status transition (not a
+    row delete) so the ledger keeps the full history; the row itself is
+    kept too, both for the audit trail and so the reference can't be
+    silently freed up for reuse."""
+    existing = await database.fetch_one(
+        "SELECT id, status FROM payment_claims WHERE id=%s AND user_id=%s", (claim_id, user.id)
+    )
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    if existing["status"] != "pending":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only a pending claim can be cancelled")
+
+    now = int(time.time() * 1000)
+    await database.execute(
+        "UPDATE payment_claims SET status='rejected', reviewed_by=%s, reviewed_at=%s WHERE id=%s",
+        (user.email, now, claim_id),
+    )
+    await record_claim_event(database, claim_id, "rejected", user.email, "Cancelled by client")
+
+
 class UpiPricingOut(BaseModel):
     amount_inr: int
     configured: bool

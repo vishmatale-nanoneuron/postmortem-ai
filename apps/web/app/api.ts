@@ -143,6 +143,17 @@ export const billing = {
   submitWireClaim: (currency: string, reference: string) =>
     request<Claim>("/v1/billing/wire/claim", { method: "POST", body: JSON.stringify({ currency, reference }) }),
   myWireClaims: () => request<Claim[]>("/v1/billing/wire/claims"),
+  // PATCH -- fix a typo'd reference; DELETE -- withdraw the claim. Both
+  // only work while the claim is still 'pending' (enforced server-side).
+  updateClaim: (claimId: string, reference: string) =>
+    request<Claim>(`/v1/billing/claims/${claimId}`, { method: "PATCH", body: JSON.stringify({ reference }) }),
+  cancelClaim: async (claimId: string): Promise<void> => {
+    const response = await fetch(`${API_BASE}/v1/billing/claims/${claimId}`, { method: "DELETE", credentials: "include" });
+    if (!response.ok && response.status !== 204) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.detail ?? `Request failed: ${response.status}`);
+    }
+  },
 };
 
 export const founderBilling = {

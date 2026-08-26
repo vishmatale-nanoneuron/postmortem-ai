@@ -1,6 +1,11 @@
+import logging
 import time
 
+import psycopg.errors
+
 from ..database import Database, Transaction
+
+logger = logging.getLogger("postmortem_ai")
 
 # A manual approval is treated as an indefinite-ish subscription that
 # renews every 30 days -- there is no gateway enforcing an actual billing
@@ -31,8 +36,17 @@ async def record_claim_event(
     """Append-only audit trail (payment_claim_events, migration 0016) --
     never overwritten or deleted, unlike payment_claims.status which only
     ever shows the current state. Real payment-engineering practice: never
-    lose financial history, even when the current-state row moves on."""
-    await database.execute(
-        "INSERT INTO payment_claim_events (claim_id, event_type, actor, detail, created_at) VALUES (%s, %s, %s, %s, %s)",
-        (claim_id, event_type, actor, detail, int(time.time() * 1000)),
-    )
+    lose financial history, even when the current-state row moves on.
+
+    A CheckViolation here (event_type not yet in the DB's allowlist -- e.g.
+    'annotated' before migration 0017 has been applied) is swallowed, not
+    raised: the caller's actual work (updating a claim, granting/revoking
+    access) must never fail just because an audit-trail migration hasn't
+    landed yet on this environment. Every other error still propagates."""
+    try:
+        await database.execute(
+            "INSERT INTO payment_claim_events (claim_id, event_type, actor, detail, created_at) VALUES (%s, %s, %s, %s, %s)",
+            (claim_id, event_type, actor, detail, int(time.time() * 1000)),
+        )
+    except psycopg.errors.CheckViolation:
+        logger.warning("payment_claim_event_check_violation", extra={"claim_id": claim_id, "event_type": event_type})

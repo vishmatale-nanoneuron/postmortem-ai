@@ -60,4 +60,18 @@ export const auth = {
     await fetch("/api/session", { method: "DELETE" }).catch(() => {});
     return result;
   },
+  // PUT -- full replace: both email and password are required.
+  replaceAccount: (email: string, password: string) =>
+    authRequest<AuthUser>("/v1/auth/me", { method: "PUT", body: JSON.stringify({ email, password }) }),
+  // PATCH -- partial update: only the fields passed change.
+  updateAccount: (fields: { email?: string; password?: string }) =>
+    authRequest<AuthUser>("/v1/auth/me", { method: "PATCH", body: JSON.stringify(fields) }),
+  deleteAccount: async () => {
+    const response = await fetch(`${API_BASE}/v1/auth/me`, { method: "DELETE", credentials: "include" });
+    if (!response.ok && response.status !== 204) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.detail ?? `Request failed: ${response.status}`);
+    }
+    await fetch("/api/session", { method: "DELETE" }).catch(() => {});
+  },
 };

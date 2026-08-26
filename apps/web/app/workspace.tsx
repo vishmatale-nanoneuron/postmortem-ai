@@ -55,6 +55,7 @@ function currencySymbol(currency: string): string {
 // confirms a signed-in user.
 export default function Workspace() {
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [showAccount, setShowAccount] = useState(false);
 
   useEffect(() => {
     auth
@@ -73,12 +74,28 @@ export default function Workspace() {
           {user.is_founder && (
             <span className="rounded-full bg-ink px-2.5 py-0.5 text-xs font-medium text-paper">Founder</span>
           )}
-          <span className="text-sm text-muted">{user.email}</span>
+          <button
+            className="text-sm text-muted underline underline-offset-2"
+            type="button"
+            onClick={() => setShowAccount((v) => !v)}
+          >
+            {user.email}
+          </button>
           <button className={secondaryButton} type="button" onClick={() => void auth.logout().then(() => setUser(null))}>
             Log out
           </button>
         </div>
       </div>
+      {showAccount && (
+        <AccountSettings
+          user={user}
+          onUpdated={(updated) => {
+            setUser(updated);
+            setShowAccount(false);
+          }}
+          onDeleted={() => setUser(null)}
+        />
+      )}
       {user.is_founder && <FounderDashboard />}
       {user.has_active_subscription ? (
         <IncidentWorkspace isFounder={user.is_founder} />
@@ -392,6 +409,78 @@ function SubscribeGate() {
   );
 }
 
+function PendingClaim({ claim, onChanged }: { claim: Claim; onChanged: () => void | Promise<void> }) {
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function saveReference(form: FormData) {
+    const reference = String(form.get("reference") || "").trim();
+    const validationError = firstError(paymentReferenceSchema, { reference });
+    if (validationError) return setError(validationError);
+    setBusy(true);
+    setError("");
+    try {
+      await billing.updateClaim(claim.id, reference);
+      setEditing(false);
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update reference.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancel() {
+    if (!window.confirm(`Withdraw reference "${claim.reference}"? You can submit a new one afterward.`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      await billing.cancelClaim(claim.id);
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not cancel claim.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <form action={saveReference} className="rounded-md bg-paper px-3 py-2">
+        <label className={fieldLabel}>Transaction reference</label>
+        <input className={fieldInput} name="reference" defaultValue={claim.reference} required />
+        <div className="flex gap-2">
+          <button className={primaryButton} disabled={busy} type="submit">
+            Save
+          </button>
+          <button className={secondaryButton} disabled={busy} type="button" onClick={() => setEditing(false)}>
+            Cancel
+          </button>
+        </div>
+        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      </form>
+    );
+  }
+
+  return (
+    <div className="rounded-md bg-paper px-3 py-2 text-sm text-muted">
+      <p>
+        Reference <span className="font-medium text-ink">{claim.reference}</span> submitted, awaiting review.
+      </p>
+      <div className="mt-1.5 flex gap-3">
+        <button className="text-xs underline underline-offset-2" disabled={busy} type="button" onClick={() => setEditing(true)}>
+          Edit
+        </button>
+        <button className="text-xs text-red-600 underline underline-offset-2" disabled={busy} type="button" onClick={() => void cancel()}>
+          Withdraw
+        </button>
+      </div>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    </div>
+  );
+}
+
 function UpiPayment() {
   const [upi, setUpi] = useState<UpiPricing | null>(null);
   const [claims, setClaims] = useState<Claim[]>([]);
@@ -444,10 +533,7 @@ function UpiPayment() {
         international wire tab instead if you&apos;re paying from outside India.
       </p>
       {latestPending ? (
-        <p className="rounded-md bg-paper px-3 py-2 text-sm text-muted">
-          Reference <span className="font-medium text-ink">{latestPending.reference}</span> submitted, awaiting
-          review.
-        </p>
+        <PendingClaim claim={latestPending} onChanged={refresh} />
       ) : (
         <form action={submitReference}>
           <label className={fieldLabel}>UPI transaction reference / UTR number</label>
@@ -537,10 +623,7 @@ function WirePayment() {
         wire to, then submit your transaction reference below.
       </p>
       {latestPending ? (
-        <p className="rounded-md bg-paper px-3 py-2 text-sm text-muted">
-          Reference <span className="font-medium text-ink">{latestPending.reference}</span> submitted, awaiting
-          review.
-        </p>
+        <PendingClaim claim={latestPending} onChanged={refresh} />
       ) : (
         <form action={submitReference}>
           <label className={fieldLabel}>Wire transaction reference</label>
@@ -591,6 +674,79 @@ function ManageBilling() {
           ? "Your access has expired -- contact the founder to make a new payment and reactivate."
           : "Paid via UPI -- to renew or ask a question, contact the founder directly."}
       </p>
+    </section>
+  );
+}
+
+function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser; onUpdated: (u: AuthUser) => void; onDeleted: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function save(form: FormData) {
+    const email = String(form.get("email") || "").trim();
+    const password = String(form.get("password") || "").trim();
+    const fields: { email?: string; password?: string } = {};
+    if (email && email !== user.email) fields.email = email;
+    if (password) fields.password = password;
+    if (Object.keys(fields).length === 0) return setError("Change the email or enter a new password first.");
+
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      // PATCH -- only the fields actually changed are sent.
+      const updated = await auth.updateAccount(fields);
+      onUpdated(updated);
+      setMessage("Saved.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update account.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteAccount() {
+    if (user.is_founder) return; // button is hidden for the founder anyway; guards a stray call too
+    if (
+      !window.confirm(
+        "Delete your account? This cannot be undone. Your incident/postmortem history stays as a record, but you will no longer be able to sign in.",
+      )
+    )
+      return;
+    setBusy(true);
+    setError("");
+    try {
+      await auth.deleteAccount();
+      onDeleted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete account.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className={card}>
+      <h2 className="mb-1 text-base font-semibold">Account</h2>
+      <p className="mb-3 text-xs text-muted">Update your login email or password.</p>
+      <form action={save} className="space-y-1">
+        <label className={fieldLabel}>Email</label>
+        <input className={fieldInput} name="email" type="email" defaultValue={user.email} disabled={user.is_founder} />
+        <label className={fieldLabel}>New password (leave blank to keep current)</label>
+        <input className={fieldInput} name="password" type="password" placeholder="••••••••" minLength={8} />
+        <button className={secondaryButton} disabled={busy} type="submit">
+          Save changes
+        </button>
+      </form>
+      {message && <p className="mt-2 text-sm text-accent">{message}</p>}
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      {!user.is_founder && (
+        <div className="mt-4 border-t border-line pt-3">
+          <button className="text-xs text-red-600 underline underline-offset-2" disabled={busy} type="button" onClick={() => void deleteAccount()}>
+            Delete my account
+          </button>
+        </div>
+      )}
     </section>
   );
 }

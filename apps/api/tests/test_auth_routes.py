@@ -17,7 +17,7 @@ pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="TEST_DATABASE_URL is n
 @pytest_asyncio.fixture
 async def context(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATABASE_URL", DATABASE_URL or "")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
     monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
     monkeypatch.setenv("COOKIE_SECURE", "false")
 
@@ -181,6 +181,141 @@ async def test_logout_clears_the_session(context) -> None:
     client.cookies.clear()
     me = await client.get("/v1/auth/me")
     assert me.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_patch_me_updates_only_the_supplied_field(context) -> None:
+    client, _ = context
+    await client.post(
+        "/v1/auth/register", json={"email": "auth-test-patch-1@example.com", "password": "correct-horse-battery"}
+    )
+    response = await client.patch("/v1/auth/me", json={"email": "auth-test-patch-1-renamed@example.com"})
+    assert response.status_code == 200, response.text
+    assert response.json()["email"] == "auth-test-patch-1-renamed@example.com"
+
+    # Old password still works against the renamed account -- PATCH with
+    # only email must not have touched the password.
+    client.cookies.clear()
+    login = await client.post(
+        "/v1/auth/login",
+        json={"email": "auth-test-patch-1-renamed@example.com", "password": "correct-horse-battery"},
+    )
+    assert login.status_code == 200, login.text
+
+
+@pytest.mark.asyncio
+async def test_patch_me_with_no_fields_is_rejected(context) -> None:
+    client, _ = context
+    await client.post(
+        "/v1/auth/register", json={"email": "auth-test-patch-2@example.com", "password": "correct-horse-battery"}
+    )
+    response = await client.patch("/v1/auth/me", json={})
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_put_me_requires_both_fields_and_replaces_password(context) -> None:
+    client, _ = context
+    await client.post(
+        "/v1/auth/register", json={"email": "auth-test-put-1@example.com", "password": "correct-horse-battery"}
+    )
+    response = await client.put(
+        "/v1/auth/me", json={"email": "auth-test-put-1@example.com", "password": "a-brand-new-password"}
+    )
+    assert response.status_code == 200, response.text
+
+    client.cookies.clear()
+    old_login = await client.post(
+        "/v1/auth/login", json={"email": "auth-test-put-1@example.com", "password": "correct-horse-battery"}
+    )
+    assert old_login.status_code == 401
+
+    new_login = await client.post(
+        "/v1/auth/login", json={"email": "auth-test-put-1@example.com", "password": "a-brand-new-password"}
+    )
+    assert new_login.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_updating_to_an_email_already_taken_is_a_conflict(context) -> None:
+    client, _ = context
+    await client.post(
+        "/v1/auth/register", json={"email": "auth-test-conflict-a@example.com", "password": "correct-horse-battery"}
+    )
+    client.cookies.clear()
+    await client.post(
+        "/v1/auth/register", json={"email": "auth-test-conflict-b@example.com", "password": "correct-horse-battery"}
+    )
+    response = await client.patch("/v1/auth/me", json={"email": "auth-test-conflict-a@example.com"})
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_the_founder_account_cannot_reassign_its_own_email(context, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FOUNDER_EMAIL", "auth-test-founder@example.com")
+    from app.settings import get_settings
+
+    get_settings.cache_clear()
+    client, _ = context
+    register = await client.post(
+        "/v1/auth/register", json={"email": "auth-test-founder@example.com", "password": "correct-horse-battery"}
+    )
+    assert register.json()["is_founder"] is True
+
+    response = await client.patch("/v1/auth/me", json={"email": "auth-test-founder-new@example.com"})
+    assert response.status_code == 403
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_a_non_founder_account_cannot_rename_itself_into_the_founder_email(
+    context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FOUNDER_EMAIL", "auth-test-founder-2@example.com")
+    from app.settings import get_settings
+
+    get_settings.cache_clear()
+    client, _ = context
+    await client.post(
+        "/v1/auth/register", json={"email": "auth-test-not-founder@example.com", "password": "correct-horse-battery"}
+    )
+    response = await client.patch("/v1/auth/me", json={"email": "auth-test-founder-2@example.com"})
+    assert response.status_code == 403
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_delete_me_removes_the_account_and_clears_the_session(context) -> None:
+    client, database = context
+    await client.post(
+        "/v1/auth/register", json={"email": "auth-test-delete-1@example.com", "password": "correct-horse-battery"}
+    )
+    response = await client.delete("/v1/auth/me")
+    assert response.status_code == 204
+
+    me = await client.get("/v1/auth/me")
+    assert me.status_code == 401
+
+    row = await database.fetch_one("SELECT id FROM users WHERE email=%s", ("auth-test-delete-1@example.com",))
+    assert row is None
+
+
+@pytest.mark.asyncio
+async def test_the_founder_account_cannot_delete_itself(context, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FOUNDER_EMAIL", "auth-test-founder-3@example.com")
+    from app.settings import get_settings
+
+    get_settings.cache_clear()
+    client, database = context
+    await client.post(
+        "/v1/auth/register", json={"email": "auth-test-founder-3@example.com", "password": "correct-horse-battery"}
+    )
+    response = await client.delete("/v1/auth/me")
+    assert response.status_code == 403
+
+    row = await database.fetch_one("SELECT id FROM users WHERE email=%s", ("auth-test-founder-3@example.com",))
+    assert row is not None
+    get_settings.cache_clear()
 
 
 @pytest.mark.asyncio

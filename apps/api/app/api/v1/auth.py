@@ -209,6 +209,118 @@ async def me(user: User = Depends(current_user)) -> UserOut:
     )
 
 
+class UpdateAccountRequest(BaseModel):
+    """PUT semantics: a full replace of the mutable account fields -- both
+    are required, unlike PATCH below. password is re-entered (not the old
+    one) since this is intended for "set my account to exactly this", not
+    a change-password flow that needs the current password confirmed."""
+
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=200)
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class PatchAccountRequest(BaseModel):
+    """PATCH semantics: every field optional, only what's supplied changes."""
+
+    email: EmailStr | None = None
+    password: str | None = Field(default=None, min_length=8, max_length=200)
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str | None) -> str | None:
+        return value.strip().lower() if value is not None else None
+
+
+async def _apply_account_update(
+    database: Database,
+    settings: Settings,
+    user: User,
+    email: str | None,
+    password: str | None,
+) -> UserOut:
+    if email is None and password is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nothing to update")
+
+    # The founder email is a fixed, known value (settings.founder_email) --
+    # letting it be reassigned away via account update would silently strip
+    # founder access from the account that's supposed to hold it, and
+    # letting some other account rename itself into it would hand that
+    # account founder access without ever going through register()'s
+    # explicit first-registration check. Simplest correct rule: the
+    # founder account can't change its own email here, and no account can
+    # rename itself into the founder email.
+    if email is not None and email != user.email:
+        if user.is_founder or _is_founder(email, settings.founder_email):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot reassign the founder email")
+        existing = await database.fetch_one("SELECT id FROM users WHERE email=%s AND id<>%s", (email, user.id))
+        if existing:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An account with this email already exists")
+
+    fields: list[str] = []
+    values: list[object] = []
+    if email is not None:
+        fields.append("email=%s")
+        values.append(email)
+    if password is not None:
+        fields.append("password_hash=%s")
+        values.append(hash_password(password))
+    values.append(user.id)
+
+    row = await database.fetch_one(
+        f"UPDATE users SET {', '.join(fields)} WHERE id=%s "
+        "RETURNING id::text, email, subscription_status, current_period_end",
+        tuple(values),
+    )
+    assert row is not None
+    return _user_out(row, settings)
+
+
+@router.put("/me", response_model=UserOut)
+async def replace_account(
+    payload: UpdateAccountRequest,
+    database: Database = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+    user: User = Depends(current_user),
+) -> UserOut:
+    return await _apply_account_update(database, settings, user, payload.email, payload.password)
+
+
+@router.patch("/me", response_model=UserOut)
+async def update_account(
+    payload: PatchAccountRequest,
+    database: Database = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+    user: User = Depends(current_user),
+) -> UserOut:
+    return await _apply_account_update(database, settings, user, payload.email, payload.password)
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_account(
+    response: Response,
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> None:
+    # The founder account is the one account this product cannot function
+    # without (it's the sole authorizer of every manual payment claim) --
+    # refuse self-deletion rather than leave the product with no founder.
+    if user.is_founder:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="The founder account cannot be deleted")
+    # payment_claims and action_rate_limits both cascade (ON DELETE CASCADE
+    # on user_id) -- see supabase/migrations/0007 and 0010. Incidents and
+    # postmortems are owned by client_email, not a user_id FK, so they are
+    # deliberately NOT deleted here: they stay as historical record even
+    # after the account that created them is gone, consistent with this
+    # app's append-only-history stance elsewhere (payment_claim_events).
+    await database.execute("DELETE FROM users WHERE id=%s", (user.id,))
+    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
+
+
 @router.get("/captcha-config")
 async def captcha_config(settings: Settings = Depends(get_settings)) -> dict[str, object]:
     """Public config the frontend needs to render (or skip) the Turnstile
