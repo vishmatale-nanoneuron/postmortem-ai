@@ -36,8 +36,21 @@ Known traps in this project, don't repeat them:
 
 Deploy workflow:
 1. `cd ~/locker/postmortem-ai && npx vercel@latest deploy --prod --cwd apps/api`
-   for the backend, `--cwd .` for the frontend. A "Not authorized" error is
-   sometimes transient — retry once before treating it as a real auth problem.
+   for the backend, `--cwd apps/web` for the frontend -- NOT `--cwd .`. Confirmed
+   the hard way: `--cwd .` builds and looks like it succeeds, but fails on
+   Vercel's remote builder with "Couldn't find any `pages` or `app` directory"
+   -- and because that failure only shows up in the deploy's own JSON response
+   (not a local error), it's easy to miss and assume the deploy landed. Always
+   check the deploy command's own output for `"status": "error"` before
+   declaring a deploy done, and separately verify the change is live (see step
+   3) rather than trusting a clean-looking CLI exit. Before trusting a repo-root
+   `.vercel/project.json` link at all, verify it points at `postmortem-ai-web`
+   (`cat .vercel/project.json`) -- linking from inside `apps/api` with the
+   wrong `--cwd` can silently overwrite the ROOT link instead of creating
+   `apps/api/.vercel/project.json`, which is exactly how this project ended up
+   linked to the wrong project (a different one literally named `postmortem-ai`)
+   for an unknown stretch of a past session. A "Not authorized" error on any
+   deploy is sometimes transient -- retry once before treating it as real.
 2. Apply any new migration to production BEFORE or immediately after deploying
    code that depends on it — check whether new code has a graceful-degrade path
    (like `record_claim_event`'s CheckViolation swallow) for the gap between
