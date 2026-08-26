@@ -16,6 +16,7 @@ import {
   type PaymentClaim,
   type Postmortem,
   type UpiPricing,
+  webhooks,
   type WirePricing,
 } from "./api";
 import { auth, type AuthUser } from "./auth";
@@ -1102,6 +1103,76 @@ function IntegrationsSettings() {
   );
 }
 
+// Real webhook ingestion, not just a description of one -- POSTing this
+// URL from any external tool (a monitoring alert, a script, a CI job)
+// creates an incident or appends evidence to one, the same write path
+// EvidenceExtractor and the manual evidence form use, just authenticated
+// by this per-account token instead of a session cookie. See
+// apps/api/app/api/v1/webhooks.py for the full contract (incident_id
+// grouping, paywall, rate limiting).
+function WebhookSettings() {
+  const [token, setToken] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    webhooks.token().then((t) => setToken(t.token)).catch(() => setToken(null));
+  }, []);
+
+  const url = token ? `${process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000"}/v1/webhooks/incidents/${token}` : "";
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard access can be denied (permissions, non-HTTPS context) --
+      // the URL is still selectable/visible in the input below, so this
+      // isn't the only way to get it.
+    }
+  }
+
+  async function rotate() {
+    if (!window.confirm("Rotate your webhook URL? Any tool still configured with the old one will stop working.")) return;
+    setBusy(true);
+    setError("");
+    try {
+      const t = await webhooks.rotate();
+      setToken(t.token);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not rotate the webhook URL.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!token) return null;
+
+  return (
+    <section className={card}>
+      <h2 className="mb-1 text-base font-semibold">Webhook</h2>
+      <p className="mb-3 text-xs text-muted">
+        POST JSON to this URL from any monitoring tool or script to create an incident or add evidence
+        automatically -- no manual typing required. Body: <code className="font-mono">{"{source, summary, detail?, incident_id?}"}</code>.
+        Omit <code className="font-mono">incident_id</code> to start a new incident; include the one returned by a
+        previous call to group related events together.
+      </p>
+      <div className="flex gap-2">
+        <input className={`${fieldInput} mb-0 font-mono text-xs`} value={url} readOnly />
+        <button className={secondaryButton} type="button" onClick={() => void copy()}>
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <button className="mt-3 text-xs text-red-600 underline underline-offset-2" disabled={busy} type="button" onClick={() => void rotate()}>
+        Rotate URL
+      </button>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    </section>
+  );
+}
+
 // AI-assisted, not autonomous: proposes evidence entries from pasted text
 // (a Slack thread, a log excerpt) but never saves anything on its own --
 // each suggestion is reviewed, optionally edited, and added individually
@@ -1356,6 +1427,7 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
 
       {!isFounder && <ManageBilling />}
       <IntegrationsSettings />
+      <WebhookSettings />
 
       {summary && (
         <section className={card}>

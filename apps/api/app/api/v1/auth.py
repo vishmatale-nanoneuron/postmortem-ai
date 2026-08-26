@@ -159,8 +159,13 @@ async def register(
 
     now = int(time.time() * 1000)
     row = await database.fetch_one(
-        """INSERT INTO users (email, password_hash, created_at)
-           VALUES (%s, %s, %s) RETURNING id::text, email, subscription_status, current_period_end, free_incident_id""",
+        # webhook_token generated the same way migration 0019's backfill
+        # generates one for pre-existing accounts -- every account has a
+        # real token from the moment it's created, not just accounts that
+        # happen to ask for one.
+        """INSERT INTO users (email, password_hash, created_at, webhook_token)
+           VALUES (%s, %s, %s, encode(gen_random_bytes(24), 'hex'))
+           RETURNING id::text, email, subscription_status, current_period_end, free_incident_id""",
         (payload.email, hash_password(payload.password), now),
     )
     assert row is not None

@@ -126,6 +126,30 @@ async def current_user(
     )
 
 
+async def user_by_webhook_token(database: Database, settings: Settings, token: str) -> User | None:
+    """Resolves a User the same way current_user does, but from a
+    per-account webhook token instead of a session cookie -- for
+    unauthenticated-by-browser callers (monitoring tools, scripts) that
+    can't hold a session. Returns None rather than raising so callers
+    control the exact error shape/status for their own endpoint (a
+    webhook consumer shouldn't see this app's normal 401 JSON body)."""
+    if not token:
+        return None
+    row = await database.fetch_one(
+        "SELECT id::text, email, subscription_status, current_period_end FROM users WHERE webhook_token=%s",
+        (token,),
+    )
+    if not row:
+        return None
+    return User(
+        id=row["id"],
+        email=row["email"],
+        is_founder=_is_founder(row["email"], settings.founder_email),
+        subscription_status=row["subscription_status"],
+        current_period_end=row["current_period_end"],
+    )
+
+
 async def current_founder(user: User = Depends(current_user)) -> User:
     # Independent of any client/subscription state and not grantable by
     # workspace membership -- matches the same invariant already documented
