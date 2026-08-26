@@ -3,7 +3,7 @@
 Canonical product: https://www.nanoneuron.ai/
 Docs: https://www.nanoneuron.ai/docs
 Contact: vish.matale@gmail.com
-Last factual review: 2026-08-25
+Last factual review: 2026-08-26
 
 ## What this is
 
@@ -64,9 +64,12 @@ configured.
 
 An active subscription is required for the product's actual work
 (creating incidents, drafting, publishing) -- viewing existing history
-stays available regardless. Payment today is manual and human-verified:
-UPI (India) or an international SWIFT wire, with the founder approving
-each submitted reference. Card payments are built but not yet live.
+stays available regardless. Two ways to pay: instant self-serve card
+payment via Stripe Checkout (access activates immediately, no manual
+step), or a manual UPI (India) / international SWIFT wire claim with the
+founder reviewing and approving each submitted reference. Self-serve
+subscription management (cancel, update card, view invoices) is available
+via the Stripe Customer Portal for accounts that paid by card.
 
 ## What it does not do
 
