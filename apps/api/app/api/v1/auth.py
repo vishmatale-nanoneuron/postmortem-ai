@@ -74,6 +74,11 @@ class UserOut(BaseModel):
     is_founder: bool = False
     subscription_status: str = "none"
     has_active_subscription: bool = False
+    # Whether this account can still create its one free incident before
+    # paying -- lets the frontend offer the real product instead of a hard
+    # paywall on a brand new, not-yet-paying account. See auth.py's
+    # User.has_free_incident_available for the full rule.
+    has_free_incident_available: bool = False
 
 
 def _user_out(row: dict, settings: Settings) -> UserOut:
@@ -88,6 +93,7 @@ def _user_out(row: dict, settings: Settings) -> UserOut:
         is_founder=_is_founder(row["email"], settings.founder_email),
         subscription_status=row.get("subscription_status", "none"),
         current_period_end=row.get("current_period_end"),
+        free_incident_id=row.get("free_incident_id"),
     )
     return UserOut(
         id=user.id,
@@ -95,6 +101,7 @@ def _user_out(row: dict, settings: Settings) -> UserOut:
         is_founder=user.is_founder,
         subscription_status=user.effective_status,
         has_active_subscription=user.has_active_subscription,
+        has_free_incident_available=user.has_free_incident_available,
     )
 
 
@@ -150,7 +157,7 @@ async def register(
     now = int(time.time() * 1000)
     row = await database.fetch_one(
         """INSERT INTO users (email, password_hash, created_at)
-           VALUES (%s, %s, %s) RETURNING id::text, email, subscription_status, current_period_end""",
+           VALUES (%s, %s, %s) RETURNING id::text, email, subscription_status, current_period_end, free_incident_id""",
         (payload.email, hash_password(payload.password), now),
     )
     assert row is not None
@@ -174,7 +181,7 @@ async def login(
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
 
     row = await database.fetch_one(
-        "SELECT id::text, email, password_hash, subscription_status, current_period_end FROM users WHERE email=%s",
+        "SELECT id::text, email, password_hash, subscription_status, current_period_end, free_incident_id FROM users WHERE email=%s",
         (payload.email,),
     )
     stored_hash = row["password_hash"] if row else _DECOY_HASH
@@ -206,6 +213,7 @@ async def me(user: User = Depends(current_user)) -> UserOut:
         is_founder=user.is_founder,
         subscription_status=user.effective_status,
         has_active_subscription=user.has_active_subscription,
+        has_free_incident_available=user.has_free_incident_available,
     )
 
 
@@ -273,7 +281,7 @@ async def _apply_account_update(
 
     row = await database.fetch_one(
         f"UPDATE users SET {', '.join(fields)} WHERE id=%s "
-        "RETURNING id::text, email, subscription_status, current_period_end",
+        "RETURNING id::text, email, subscription_status, current_period_end, free_incident_id",
         tuple(values),
     )
     assert row is not None

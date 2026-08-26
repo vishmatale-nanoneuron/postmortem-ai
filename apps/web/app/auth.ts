@@ -6,6 +6,9 @@ export type AuthUser = {
   is_founder: boolean;
   subscription_status: string;
   has_active_subscription: boolean;
+  // Whether this account can still create its one free incident before
+  // paying -- see apps/api/app/auth.py's User.has_free_incident_available.
+  has_free_incident_available: boolean;
 };
 
 async function authRequest<T>(path: string, init?: RequestInit): Promise<T> {
