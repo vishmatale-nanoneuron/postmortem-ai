@@ -3,7 +3,7 @@
 Canonical product: https://www.nanoneuron.ai/
 Docs: https://www.nanoneuron.ai/docs
 Contact: vish.matale@gmail.com
-Last factual review: 2026-08-25
+Last factual review: 2026-08-26
 
 ## What this is
 
@@ -62,11 +62,13 @@ configured.
 
 ## Payments
 
-An active subscription is required for the product's actual work
-(creating incidents, drafting, publishing) -- viewing existing history
-stays available regardless. Payment today is manual and human-verified:
-UPI (India) or an international SWIFT wire, with the founder approving
-each submitted reference. Card payments are built but not yet live.
+Every account may create and fully work on one incident for free -- record
+evidence, run AI evidence extraction, draft a grounded postmortem -- with
+no payment. Publishing (making it a permanent, citable record) and
+creating a second incident both require an active subscription. Payment
+today is manual and human-verified: UPI (India) or an international SWIFT
+wire, with the founder approving each submitted reference. Card payments
+are built but not yet live.
 
 ## What it does not do
 
