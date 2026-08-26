@@ -61,7 +61,7 @@ class FakeProvider:
 @pytest_asyncio.fixture
 async def context(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATABASE_URL", DATABASE_URL or "")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
     monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
     monkeypatch.setenv("COOKIE_SECURE", "false")
 
