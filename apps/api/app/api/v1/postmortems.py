@@ -19,7 +19,13 @@ from ...ai.rag import (
     get_embedding_client,
 )
 from ...alerting import send_alert
-from ...auth import User, current_user, require_active_subscription
+from ...auth import (
+    User,
+    current_user,
+    require_active_subscription,
+    require_active_subscription_or_free_incident,
+    require_active_subscription_or_free_slot,
+)
 from ...database import Database
 from ...dependencies import get_database
 from ...integrations.linear import create_linear_issue
@@ -115,7 +121,7 @@ async def load_evidence(database: Database, incident_id: str) -> list[EvidenceEn
 async def create_incident(
     payload: IncidentCreate,
     database: Database = Depends(get_database),
-    user: User = Depends(require_active_subscription),
+    user: User = Depends(require_active_subscription_or_free_slot),
 ) -> dict[str, object]:
     if not await try_record_action(database, user.id, "create_incident", MAX_INCIDENTS_PER_HOUR, 60 * 60 * 1000):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
@@ -136,6 +142,13 @@ async def create_incident(
            RETURNING id, title, severity, status, impact""",
         (incident_id, user.email, payload.title, payload.severity, payload.impact, now, now),
     )
+    # require_active_subscription_or_free_slot already confirmed this
+    # account is either a real subscriber or has its free slot still
+    # available -- only spend the slot in the latter case, and only once
+    # the insert above actually succeeded (never record a slot as used for
+    # an incident that doesn't exist).
+    if not user.has_active_subscription:
+        await database.execute("UPDATE users SET free_incident_id=%s WHERE id=%s", (incident_id, user.id))
     return dict(row or {})
 
 
@@ -159,7 +172,7 @@ async def update_incident_status(
     incident_id: str,
     payload: IncidentStatusUpdate,
     database: Database = Depends(get_database),
-    user: User = Depends(require_active_subscription),
+    user: User = Depends(require_active_subscription_or_free_incident),
 ) -> dict[str, object]:
     if not await try_record_action(
         database, user.id, "update_incident_status", MAX_STATUS_CHANGES_PER_HOUR, 60 * 60 * 1000
@@ -218,7 +231,7 @@ async def record_evidence(
     incident_id: str,
     payload: EvidenceCreate,
     database: Database = Depends(get_database),
-    user: User = Depends(require_active_subscription),
+    user: User = Depends(require_active_subscription_or_free_incident),
 ) -> dict[str, object]:
     if not await try_record_action(database, user.id, "record_evidence", MAX_EVIDENCE_PER_HOUR, 60 * 60 * 1000):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
@@ -275,7 +288,7 @@ async def extract_evidence(
     payload: ExtractEvidenceIn,
     database: Database = Depends(get_database),
     provider: ModelProvider = Depends(get_model_provider),
-    user: User = Depends(require_active_subscription),
+    user: User = Depends(require_active_subscription_or_free_incident),
 ) -> list[ExtractedEvidenceOut]:
     """Assistive, not autonomous: proposes evidence entries from a pasted
     thread/log, but never writes to incident_evidence itself. The client
@@ -353,7 +366,7 @@ async def draft_postmortem(
     incident_id: str,
     database: Database = Depends(get_database),
     provider: ModelProvider = Depends(get_model_provider),
-    user: User = Depends(require_active_subscription),
+    user: User = Depends(require_active_subscription_or_free_incident),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     """Build a review-ready draft from the recorded evidence.
