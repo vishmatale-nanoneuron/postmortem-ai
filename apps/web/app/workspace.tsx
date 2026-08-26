@@ -396,7 +396,14 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
     }
   }
 
-  const heading = mode === "login" ? "Log in" : mode === "register" ? "Create an account" : "Reset your password";
+  const heading =
+    mode === "login" ? "Welcome back" : mode === "register" ? "Get started free" : "Reset your password";
+  const subheading =
+    mode === "login"
+      ? "Log in to your account."
+      : mode === "register"
+        ? "Create your account — your first postmortem is free."
+        : "Enter your email and we'll send you a link to choose a new password.";
 
   return (
     <main>
@@ -404,8 +411,9 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
       <GroundingExample />
       <HowItWorks />
       <div id="get-started" className="mx-auto mb-16 max-w-sm px-4">
-        <div className={card}>
-          <h2 className="mb-3 text-lg font-semibold">{heading}</h2>
+        <div className="rounded-xl border border-line bg-white p-6 shadow-lg shadow-ink/5">
+          <h2 className="mb-1 text-lg font-semibold text-ink">{heading}</h2>
+          <p className="mb-4 text-sm text-muted">{subheading}</p>
           <form action={submit}>
             <label className={fieldLabel}>Email</label>
             <input className={fieldInput} name="email" type="email" required />
@@ -605,7 +613,7 @@ function CardPayment() {
   );
 }
 
-function PendingClaim({ claim, onChanged }: { claim: Claim; onChanged: () => void | Promise<void> }) {
+export function PendingClaim({ claim, onChanged }: { claim: Claim; onChanged: () => void | Promise<void> }) {
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -914,7 +922,7 @@ function ManageBilling() {
   );
 }
 
-function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser; onUpdated: (u: AuthUser) => void; onDeleted: () => void }) {
+export function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser; onUpdated: (u: AuthUser) => void; onDeleted: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
