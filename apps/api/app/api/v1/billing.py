@@ -126,6 +126,26 @@ async def billing_status(user: User = Depends(current_user)) -> BillingStatusOut
     )
 
 
+class CardPricingOut(BaseModel):
+    configured: bool
+
+
+@router.get("/card/pricing", response_model=CardPricingOut)
+async def card_pricing(settings: Settings = Depends(get_settings)) -> CardPricingOut:
+    """Public, unauthenticated -- same shape/purpose as /upi/pricing and
+    /wire/pricing below: lets the frontend decide whether to show a 'Card'
+    option at all, without needing to be signed in (or triggering the 503
+    from POST /checkout) just to find out Stripe isn't configured in this
+    environment. The real Stripe integration (checkout/portal/webhook above)
+    existed for a long time with no frontend surface calling it at all --
+    every client only ever saw the manual UPI/wire tabs, so self-serve card
+    payment and self-serve subscription management (cancel, update card,
+    view invoices via the Customer Portal) were both effectively dead code
+    from a client's perspective. This endpoint is what lets the frontend
+    turn that back on safely, everywhere it's actually configured."""
+    return CardPricingOut(configured=bool(settings.stripe_secret_key and settings.stripe_price_id))
+
+
 async def _apply_subscription(database: Database, customer_id: str, subscription: stripe.Subscription) -> None:
     updated = await database.execute(
         """UPDATE users SET stripe_subscription_id=%s, subscription_status=%s, current_period_end=%s
