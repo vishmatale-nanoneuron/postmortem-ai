@@ -3,7 +3,7 @@
 Canonical product: https://www.nanoneuron.ai/
 Docs: https://www.nanoneuron.ai/docs
 Contact: vish.matale@gmail.com
-Last factual review: 2026-08-25
+Last factual review: 2026-08-26
 
 ## What this is
 
@@ -55,7 +55,11 @@ frontend federates to it under the caller's own session.
 
 A circuit breaker (closed/open/half-open) wraps the drafting model --
 after repeated failures, further calls fail fast instead of hammering an
-unhealthy provider. Login is rate-limited per account and per IP;
+unhealthy provider. Gemini is the primary drafting/extraction model;
+Claude is used as a real fallback provider (not just a described one)
+when configured, reached only when Gemini's own call fails or its
+circuit is open -- each provider has its own independent circuit
+breaker. Login is rate-limited per account and per IP;
 creating incidents and drafting postmortems are separately rate-limited
 per account. Registration and login can require a CAPTCHA when
 configured.
