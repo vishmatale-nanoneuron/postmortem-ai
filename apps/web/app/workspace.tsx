@@ -454,7 +454,7 @@ function SubscribeGate() {
   );
 }
 
-function PendingClaim({ claim, onChanged }: { claim: Claim; onChanged: () => void | Promise<void> }) {
+export function PendingClaim({ claim, onChanged }: { claim: Claim; onChanged: () => void | Promise<void> }) {
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -723,7 +723,7 @@ function ManageBilling() {
   );
 }
 
-function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser; onUpdated: (u: AuthUser) => void; onDeleted: () => void }) {
+export function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser; onUpdated: (u: AuthUser) => void; onDeleted: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
