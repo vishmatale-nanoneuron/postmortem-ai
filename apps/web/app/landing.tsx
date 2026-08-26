@@ -4,6 +4,16 @@
 // public/llms.txt word for word in substance: the grounding guarantee, the
 // honest "what this doesn't do" list. Never let this page and llms.txt
 // drift -- an AI crawler and a human visitor should learn the same facts.
+//
+// Uses shadcn's Card + buttonVariants (not the <Button> component itself,
+// which wraps Base UI's polymorphic render prop) -- these are plain <a>
+// links styled as buttons, not interactive <button> elements, so applying
+// buttonVariants()'s className directly to the anchor is simpler and avoids
+// any Base UI render-prop friction for what's fundamentally navigation.
+
+import { Card, CardContent } from "@/components/ui/card";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export function Hero() {
   return (
@@ -17,20 +27,56 @@ export function Hero() {
         to a real, recorded entry — anything the evidence doesn&apos;t support is marked unsupported, never
         invented.
       </p>
-      <div className="mt-8 flex items-center justify-center gap-4">
-        <a
-          href="#get-started"
-          className="inline-block rounded-md bg-ink px-6 py-2.5 text-sm font-medium text-paper transition hover:bg-ink/90"
-        >
+      <div className="mt-8 flex flex-wrap items-center justify-center gap-x-4 gap-y-3">
+        <a href="#get-started" className={cn(buttonVariants({ size: "lg" }), "h-auto px-6 py-2.5 text-sm")}>
           Get started
         </a>
-        <a href="/docs" className="text-sm font-medium text-ink underline underline-offset-2">
+        <a href="/postmortems" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
+          See real examples
+        </a>
+        <a href="/docs" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
           How it works
         </a>
-        <a href="/pricing" className="text-sm font-medium text-ink underline underline-offset-2">
+        <a href="/pricing" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
           Pricing
         </a>
       </div>
+    </div>
+  );
+}
+
+// A concrete before/after, not just the abstract claim above -- the
+// citation/unsupported-marker guarantee is easy to assert and hard to
+// believe from prose alone. Numbers and text are illustrative, not a real
+// incident -- deliberately labeled as an example, not dressed up as a real
+// customer's postmortem (that's what the published examples at
+// /postmortems are for).
+export function GroundingExample() {
+  return (
+    <div className="mx-auto max-w-2xl px-4 pb-6">
+      <Card>
+        <CardContent>
+          <div className="text-xs font-medium tracking-widest text-muted uppercase">What "grounded" actually means</div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div>
+              <p className="text-xs font-medium text-accent">Kept -- cites real evidence</p>
+              <p className="mt-1 rounded-md bg-paper px-3 py-2 text-sm text-ink">
+                "Latency rose from 180ms to 4200ms starting 14:04 UTC, correlated with deploy #482.
+                <span className="text-muted"> [2]</span>"
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-red-600">Dropped -- no citation exists</p>
+              <p className="mt-1 rounded-md bg-paper px-3 py-2 text-sm text-muted italic">
+                "Not established by the recorded evidence."
+                <span className="mt-1 block text-xs text-muted not-italic">
+                  (what a claim like "this cost the company $40,000" becomes, if no evidence entry says so)
+                </span>
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -55,10 +101,12 @@ export function HowItWorks() {
     <div className="mx-auto max-w-2xl px-4 py-6">
       <div className="grid gap-4 sm:grid-cols-3">
         {steps.map((step) => (
-          <div key={step.title} className="rounded-lg border border-line bg-white p-4 shadow-sm">
-            <h3 className="text-sm font-semibold text-ink">{step.title}</h3>
-            <p className="mt-1.5 text-sm text-muted">{step.body}</p>
-          </div>
+          <Card key={step.title}>
+            <CardContent>
+              <h3 className="text-sm font-semibold text-ink">{step.title}</h3>
+              <p className="mt-1.5 text-sm text-muted">{step.body}</p>
+            </CardContent>
+          </Card>
         ))}
       </div>
     </div>

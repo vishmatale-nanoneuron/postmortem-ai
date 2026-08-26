@@ -18,7 +18,8 @@ import {
   type WirePricing,
 } from "./api";
 import { auth, type AuthUser } from "./auth";
-import { Hero, HowItWorks, WhatThisIsnt } from "./landing";
+import { cn } from "@/lib/utils";
+import { GroundingExample, Hero, HowItWorks, WhatThisIsnt } from "./landing";
 import { usePolling } from "./use-polling";
 import {
   evidenceSchema,
@@ -68,20 +69,20 @@ export default function Workspace() {
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-10">
-      <div className="mb-6 flex items-baseline justify-between">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">PostMortem AI</h1>
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           {user.is_founder && (
-            <span className="rounded-full bg-ink px-2.5 py-0.5 text-xs font-medium text-paper">Founder</span>
+            <span className="shrink-0 rounded-full bg-ink px-2.5 py-0.5 text-xs font-medium text-paper">Founder</span>
           )}
           <button
-            className="text-sm text-muted underline underline-offset-2"
+            className="min-w-0 truncate text-sm text-muted underline underline-offset-2"
             type="button"
             onClick={() => setShowAccount((v) => !v)}
           >
             {user.email}
           </button>
-          <button className={secondaryButton} type="button" onClick={() => void auth.logout().then(() => setUser(null))}>
+          <button className={cn(secondaryButton, "shrink-0")} type="button" onClick={() => void auth.logout().then(() => setUser(null))}>
             Log out
           </button>
         </div>
@@ -253,7 +254,7 @@ function PaymentClaimsReview() {
           <li className="text-muted">None yet.</li>
         ) : (
           claims.map((claim) => (
-            <li key={claim.id} className="flex items-center justify-between gap-2 rounded-md bg-paper px-3 py-2">
+            <li key={claim.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-paper px-3 py-2">
               <span className="min-w-0 flex-1">
                 <span className="font-medium">{claim.email}</span> --{" "}
                 {currencySymbol(claim.currency)}
@@ -330,6 +331,7 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
   return (
     <main>
       <Hero />
+      <GroundingExample />
       <HowItWorks />
       <div id="get-started" className="mx-auto mb-16 max-w-sm px-4">
         <div className={card}>
