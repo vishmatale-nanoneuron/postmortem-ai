@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "How postmortem drafting is grounded, mechanically — PostMortem AI",
+  title: "How postmortem drafting is grounded, mechanically",
   description:
     "The two-layer mechanism behind every AI-drafted postmortem: cited generation, then independent code-level verification of every citation before anything is stored.",
   robots: { index: true, follow: true },

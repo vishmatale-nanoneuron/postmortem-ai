@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Published postmortems — PostMortem AI",
+  title: "Published postmortems",
   description: "Publicly shared, evidence-grounded incident postmortems.",
   robots: { index: true, follow: true },
 };

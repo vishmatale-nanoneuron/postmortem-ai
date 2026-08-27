@@ -32,7 +32,7 @@ async function fetchPostmortem(slug: string): Promise<PublicPostmortem | null> {
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
   const postmortem = await fetchPostmortem(slug);
-  if (!postmortem) return { title: "Postmortem not found — PostMortem AI" };
+  if (!postmortem) return { title: "Postmortem not found" };
 
   const title = `${postmortem.incident_title} — Postmortem`;
   return {

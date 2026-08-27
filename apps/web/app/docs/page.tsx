@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Docs — PostMortem AI",
+  title: "Docs",
   description:
     "How PostMortem AI actually works: grounded drafting, RAG over past incidents, MCP tools, payments, and the security measures in place.",
   robots: { index: true, follow: true },
