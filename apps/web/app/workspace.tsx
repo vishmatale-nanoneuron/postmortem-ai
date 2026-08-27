@@ -730,8 +730,11 @@ function UpiPayment() {
   return (
     <>
       <p className="mb-3 text-sm text-muted">
-        ₹{upi.amount_inr}/month via UPI. Contact the founder to receive the account to pay to, then submit your
-        transaction reference below.
+        ₹{upi.amount_inr}/month via UPI.{" "}
+        <a className="underline underline-offset-2" href="mailto:vish.matale@gmail.com?subject=UPI%20payment%20details">
+          Email the founder
+        </a>{" "}
+        to receive the account to pay to, then submit your transaction reference below.
       </p>
       <p className="mb-3 text-xs text-muted">
         UPI requires an Indian bank account -- it can&apos;t accept payment from outside India. Use the
@@ -824,8 +827,11 @@ function WirePayment() {
       </div>
       <p className="mb-3 text-sm text-muted">
         {currencySymbol(active.currency)}
-        {active.amount}/month via SWIFT wire in {active.currency}. Contact the founder to receive the account to
-        wire to, then submit your transaction reference below.
+        {active.amount}/month via SWIFT wire in {active.currency}.{" "}
+        <a className="underline underline-offset-2" href="mailto:vish.matale@gmail.com?subject=Wire%20payment%20details">
+          Email the founder
+        </a>{" "}
+        to receive the account to wire to, then submit your transaction reference below.
       </p>
       {latestPending ? (
         <PendingClaim claim={latestPending} onChanged={refresh} />
@@ -908,15 +914,21 @@ function ManageBilling() {
           </button>
           {error && (
             <p className="mt-2 text-xs text-muted">
-              Paid via UPI/wire instead? Contact the founder directly to renew or ask a question.
+              Paid via UPI/wire instead?{" "}
+              <a className="underline underline-offset-2" href="mailto:vish.matale@gmail.com?subject=Renewal%20question">
+                Email the founder
+              </a>{" "}
+              directly to renew or ask a question.
             </p>
           )}
         </>
       ) : (
         <p className="mt-1 text-xs text-muted">
-          {status.subscription_status === "expired"
-            ? "Your access has expired -- contact the founder to make a new payment and reactivate."
-            : "Paid via UPI/wire -- to renew or ask a question, contact the founder directly."}
+          {status.subscription_status === "expired" ? "Your access has expired -- " : "Paid via UPI/wire -- "}
+          <a className="underline underline-offset-2" href="mailto:vish.matale@gmail.com?subject=Payment%20question">
+            email the founder
+          </a>
+          {status.subscription_status === "expired" ? " to make a new payment and reactivate." : " to renew or ask a question."}
         </p>
       )}
     </section>
