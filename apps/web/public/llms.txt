@@ -3,7 +3,7 @@
 Canonical product: https://www.nanoneuron.ai/
 Docs: https://www.nanoneuron.ai/docs
 Contact: vish.matale@gmail.com
-Last factual review: 2026-08-26
+Last factual review: 2026-08-27
 
 ## What this is
 
@@ -64,9 +64,12 @@ already has the id for -- the same write path and paywall as the
 authenticated app, just authenticated by a per-account token instead of a
 session cookie. There is no source-specific parsing for any named
 monitoring vendor (Datadog, PagerDuty, etc.) -- the accepted shape is
-deliberately generic (source, summary, detail, an optional incident id to
-group related events), matched to what any tool's own "custom webhook"
-option can already send.
+deliberately generic: `summary`, `detail`, an optional `incident_id` to
+group related events, and `source`, which is a fixed evidence-*type*
+category (`alert`, `log`, `deploy`, `metric`, `human_note`, or
+`customer_report`) rather than the sending tool's name -- put the tool's
+name in `summary`/`detail` instead (e.g. `"summary": "Datadog: checkout
+error rate spiked to 40%"`).
 
 ## Reliability and anti-abuse
 
