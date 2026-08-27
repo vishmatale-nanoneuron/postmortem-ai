@@ -51,6 +51,13 @@ export default function DocsPage() {
           Publishing always records a named human approver; the database itself refuses to mark a postmortem
           published without one.
         </p>
+        <p className={p}>
+          Longer writeup with the exact verification steps:{" "}
+          <Link className="underline underline-offset-2" href="/blog/grounding-mechanism">
+            How postmortem drafting is grounded, mechanically
+          </Link>
+          .
+        </p>
       </section>
 
       <section className={card}>
