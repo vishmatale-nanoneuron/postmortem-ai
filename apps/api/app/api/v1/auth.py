@@ -3,6 +3,7 @@ import time
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from ...auth import SESSION_COOKIE_NAME, User, _is_founder, current_user
@@ -373,7 +374,15 @@ async def request_password_reset(
         token = issue_password_reset_token(settings.session_secret, row["id"], row["email"], row["password_hash"])
         reset_url = f"{settings.frontend_url}/reset-password?token={token}"
         try:
-            send_password_reset_email(settings, row["email"], reset_url)
+            # send_password_reset_email calls Resend's synchronous SDK (a
+            # real blocking HTTP round-trip -- confirmed via a real
+            # production traceback going through resend/request.py's sync
+            # `perform()`). Calling it directly here would block this
+            # worker's whole event loop for that round-trip, stalling every
+            # other concurrent request on it, not just this one. Run it in
+            # Starlette's threadpool instead, the standard FastAPI-correct
+            # way to call a blocking third-party SDK from an async route.
+            await run_in_threadpool(send_password_reset_email, settings, row["email"], reset_url)
         except EmailNotConfiguredError as error:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Email is not configured") from error
         logger.info("password_reset_requested")

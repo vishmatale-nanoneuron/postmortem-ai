@@ -60,7 +60,13 @@ async def _get_or_create_customer(
 ) -> str:
     if existing_customer_id:
         return existing_customer_id
-    customer = client.customers.create(params={"email": user.email, "metadata": {"user_id": user.id}})
+    # create_async, not create -- these routes are async def, and the sync
+    # Stripe SDK call would otherwise block this worker's whole event loop
+    # for the real network round-trip to Stripe, stalling every other
+    # concurrent request on it. stripe==11.4.1 provides a real native async
+    # client (not a threadpool wrapper), so this is a straight correctness
+    # fix, not a workaround.
+    customer = await client.customers.create_async(params={"email": user.email, "metadata": {"user_id": user.id}})
     await database.execute("UPDATE users SET stripe_customer_id=%s WHERE id=%s", (customer.id, user.id))
     return customer.id
 
@@ -78,7 +84,7 @@ async def create_checkout_session(
     client = _client(settings)
     customer_id = await _get_or_create_customer(database, client, user, (row or {}).get("stripe_customer_id"))
 
-    session = client.checkout.sessions.create(
+    session = await client.checkout.sessions.create_async(
         params={
             "mode": "subscription",
             "customer": customer_id,
@@ -105,7 +111,7 @@ async def create_portal_session(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No billing account yet")
 
     client = _client(settings)
-    session = client.billing_portal.sessions.create(
+    session = await client.billing_portal.sessions.create_async(
         params={"customer": customer_id, "return_url": settings.frontend_url}
     )
     return CheckoutOut(url=session.url)
@@ -186,14 +192,14 @@ async def stripe_webhook(
         customer_id = data["customer"]
         subscription_id = data.get("subscription")
         if subscription_id:
-            subscription = client.subscriptions.retrieve(subscription_id)
+            subscription = await client.subscriptions.retrieve_async(subscription_id)
             await _apply_subscription(database, customer_id, subscription)
     elif event["type"] in ("customer.subscription.updated", "customer.subscription.deleted"):
         await _apply_subscription(database, data["customer"], data)
     elif event["type"] == "invoice.payment_failed":
         subscription_id = data.get("subscription")
         if subscription_id:
-            subscription = client.subscriptions.retrieve(subscription_id)
+            subscription = await client.subscriptions.retrieve_async(subscription_id)
             await _apply_subscription(database, data["customer"], subscription)
 
     logger.info("stripe_webhook_handled type=%s", event["type"])
