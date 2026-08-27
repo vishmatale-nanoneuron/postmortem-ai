@@ -13,6 +13,7 @@
 // navigation.
 
 import { CheckCircle2, ClipboardList, ShieldCheck, Sparkles, UserCheck, XCircle } from "lucide-react";
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
@@ -48,15 +49,15 @@ export function Hero() {
           <a href="#get-started" className={cn(buttonVariants({ size: "lg" }), "h-auto px-7 py-3 text-sm shadow-lg shadow-accent/10")}>
             Get started — first postmortem free
           </a>
-          <a href="/postmortems" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
+          <Link href="/postmortems" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
             See real examples
-          </a>
-          <a href="/docs" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
+          </Link>
+          <Link href="/docs" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
             How it works
-          </a>
-          <a href="/pricing" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
+          </Link>
+          <Link href="/pricing" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
             Pricing
-          </a>
+          </Link>
         </div>
       </div>
     </div>

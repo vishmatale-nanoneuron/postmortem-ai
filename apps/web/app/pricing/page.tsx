@@ -82,12 +82,12 @@ export default async function PricingPage() {
       </p>
 
       <p className="mt-8 text-center">
-        <a
+        <Link
           href="/#get-started"
           className="inline-block rounded-md bg-ink px-6 py-2.5 text-sm font-medium text-paper transition hover:bg-ink/90"
         >
           Get started
-        </a>
+        </Link>
       </p>
     </main>
   );

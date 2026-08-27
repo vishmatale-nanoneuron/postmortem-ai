@@ -98,6 +98,10 @@ jobs:
       - name: Install workspace-root dependencies (for vitest's react alias)
         run: bun install
 
+      - name: Lint
+        working-directory: apps/web
+        run: bun run lint
+
       - name: Typecheck
         working-directory: apps/web
         run: bun x tsc --noEmit -p .
