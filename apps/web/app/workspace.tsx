@@ -1308,8 +1308,11 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
   const [busy, setBusy] = useState(false);
 
   async function refreshIncidents() {
-    setIncidents(await api.listIncidents());
-    setSummary(await api.summary());
+    // Independent GETs -- run in parallel rather than serially, halving
+    // the real wall-clock wait on every dashboard load and status toggle.
+    const [incidentsResult, summaryResult] = await Promise.all([api.listIncidents(), api.summary()]);
+    setIncidents(incidentsResult);
+    setSummary(summaryResult);
   }
 
   async function toggleResolved(incident: Incident) {
@@ -1326,12 +1329,15 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
   }
 
   async function refreshSelected(id: string) {
-    setEvidence(await api.listEvidence(id));
-    try {
-      setPostmortem(await api.getPostmortem(id));
-    } catch {
-      setPostmortem(null);
-    }
+    // Independent GETs -- start both immediately rather than waiting for
+    // evidence before even requesting the postmortem. getPostmortem is
+    // expected to 404 (no draft yet), so each is awaited with its own
+    // error handling rather than Promise.all, which would reject the
+    // whole thing (and lose the evidence result) on that expected 404.
+    const evidencePromise = api.listEvidence(id);
+    const postmortemPromise = api.getPostmortem(id).catch(() => null);
+    setEvidence(await evidencePromise);
+    setPostmortem(await postmortemPromise);
   }
 
   useEffect(() => {

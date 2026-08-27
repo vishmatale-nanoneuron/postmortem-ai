@@ -547,12 +547,21 @@ async def draft_postmortem(
             "DELETE FROM postmortem_actions WHERE postmortem_id=%s AND evidence_id IS NOT NULL",
             (postmortem_id,),
         )
-        for action in draft.actions:
+        if draft.actions:
+            # Single batched INSERT instead of one round-trip per action --
+            # draft.actions is always small (bounded by the AI response),
+            # so this isn't a big win in absolute terms, but N sequential
+            # round-trips inside one transaction for what's naturally one
+            # statement is still the wrong default to reach for.
+            values_clause = ", ".join("(gen_random_uuid(),%s,%s,%s,%s,%s,%s,%s)" for _ in draft.actions)
+            params: list[object] = []
+            for action in draft.actions:
+                params.extend([postmortem_id, action.title, action.rationale, action.owner, action.evidence_id, now, now])
             await tx.execute(
-                """INSERT INTO postmortem_actions
-                     (id,postmortem_id,title,rationale,owner,evidence_id,created_at,updated_at)
-                   VALUES (gen_random_uuid(),%s,%s,%s,%s,%s,%s,%s)""",
-                (postmortem_id, action.title, action.rationale, action.owner, action.evidence_id, now, now),
+                f"""INSERT INTO postmortem_actions
+                      (id,postmortem_id,title,rationale,owner,evidence_id,created_at,updated_at)
+                    VALUES {values_clause}""",
+                params,
             )
 
     return await _load_postmortem(database, incident_id)
