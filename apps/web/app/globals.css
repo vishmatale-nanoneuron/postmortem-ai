@@ -166,6 +166,29 @@
   }
 }
 
+/* Shared 3D tilt for cards across the marketing pages (landing, docs,
+   pricing, postmortems, the blog post) -- a real perspective transform on
+   hover, not a flat drop-shadow trick. Deliberately a fixed-angle tilt
+   rather than JS mouse-tracking: no pointer-position script, no new
+   client-side dependency, works identically with keyboard focus (:hover is
+   paired with :focus-within so it's not mouse-only), and costs nothing on
+   pages that never hover a card (touch devices, screen readers). The
+   perspective lives on the parent wrapper (tilt-card-wrap) so the card
+   itself keeps its normal border/shadow/content flow; only the transform
+   moves. */
+.tilt-card-wrap {
+  perspective: 1000px;
+}
+.tilt-card {
+  transition: transform 0.35s ease, box-shadow 0.35s ease;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+.tilt-card-wrap:hover .tilt-card,
+.tilt-card-wrap:focus-within .tilt-card {
+  transform: rotateX(4deg) rotateY(-6deg) translateY(-4px) translateZ(0);
+}
+
 /* tw-animate-css was imported (line 2) but nothing in the app actually used
    it until the landing page's entrance/verification motion below --
    confirmed by grepping the whole app tree for animate-in before adding

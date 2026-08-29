@@ -27,7 +27,7 @@ export default async function PublicPostmortemsIndex() {
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-10">
-      <div className="mb-8">
+      <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 duration-700">
         <div className="text-xs font-medium tracking-widest text-muted uppercase">Published postmortems</div>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">Incidents, transparently.</h1>
         <p className="mt-2 text-sm text-muted">
@@ -43,13 +43,21 @@ export default async function PublicPostmortemsIndex() {
         <p className="text-sm text-muted">No public postmortems yet.</p>
       ) : (
         <ul className="space-y-3">
-          {postmortems.map((item) => (
-            <li key={item.slug} className="rounded-lg border border-line bg-white p-4 shadow-sm">
-              <Link href={`/postmortems/${item.slug}`} className="text-base font-medium text-ink underline-offset-2 hover:underline">
-                {item.incident_title}
-              </Link>
-              <span className="ml-2 text-xs text-muted">{item.severity}</span>
-              <p className="mt-1 text-sm text-muted">{item.summary}</p>
+          {postmortems.map((item, i) => (
+            <li
+              key={item.slug}
+              // Delay capped at 10 items' worth -- a long list shouldn't
+              // make the 40th entry wait 2+ seconds to appear.
+              style={{ animationDelay: `${Math.min(i, 10) * 60}ms` }}
+              className="tilt-card-wrap animate-in fade-in slide-in-from-bottom-2 fill-mode-backwards duration-500"
+            >
+              <div className="tilt-card rounded-lg border border-line bg-white p-4 shadow-sm">
+                <Link href={`/postmortems/${item.slug}`} className="text-base font-medium text-ink underline-offset-2 hover:underline">
+                  {item.incident_title}
+                </Link>
+                <span className="ml-2 text-xs text-muted">{item.severity}</span>
+                <p className="mt-1 text-sm text-muted">{item.summary}</p>
+              </div>
             </li>
           ))}
         </ul>

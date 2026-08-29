@@ -81,8 +81,8 @@ export function Hero() {
 // /postmortems are for).
 export function GroundingExample() {
   return (
-    <div className="mx-auto max-w-3xl animate-in fade-in slide-in-from-bottom-2 px-4 pb-8 duration-700">
-      <Card className="overflow-hidden border-line py-0 shadow-sm">
+    <div className="tilt-card-wrap mx-auto max-w-3xl animate-in fade-in slide-in-from-bottom-2 px-4 pb-8 duration-700">
+      <Card className="tilt-card overflow-hidden border-line py-0 shadow-sm">
         <div className="border-b border-line bg-paper/60 px-6 py-3.5">
           <div className="text-xs font-medium tracking-widest text-muted uppercase">
             What &ldquo;grounded&rdquo; actually means
@@ -151,22 +151,24 @@ export function HowItWorks() {
     <div className="mx-auto max-w-3xl px-4 py-8">
       <div className="grid gap-4 sm:grid-cols-3">
         {steps.map((step, i) => (
-          <Card
+          <div
             key={step.title}
             style={{ animationDelay: `${i * 120}ms` }}
-            className="animate-in fade-in slide-in-from-bottom-3 border-line shadow-sm fill-mode-backwards transition-[transform,box-shadow] duration-300 hover:-translate-y-1 hover:shadow-md"
+            className="tilt-card-wrap animate-in fade-in slide-in-from-bottom-3 fill-mode-backwards"
           >
-            <CardContent>
-              <div className="flex items-center gap-2.5">
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent/10 text-xs font-semibold text-accent">
-                  {i + 1}
-                </span>
-                <step.icon className="size-4 text-muted" />
-              </div>
-              <h3 className="mt-3 text-sm font-semibold text-ink">{step.title}</h3>
-              <p className="mt-1.5 text-sm text-muted">{step.body}</p>
-            </CardContent>
-          </Card>
+            <Card tabIndex={0} className="tilt-card border-line shadow-sm hover:shadow-md focus-visible:shadow-md">
+              <CardContent>
+                <div className="flex items-center gap-2.5">
+                  <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent/10 text-xs font-semibold text-accent">
+                    {i + 1}
+                  </span>
+                  <step.icon className="size-4 text-muted" />
+                </div>
+                <h3 className="mt-3 text-sm font-semibold text-ink">{step.title}</h3>
+                <p className="mt-1.5 text-sm text-muted">{step.body}</p>
+              </CardContent>
+            </Card>
+          </div>
         ))}
       </div>
     </div>
