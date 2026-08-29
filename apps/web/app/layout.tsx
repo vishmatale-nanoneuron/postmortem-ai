@@ -51,12 +51,16 @@ const STRUCTURED_DATA = {
   operatingSystem: "Web",
   description: DESCRIPTION,
   url: "https://www.nanoneuron.ai",
-  offers: {
-    "@type": "Offer",
-    price: "999",
-    priceCurrency: "INR",
-    url: "https://www.nanoneuron.ai/pricing",
-  },
+  // One offer per real payment path (verified live against
+  // /v1/billing/upi/pricing and /v1/billing/wire/pricing) -- previously
+  // only listed the INR/UPI price, silently omitting the USD/GBP/EUR wire
+  // pricing international visitors on /pricing actually see.
+  offers: [
+    { "@type": "Offer", price: "999", priceCurrency: "INR", url: "https://www.nanoneuron.ai/pricing" },
+    { "@type": "Offer", price: "15", priceCurrency: "USD", url: "https://www.nanoneuron.ai/pricing" },
+    { "@type": "Offer", price: "12", priceCurrency: "GBP", url: "https://www.nanoneuron.ai/pricing" },
+    { "@type": "Offer", price: "14", priceCurrency: "EUR", url: "https://www.nanoneuron.ai/pricing" },
+  ],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
