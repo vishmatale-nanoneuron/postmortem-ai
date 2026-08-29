@@ -30,23 +30,32 @@ export function Hero() {
         className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[32rem] bg-[radial-gradient(60%_50%_at_50%_0%,color-mix(in_oklab,var(--color-accent)_14%,transparent),transparent)]"
       />
       <div className="mx-auto max-w-3xl px-4 pt-20 pb-12 text-center sm:pt-28">
-        <Badge variant="outline" className="h-auto gap-1.5 rounded-full border-line px-3 py-1 text-[11px] text-muted">
+        <Badge
+          variant="outline"
+          className="h-auto animate-in fade-in slide-in-from-bottom-2 gap-1.5 rounded-full border-line px-3 py-1 text-[11px] text-muted duration-700"
+        >
           <Sparkles className="size-3 text-accent" />
           AI-drafted, evidence-cited postmortems
         </Badge>
-        <h1 className="mt-5 text-4xl leading-[1.1] font-semibold tracking-tight text-ink sm:text-6xl">
+        <h1 className="mt-5 animate-in fade-in slide-in-from-bottom-3 text-4xl leading-[1.1] font-semibold tracking-tight text-ink duration-700 sm:text-6xl delay-100 fill-mode-backwards">
           Postmortems that{" "}
           <span className="bg-gradient-to-r from-accent to-accent/60 bg-clip-text text-transparent">
             cite their evidence.
           </span>
         </h1>
-        <p className="mx-auto mt-5 max-w-xl text-lg text-muted">
+        <p className="mx-auto mt-5 max-w-xl animate-in fade-in slide-in-from-bottom-3 text-lg text-muted duration-700 delay-200 fill-mode-backwards">
           Record what actually happened during an incident. Get an AI-drafted postmortem where every claim points
           back to a real, recorded entry — anything the evidence doesn&apos;t support is marked unsupported, never
           invented.
         </p>
-        <div className="mt-9 flex flex-wrap items-center justify-center gap-x-4 gap-y-3">
-          <a href="#get-started" className={cn(buttonVariants({ size: "lg" }), "h-auto px-7 py-3 text-sm shadow-lg shadow-accent/10")}>
+        <div className="mt-9 flex animate-in fade-in slide-in-from-bottom-3 flex-wrap items-center justify-center gap-x-4 gap-y-3 duration-700 delay-300 fill-mode-backwards">
+          <a
+            href="#get-started"
+            className={cn(
+              buttonVariants({ size: "lg" }),
+              "h-auto px-7 py-3 text-sm shadow-lg shadow-accent/10 transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-accent/20",
+            )}
+          >
             Get started — first postmortem free
           </a>
           <Link href="/postmortems" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
@@ -72,7 +81,7 @@ export function Hero() {
 // /postmortems are for).
 export function GroundingExample() {
   return (
-    <div className="mx-auto max-w-3xl px-4 pb-8">
+    <div className="mx-auto max-w-3xl animate-in fade-in slide-in-from-bottom-2 px-4 pb-8 duration-700">
       <Card className="overflow-hidden border-line py-0 shadow-sm">
         <div className="border-b border-line bg-paper/60 px-6 py-3.5">
           <div className="text-xs font-medium tracking-widest text-muted uppercase">
@@ -87,15 +96,26 @@ export function GroundingExample() {
             </p>
             <p className="mt-2.5 rounded-md bg-paper px-3.5 py-3 font-mono text-[13px] leading-relaxed text-ink">
               &ldquo;Latency rose from 180ms to 4200ms starting 14:04 UTC, correlated with deploy #482.
-              <span className="ml-1 rounded bg-accent/10 px-1 py-0.5 text-accent">[2]</span>&rdquo;
+              {/* The citation "stamps in" after the sentence has already
+                  landed -- visualizing that the check happens to a claim
+                  the model already made, not before it, matching how
+                  ground_draft() actually works (verify, then keep/replace). */}
+              <span className="ml-1 inline-block animate-in zoom-in-50 rounded bg-accent/10 px-1 py-0.5 text-accent duration-500 delay-600 fill-mode-backwards">
+                [2]
+              </span>
+              &rdquo;
             </p>
           </div>
           <div className="px-6 py-5">
             <p className="flex items-center gap-1.5 text-xs font-medium text-red-600">
-              <XCircle className="size-3.5" />
+              <XCircle className="size-3.5 animate-in zoom-in-50 spin-in-45 duration-500 delay-600 fill-mode-backwards" />
               Dropped — no citation exists
             </p>
-            <p className="mt-2.5 rounded-md bg-paper px-3.5 py-3 font-mono text-[13px] leading-relaxed text-muted italic">
+            {/* Same beat as the kept side: the fixed marker only appears
+                after the same ~600ms "checking" delay, not instantly --
+                the one thing that should NOT feel instant here, since the
+                whole point is that a real check happened first. */}
+            <p className="mt-2.5 animate-in fade-in rounded-md bg-paper px-3.5 py-3 font-mono text-[13px] leading-relaxed text-muted italic duration-500 delay-600 fill-mode-backwards">
               &ldquo;Not established by the recorded evidence.&rdquo;
             </p>
             <p className="mt-2 text-xs text-muted">
@@ -131,7 +151,11 @@ export function HowItWorks() {
     <div className="mx-auto max-w-3xl px-4 py-8">
       <div className="grid gap-4 sm:grid-cols-3">
         {steps.map((step, i) => (
-          <Card key={step.title} className="border-line shadow-sm transition-shadow hover:shadow-md">
+          <Card
+            key={step.title}
+            style={{ animationDelay: `${i * 120}ms` }}
+            className="animate-in fade-in slide-in-from-bottom-3 border-line shadow-sm fill-mode-backwards transition-[transform,box-shadow] duration-300 hover:-translate-y-1 hover:shadow-md"
+          >
             <CardContent>
               <div className="flex items-center gap-2.5">
                 <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent/10 text-xs font-semibold text-accent">
@@ -161,8 +185,12 @@ export function WhatThisIsnt() {
     <div className="mx-auto max-w-3xl px-4 pt-4 pb-20">
       <div className="text-xs font-medium tracking-widest text-muted uppercase">What this isn&apos;t</div>
       <ul className="mt-3 space-y-2.5">
-        {notes.map((item) => (
-          <li key={item} className="flex items-start gap-2.5 text-sm text-muted">
+        {notes.map((item, i) => (
+          <li
+            key={item}
+            style={{ animationDelay: `${i * 80}ms` }}
+            className="flex animate-in fade-in slide-in-from-bottom-1 items-start gap-2.5 text-sm text-muted fill-mode-backwards duration-500"
+          >
             <XCircle className="mt-0.5 size-3.5 shrink-0 text-line" />
             {item}
           </li>

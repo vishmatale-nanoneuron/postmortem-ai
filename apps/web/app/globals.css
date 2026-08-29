@@ -165,3 +165,21 @@
     @apply font-sans;
   }
 }
+
+/* tw-animate-css was imported (line 2) but nothing in the app actually used
+   it until the landing page's entrance/verification motion below --
+   confirmed by grepping the whole app tree for animate-in before adding
+   any. Respecting prefers-reduced-motion here rather than per-component:
+   forces every animation-driven utility to finish instantly and removes
+   transitions, so a user who's asked their OS for reduced motion gets a
+   fully static page regardless of which component added the animation. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
