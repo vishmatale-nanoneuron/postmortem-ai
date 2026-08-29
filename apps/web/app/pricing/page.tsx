@@ -5,6 +5,7 @@ export const metadata: Metadata = {
   title: "Pricing",
   description: "PostMortem AI pricing: ₹999/month via UPI in India, or a SWIFT wire in USD/GBP/EUR internationally.",
   robots: { index: true, follow: true },
+  alternates: { canonical: "/pricing" },
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";

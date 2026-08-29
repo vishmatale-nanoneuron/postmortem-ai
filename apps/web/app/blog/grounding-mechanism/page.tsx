@@ -6,6 +6,7 @@ export const metadata: Metadata = {
   description:
     "The two-layer mechanism behind every AI-drafted postmortem: cited generation, then independent code-level verification of every citation before anything is stored.",
   robots: { index: true, follow: true },
+  alternates: { canonical: "/blog/grounding-mechanism" },
 };
 
 const card = "rounded-lg border border-line bg-white p-5 shadow-sm mb-4";

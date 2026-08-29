@@ -32,13 +32,14 @@ async function fetchPostmortem(slug: string): Promise<PublicPostmortem | null> {
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
   const postmortem = await fetchPostmortem(slug);
-  if (!postmortem) return { title: "Postmortem not found" };
+  if (!postmortem) return { title: "Postmortem not found", robots: { index: false, follow: false } };
 
   const title = `${postmortem.incident_title} — Postmortem`;
   return {
     title,
     description: postmortem.summary,
     robots: { index: true, follow: true },
+    alternates: { canonical: `/postmortems/${slug}` },
     openGraph: { title, description: postmortem.summary, type: "article", url: `https://www.nanoneuron.ai/postmortems/${slug}` },
   };
 }

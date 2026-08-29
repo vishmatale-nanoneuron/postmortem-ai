@@ -14,7 +14,15 @@ export const metadata: Metadata = {
   title: { default: TITLE, template: "%s — PostMortem AI" },
   description: DESCRIPTION,
   robots: { index: true, follow: true },
-  alternates: { canonical: "/" },
+  // No blanket canonical here -- every real indexable page below sets its
+  // own. A root-level default of "/" was silently applied to every page
+  // that didn't override it (confirmed live: /docs, /pricing, and the new
+  // /blog page were all emitting <link rel="canonical" href=".../"> --
+  // telling search engines every one of them was a duplicate of the
+  // homepage, not indexable content, likely suppressing them from ranking
+  // independently since whenever this was first deployed). Leaving this
+  // unset means a future page that forgets its own canonical gets none
+  // (neutral) rather than a silently wrong one (actively harmful).
   openGraph: {
     title: TITLE,
     description:

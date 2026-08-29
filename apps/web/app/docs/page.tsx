@@ -6,6 +6,7 @@ export const metadata: Metadata = {
   description:
     "How PostMortem AI actually works: grounded drafting, RAG over past incidents, MCP tools, payments, and the security measures in place.",
   robots: { index: true, follow: true },
+  alternates: { canonical: "/docs" },
 };
 
 const card = "rounded-lg border border-line bg-white p-5 shadow-sm mb-4";

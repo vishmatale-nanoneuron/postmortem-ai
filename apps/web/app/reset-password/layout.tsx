@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 // reset token in the query string -- never meant to be indexed or
 // crawled, unlike the marketing/docs pages this app otherwise wants found.
 export const metadata: Metadata = {
-  title: "Reset password — PostMortem AI",
+  title: "Reset password",
   robots: { index: false, follow: false },
 };
 
