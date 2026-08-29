@@ -212,3 +212,62 @@ async def test_stripe_routes_503_when_unconfigured(context) -> None:
     await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
 
     assert (await client.post("/v1/billing/checkout")).status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_approving_an_already_approved_claim_is_refused(context) -> None:
+    # Regression test: approve_payment_claim used to run unconditionally --
+    # a second approve on an already-approved claim silently re-ran
+    # activate_manual_subscription (resetting current_period_end to a fresh
+    # 30 days from the second call's own timestamp) and appended a
+    # duplicate "approved" event, with no error to signal anything was off.
+    client, database, application = context
+    await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+    claim = await client.post("/v1/billing/upi/claim", json={"reference": "UTR-DOUBLE-APPROVE"})
+    claim_id = claim.json()["id"]
+
+    async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as founder_client:
+        await founder_client.post(
+            "/v1/auth/register", json={"email": FOUNDER_EMAIL, "password": "correct-horse-battery"}
+        )
+        first = await founder_client.post(f"/v1/founder/payment-claims/{claim_id}/approve")
+        assert first.status_code == 200, first.text
+        period_end_after_first = (
+            await database.fetch_one("SELECT current_period_end FROM users WHERE email=%s", (CLIENT_EMAIL,))
+        )["current_period_end"]
+
+        second = await founder_client.post(f"/v1/founder/payment-claims/{claim_id}/approve")
+        assert second.status_code == 409, second.text
+
+    # The period end from the first, real approval must be untouched -- a
+    # silently-accepted second approve would have pushed it further out.
+    period_end_now = (
+        await database.fetch_one("SELECT current_period_end FROM users WHERE email=%s", (CLIENT_EMAIL,))
+    )["current_period_end"]
+    assert period_end_now == period_end_after_first
+
+
+@pytest.mark.asyncio
+async def test_rejecting_an_already_approved_claim_is_refused(context) -> None:
+    # Regression test: reject_payment_claim used to run unconditionally too
+    # -- rejecting an already-approved claim would mark it 'rejected' in the
+    # ledger while the access it already granted kept running untouched,
+    # since nothing in this codebase revokes a manually-granted subscription.
+    client, database, application = context
+    await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+    claim = await client.post("/v1/billing/upi/claim", json={"reference": "UTR-APPROVE-THEN-REJECT"})
+    claim_id = claim.json()["id"]
+
+    async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as founder_client:
+        await founder_client.post(
+            "/v1/auth/register", json={"email": FOUNDER_EMAIL, "password": "correct-horse-battery"}
+        )
+        approved = await founder_client.post(f"/v1/founder/payment-claims/{claim_id}/approve")
+        assert approved.status_code == 200, approved.text
+
+        rejected = await founder_client.post(f"/v1/founder/payment-claims/{claim_id}/reject")
+        assert rejected.status_code == 409, rejected.text
+
+    row = await database.fetch_one("SELECT status FROM payment_claims WHERE id=%s", (claim_id,))
+    assert row is not None
+    assert row["status"] == "approved"

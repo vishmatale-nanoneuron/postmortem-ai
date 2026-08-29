@@ -153,6 +153,16 @@ async def approve_payment_claim(
     claim = await database.fetch_one(f"{_CLAIM_SELECT} WHERE c.id=%s", (claim_id,))
     if not claim:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    # Same invariant billing.py already enforces client-side (update_my_claim/
+    # cancel_my_claim: "only a pending claim can be edited/cancelled") --
+    # this side never had the equivalent guard. Without it, approving an
+    # already-approved or already-rejected claim silently re-runs
+    # activate_manual_subscription (resetting current_period_end to a fresh
+    # 30 days from now) and appends a duplicate "approved" event, with no
+    # error to signal anything was off -- a double-click or two open founder
+    # dashboard tabs could grant an unintended free extension.
+    if claim["status"] != "pending":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only a pending claim can be approved")
 
     now = int(time.time() * 1000)
     async with database.transaction() as tx:
@@ -180,6 +190,17 @@ async def reject_payment_claim(
     claim = await database.fetch_one(f"{_CLAIM_SELECT} WHERE c.id=%s", (claim_id,))
     if not claim:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    # Same reasoning as approve_payment_claim above -- and more important
+    # here: there is no code path anywhere in this codebase that revokes a
+    # manually-granted subscription (confirmed by grep for every
+    # subscription_status='...' write site). Rejecting an already-approved
+    # claim would mark it 'rejected' in the ledger while the access it
+    # already granted keeps running untouched until natural expiry --
+    # a real, misleading gap between what the claim's status says and what
+    # access the account actually has. Refusing the transition here at
+    # least makes that gap visible instead of silent.
+    if claim["status"] != "pending":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only a pending claim can be rejected")
 
     now = int(time.time() * 1000)
     await database.execute(
