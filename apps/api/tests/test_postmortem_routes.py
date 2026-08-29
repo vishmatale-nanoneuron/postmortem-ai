@@ -13,7 +13,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from app.api.v1.postmortems import slugify
-from app.services.postmortem import PROMPT_VERSION
+from app.services.postmortem import EXTRACTION_PROMPT_VERSION, PROMPT_VERSION
 from httpx import ASGITransport, AsyncClient
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
@@ -280,7 +280,7 @@ async def test_extraction_records_an_ai_run(context) -> None:
         (INCIDENT,),
     )
     assert run["status"] == "succeeded"
-    assert run["prompt_version"] == "extract-v1"
+    assert run["prompt_version"] == EXTRACTION_PROMPT_VERSION
 
 
 @pytest.mark.asyncio
