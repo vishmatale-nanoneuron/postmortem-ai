@@ -1,0 +1,200 @@
+# PostMortem AI — full reference
+
+Canonical product: https://www.nanoneuron.ai/
+Short index: https://www.nanoneuron.ai/llms.txt
+Docs: https://www.nanoneuron.ai/docs
+Grounding mechanism (long form): https://www.nanoneuron.ai/blog/grounding-mechanism
+Contact: vish.matale@gmail.com
+Last factual review: 2026-08-28
+
+This file is the complete reference; llms.txt above is the short index. Every
+claim here is checked against the running code and, where practical, against
+live production behavior as of the review date — not a roadmap or an
+aspirational description. If this file and the running product ever disagree,
+the running product is correct and this file is stale.
+
+## What this is
+
+A single-account incident postmortem tool: record evidence about an incident
+as it unfolds, generate an AI-drafted postmortem grounded in that evidence,
+publish it once a named human approves. Each account is one person's own
+incidents — no shared organizations, teams, or roles yet.
+
+## Architecture
+
+- Backend: FastAPI (Python), deployed as a Vercel serverless function.
+- Frontend: Next.js App Router (React), deployed to Vercel.
+- Database: PostgreSQL (Supabase), accessed via a connection pool; pooled
+  (`:6543`) connections disable server-side prepared statements to avoid a
+  transaction-pooler incompatibility.
+- AI: Gemini (`gemini-2.5-flash` by default for drafting/extraction,
+  configurable via `GEMINI_MODEL`; `gemini-embedding-001`
+  for RAG embeddings at 768 dimensions, matching the `vector(768)` column).
+  Claude is a real, configured fallback provider (not just described), used
+  only when Gemini's own call fails or its circuit breaker is open — each
+  provider has its own independent circuit breaker (closed/open/half-open).
+- 20 forward-only SQL migrations as of this review.
+
+## The core guarantee: grounded drafting
+
+Two independent layers, not one unsupervised model call:
+
+1. The drafting model receives the incident's evidence entries, numbered, and
+   is instructed (system prompt, verbatim rules): every claim must cite an
+   entry number; an unsupported section should be left empty/uncited rather
+   than inferred; never estimate cost, revenue, or customer counts not stated
+   in the evidence; never invent dates, deadlines, or names; never recommend
+   an action the evidence doesn't support; retrieved similar past incidents
+   (RAG, below) are reference-only and must never be cited.
+2. Code — not a second model call — independently re-verifies every citation
+   against the real evidence list before anything is persisted. An invalid
+   citation (missing, out of range, wrong type) causes that claim to be
+   replaced with the fixed marker `"Not established by the recorded
+   evidence."` for the four required sections (summary, root_cause,
+   detection, resolution), or dropped entirely for optional lists
+   (contributing_factors, actions). This step can only remove or replace the
+   model's own text — it has no path to add new text of its own.
+
+Verified live, deliberately adversarially, not just on the happy path: a
+draft built from genuinely vague evidence ("things felt slow... got better
+later") correctly returned the literal `root_cause` marker rather than
+inventing a cause, and every other field stayed strictly within the vague
+language actually given — no fabricated numbers, dates, or causes. Drafting
+with zero evidence entries is refused outright (409) rather than attempted.
+
+Publishing requires a named human approval; `incident_postmortems` has a
+database `CHECK` constraint that a row cannot be marked `published` without
+both `approved_by` and `approved_at` set — enforced at the schema level, not
+just by application code or a UI convention.
+
+## RAG (similar past incidents)
+
+When drafting, the account's own previously *published* postmortems that are
+semantically similar to the current incident are retrieved via cosine
+similarity over embeddings and shown to the model as labeled reference
+context — never numbered, never citable. The citation-verification step only
+ever checks against the current incident's own numbered evidence, so a
+retrieved past incident structurally cannot become the source for a claim,
+regardless of what the model outputs.
+
+## Evidence model
+
+Each evidence entry has: `source` (a fixed type category — `alert`, `log`,
+`deploy`, `metric`, `human_note`, or `customer_report`; not a vendor/tool
+name), `summary` (required), `detail` (optional), `occurred_at` (epoch
+milliseconds), and is attributed to whoever/whatever recorded it (a signed-in
+user, or `"webhook"` for automated ingestion). Incidents have a `severity` of
+`sev1`–`sev4` and a `status` of `open`/`resolved`.
+
+## Webhook ingestion
+
+Every account has a real, rotatable per-account token
+(`GET /v1/webhooks/token`, `POST /v1/webhooks/token/rotate` — rotating
+immediately invalidates every URL built with the old token). Posting to
+`/v1/webhooks/incidents/{token}` either appends to an existing open incident
+(if `incident_id` is given and belongs to the caller) or creates a new one —
+the same write path and paywall as the authenticated app, just authenticated
+by token instead of session cookie. Rate-limited to 100 events/hour per
+account. Deliberately generic (no named parsing for Datadog, PagerDuty, etc.)
+— put the sending tool's name in `summary`/`detail`.
+
+## MCP
+
+The backend exposes a real MCP server (`/mcp` on the API; federated to
+`/api/mcp` on the frontend under the caller's own session) with tools for
+founders (platform summary, payment-claim review, a defense-in-depth
+read-only SQL tool) and clients (incidents, evidence, drafting, publishing,
+similar-incident search) — the same business logic and authorization as the
+REST endpoints below, not a parallel implementation.
+
+## REST API surface (all under `/v1`)
+
+Auth (`/v1/auth`): `POST /register`, `POST /login`, `POST /logout`,
+`GET /me`, `PUT /me`, `PATCH /me`, `DELETE /me` (founder account cannot
+self-delete), `POST /password-reset/request`, `POST /password-reset/confirm`,
+`GET /captcha-config`, `GET /session-token`.
+
+Incidents & postmortems (`/v1/postmortems`): `POST /incidents`,
+`GET /incidents`, `GET /incidents/{id}`, `PATCH /incidents/{id}/status`,
+`GET /summary`, `POST /incidents/{id}/evidence`,
+`GET /incidents/{id}/evidence`, `POST /incidents/{id}/evidence/extract`
+(AI-assisted extraction from pasted raw text), `POST /incidents/{id}/draft`,
+`POST /incidents/{id}/publish`, `PATCH /incidents/{id}/public`,
+`GET /public` (list published+public postmortems), `GET /public/{slug}`.
+
+Billing (`/v1/billing`): `POST /checkout`, `POST /portal`, `GET /status`,
+`GET /card/pricing`, `POST /webhook` (Stripe, signature-verified),
+`GET /upi/pricing` (public), `GET /upi/info` (founder-only — real UPI ID is
+never given to a client account, by design; a client is told to contact the
+founder directly), `POST /upi/claim`, `GET /upi/claims`,
+`GET /wire/pricing` (public), `GET /wire/info` (founder-only, same reasoning),
+`POST /wire/claim`, `GET /wire/claims`, `PATCH /claims/{id}` (edit a
+still-pending claim's reference), `DELETE /claims/{id}` (withdraw a
+still-pending claim), `POST /bank-alert` (inbound webhook for a forwarded
+real bank credit alert — verifies a claim's reference against a real bank
+alert but never itself grants access; only a founder's explicit approval
+does that).
+
+Webhooks (`/v1/webhooks`): `GET /token`, `POST /token/rotate`,
+`POST /incidents/{token}`.
+
+Integrations (`/v1/integrations`): `GET ""`, `PUT ""` (Slack webhook URL,
+Linear API key/team ID — best-effort notifications on publish, never block
+the publish response on failure).
+
+Founder-only (`/v1/founder`): `GET /summary`, `GET /payment-claims`,
+`POST /payment-claims/{id}/approve`, `POST /payment-claims/{id}/reject`,
+`POST /payment-claims/{id}/annotate`, `GET /payment-claims/{id}/events`.
+
+## Auth model
+
+Session cookie, HMAC-signed. `current_user` (401 if absent/invalid) vs
+`current_founder` (403 if signed in but not the configured founder email) are
+distinct dependencies — a request with no session gets 401; a real, signed-in
+non-founder account hitting a founder-only route gets 403. Login is
+rate-limited per account and per IP; registration and password-reset requests
+are separately rate-limited by IP; drafting and incident creation are
+rate-limited per account (the AI-cost-incurring actions). Registration/login
+can require a Cloudflare Turnstile CAPTCHA when configured. Login and
+password-reset both give an identical, generic failure message regardless of
+whether the account exists — deliberately, to prevent account enumeration.
+
+## Payments
+
+One incident is fully usable for free — evidence, AI extraction, drafting —
+with no card. Publishing and creating a second incident require an active
+subscription. Three real paths: (1) Stripe Checkout, self-serve, instant
+activation on webhook receipt, cancel/manage via the Stripe Customer Portal;
+(2) manual UPI (India), founder-reviewed; (3) manual international SWIFT
+wire, founder-reviewed. Manual claims are matched to real bank alerts
+automatically (verification only — a founder's explicit approval is the only
+thing that ever activates access, regardless of automated verification).
+Every real payment endpoint verifies against the provider's own record
+(amount, currency, signature, captured status), never against
+frontend-supplied state.
+
+## What this doesn't do
+
+- Auto-publish anything — always a deliberate, named human action.
+- Estimate cost, revenue, or customer-impact figures the evidence didn't
+  state — the system prompt explicitly forbids it.
+- Vendor-specific webhook parsing for any named monitoring tool.
+- Support multiple people, teams, or roles on one account.
+- Claim any measured quality score, uptime percentage, or customer count
+  that hasn't actually been measured — this file states architecture and
+  verified behavior, not marketing figures.
+
+## Access & discovery
+
+Public marketing/docs/published-postmortem pages are meant to be indexed;
+every account-scoped page requires authentication and is not meant to be
+crawled as public data. No API keys, credentials, or account-specific data
+are ever exposed in this file or any public page.
+
+## Commercial scope
+
+Active MVP under continued single-developer development, not a finished
+commercial product with support SLAs. Capabilities described here reflect
+what is actually implemented and, where noted, actually verified live, as of
+the review date above — re-verify against the running product if this file
+is more than a few weeks old.

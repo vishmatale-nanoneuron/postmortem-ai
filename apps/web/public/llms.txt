@@ -2,8 +2,9 @@
 
 Canonical product: https://www.nanoneuron.ai/
 Docs: https://www.nanoneuron.ai/docs
+Full reference (API surface, architecture, verified behavior): https://www.nanoneuron.ai/llms-full.txt
 Contact: vish.matale@gmail.com
-Last factual review: 2026-08-27
+Last factual review: 2026-08-28
 
 ## What this is
 
