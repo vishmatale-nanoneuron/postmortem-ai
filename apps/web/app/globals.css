@@ -163,6 +163,13 @@
   }
   html {
     @apply font-sans;
+    /* The hero's "Get started" link (and pricing's) jumps to #get-started
+       via a plain hash anchor -- confirmed no scroll-behavior was set
+       anywhere as a base default, so that jump was instant, not smooth.
+       The prefers-reduced-motion rule below already forces this back to
+       auto for anyone who's asked for it; there was just nothing for that
+       override to actually override. */
+    scroll-behavior: smooth;
   }
 }
 
