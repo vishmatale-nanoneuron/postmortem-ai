@@ -84,6 +84,25 @@ def create_app() -> FastAPI:
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # Confirmed live in production before this fix: every route --
+        # /v1/auth/me, /v1/billing/status, /v1/founder/summary included --
+        # was served with Vercel's own default `Cache-Control: public,
+        # max-age=0, must-revalidate` and no `Vary` header at all, since
+        # nothing in this app ever set its own Cache-Control. `public` with
+        # no Vary means a shared cache (a CDN, a corporate proxy) is
+        # technically permitted to store and later serve one caller's
+        # session-cookie-authenticated response to a different caller,
+        # relying entirely on every intermediary correctly honoring
+        # must-revalidate with no validator present -- not something to
+        # trust platform defaults for on founder/client session data.
+        # Force the unambiguous, correct policy on every response instead:
+        # never cached, never shared, always fetched fresh from this
+        # origin. Public, genuinely cacheable data (pricing, published
+        # postmortems) is served by the Next.js frontend's own routes with
+        # their own explicit revalidate windows, not this API directly, so
+        # there's no real caching benefit being given up here.
+        response.headers["Cache-Control"] = "private, no-store, must-revalidate"
+        response.headers["Vary"] = "Cookie"
         return response
 
     app.include_router(auth_router)
