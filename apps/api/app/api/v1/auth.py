@@ -12,9 +12,9 @@ from ...dependencies import get_database
 from ...security.captcha import verify_turnstile
 from ...security.passwords import hash_password, verify_password
 from ...security.rate_limit import (
+    LoginRateLimited,
     client_ip,
-    is_login_rate_limited,
-    record_login_attempt,
+    login_attempt_slot,
     try_record_password_reset_attempt,
     try_record_registration_attempt,
 )
@@ -159,6 +159,11 @@ async def register(
         logger.warning("founder_email_registration_succeeded")
 
     now = int(time.time() * 1000)
+    # hash_password is the same blocking scrypt KDF as verify_password --
+    # run_in_threadpool for the same reason (a genuine CPU-bound call
+    # directly inside an async route blocks the whole worker, not just this
+    # request).
+    password_hash = await run_in_threadpool(hash_password, payload.password)
     row = await database.fetch_one(
         # webhook_token generated the same way migration 0019's backfill
         # generates one for pre-existing accounts -- every account has a
@@ -167,7 +172,7 @@ async def register(
         """INSERT INTO users (email, password_hash, created_at, webhook_token)
            VALUES (%s, %s, %s, encode(gen_random_bytes(24), 'hex'))
            RETURNING id::text, email, subscription_status, current_period_end, free_incident_id""",
-        (payload.email, hash_password(payload.password), now),
+        (payload.email, password_hash, now),
     )
     assert row is not None
     token = issue_token(settings.session_secret, row["id"], row["email"])
@@ -186,17 +191,26 @@ async def login(
     ip = client_ip(request)
     if not await verify_turnstile(settings.turnstile_secret_key, payload.captcha_token, ip):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=CAPTCHA_FAILURE_DETAIL)
-    if await is_login_rate_limited(database, payload.email, ip):
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
 
     row = await database.fetch_one(
         "SELECT id::text, email, password_hash, subscription_status, current_period_end, free_incident_id FROM users WHERE email=%s",
         (payload.email,),
     )
     stored_hash = row["password_hash"] if row else _DECOY_HASH
-    password_matches = verify_password(payload.password, stored_hash)
-    succeeded = bool(row) and password_matches
-    await record_login_attempt(database, payload.email, ip, succeeded)
+    try:
+        async with login_attempt_slot(database, payload.email, ip) as record:
+            # verify_password is scrypt -- a real, deliberately-slow
+            # CPU-bound KDF, not I/O. Calling it directly here would block
+            # this worker's whole event loop for the duration of every
+            # single login attempt; run_in_threadpool is the correct fix
+            # for a genuinely blocking call, the same reasoning already
+            # applied to Stripe/Resend elsewhere in this file, CPU-bound
+            # rather than I/O-bound this time.
+            password_matches = await run_in_threadpool(verify_password, payload.password, stored_hash)
+            succeeded = bool(row) and password_matches
+            await record(succeeded)
+    except LoginRateLimited as error:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL) from error
     if not succeeded:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=LOGIN_FAILURE_DETAIL)
 
@@ -285,7 +299,7 @@ async def _apply_account_update(
         values.append(email)
     if password is not None:
         fields.append("password_hash=%s")
-        values.append(hash_password(password))
+        values.append(await run_in_threadpool(hash_password, password))
     values.append(user.id)
 
     row = await database.fetch_one(
@@ -431,8 +445,9 @@ async def confirm_password_reset(
     if reset_payload is None or reset_payload.user_id != row["id"]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset link")
 
+    new_password_hash = await run_in_threadpool(hash_password, payload.new_password)
     await database.execute(
-        "UPDATE users SET password_hash=%s WHERE id=%s", (hash_password(payload.new_password), row["id"])
+        "UPDATE users SET password_hash=%s WHERE id=%s", (new_password_hash, row["id"])
     )
     logger.info("password_reset_completed")
     return {"ok": True}

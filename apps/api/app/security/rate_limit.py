@@ -1,4 +1,6 @@
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 
 from fastapi import Request
 
@@ -27,29 +29,62 @@ def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-async def is_login_rate_limited(database: Database, email: str, ip: str) -> bool:
-    now = int(time.time() * 1000)
-    email_failures = await database.fetch_one(
-        """SELECT count(*) AS n FROM login_attempts
-           WHERE email=%s AND succeeded=false AND created_at > %s""",
-        (email, now - EMAIL_WINDOW_MS),
-    )
-    if email_failures and email_failures["n"] >= MAX_FAILED_ATTEMPTS_PER_EMAIL:
-        return True
-
-    ip_failures = await database.fetch_one(
-        """SELECT count(*) AS n FROM login_attempts
-           WHERE ip=%s AND succeeded=false AND created_at > %s""",
-        (ip, now - IP_WINDOW_MS),
-    )
-    return bool(ip_failures and ip_failures["n"] >= MAX_FAILED_ATTEMPTS_PER_IP)
+class LoginRateLimited(Exception):
+    """Raised by login_attempt_slot when the email or IP is already over
+    its limit -- callers turn this into a 429."""
 
 
-async def record_login_attempt(database: Database, email: str, ip: str, succeeded: bool) -> None:
-    await database.execute(
-        "INSERT INTO login_attempts (email, ip, succeeded, created_at) VALUES (%s, %s, %s, %s)",
-        (email, ip, succeeded, int(time.time() * 1000)),
-    )
+@asynccontextmanager
+async def login_attempt_slot(database: Database, email: str, ip: str) -> AsyncIterator[Callable[[bool], Awaitable[None]]]:
+    """Replaces the old is_login_rate_limited()+record_login_attempt() pair,
+    which had exactly the TOCTOU race try_record_action's own docstring
+    describes for a different endpoint, applied here to login itself: the
+    rate-limit check (a SELECT count) and the outcome record (a separate
+    INSERT, after a real password verification in between) were two
+    non-atomic operations. A burst of concurrent login requests for the
+    SAME email would all run the SELECT before any of their INSERTs
+    committed, so all of them would see "under the limit" and all proceed
+    to a real password check -- an attacker sending N concurrent guesses
+    gets all N checked against the real hash, not capped at
+    MAX_FAILED_ATTEMPTS_PER_EMAIL like a sequential attacker would be.
+    Exactly the primary defense this whole module exists for, silently not
+    holding under concurrency.
+
+    Fixed the same way as try_record_action: a Postgres advisory lock (one
+    for the email, one for the IP) held for the entire check-verify-record
+    sequence, not just the check. A concurrent request for the same email
+    can't even run its own count check until the previous one's INSERT has
+    committed and the lock released -- true serialization per (email, ip),
+    not just an atomic single query. Yields a `record(succeeded)` callback
+    instead of doing the insert itself, since the real outcome is only
+    known after the caller verifies the password in between.
+    """
+    async with database.transaction() as tx:
+        await tx.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"login:email:{email}",))
+        await tx.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"login:ip:{ip}",))
+        now = int(time.time() * 1000)
+        email_failures = await tx.fetch_one(
+            """SELECT count(*) AS n FROM login_attempts
+               WHERE email=%s AND succeeded=false AND created_at > %s""",
+            (email, now - EMAIL_WINDOW_MS),
+        )
+        if email_failures and email_failures["n"] >= MAX_FAILED_ATTEMPTS_PER_EMAIL:
+            raise LoginRateLimited()
+        ip_failures = await tx.fetch_one(
+            """SELECT count(*) AS n FROM login_attempts
+               WHERE ip=%s AND succeeded=false AND created_at > %s""",
+            (ip, now - IP_WINDOW_MS),
+        )
+        if ip_failures and ip_failures["n"] >= MAX_FAILED_ATTEMPTS_PER_IP:
+            raise LoginRateLimited()
+
+        async def record(succeeded: bool) -> None:
+            await tx.execute(
+                "INSERT INTO login_attempts (email, ip, succeeded, created_at) VALUES (%s, %s, %s, %s)",
+                (email, ip, succeeded, int(time.time() * 1000)),
+            )
+
+        yield record
 
 
 # Registration had no rate limiting at all before this -- creating an
