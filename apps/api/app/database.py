@@ -117,9 +117,12 @@ class Database:
                 async with connection.transaction():
                     # read-only blocks a write, but not an expensive-to-
                     # compute SELECT (pg_sleep, a runaway join, ...) -- and
-                    # the pool is only max_size=5, so one or two such
-                    # queries would starve every other request, not just
-                    # this tool's caller. SET LOCAL scopes the timeout to
+                    # the pool is max_size=3 when pooled (production's real
+                    # case, per _uses_transaction_pooler above -- this
+                    # comment previously said 5, the non-pooled value, which
+                    # overstated real production headroom), so one or two
+                    # such queries would starve every other request, not
+                    # just this tool's caller. SET LOCAL scopes the timeout to
                     # this transaction only; it reverts automatically at
                     # commit/rollback, no manual reset needed.
                     await connection.execute("SET LOCAL statement_timeout = '5s'")

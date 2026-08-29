@@ -3,6 +3,25 @@
 // has CORS enabled for this origin via Settings.cors_origins).
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 
+// FastAPI's own validation errors (422s) shape `detail` as an array of
+// {type, loc, msg} objects, not a string -- every other error response in
+// this app uses a plain string detail. `new Error(anArray)` stringifies via
+// Array.prototype.toString(), which calls each object's own toString():
+// the user would see the literal text "[object Object]" instead of the
+// real validation reason. Confirmed directly (not assumed) before fixing:
+// `new Error([{type:"string_too_short", ...}]).message` really is
+// "[object Object]" in Node.
+export function readableDetail(detail: unknown): string | null {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => (item && typeof item === "object" && "msg" in item ? String((item as { msg: unknown }).msg) : null))
+      .filter((msg): msg is string => msg !== null);
+    return messages.length > 0 ? messages.join("; ") : null;
+  }
+  return null;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -11,7 +30,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail ?? `Request failed: ${response.status}`);
+    throw new Error(readableDetail(body.detail) ?? `Request failed: ${response.status}`);
   }
   return response.json() as Promise<T>;
 }
@@ -167,7 +186,7 @@ export const billing = {
     const response = await fetch(`${API_BASE}/v1/billing/claims/${claimId}`, { method: "DELETE", credentials: "include" });
     if (!response.ok && response.status !== 204) {
       const body = await response.json().catch(() => ({}));
-      throw new Error(body.detail ?? `Request failed: ${response.status}`);
+      throw new Error(readableDetail(body.detail) ?? `Request failed: ${response.status}`);
     }
   },
 };

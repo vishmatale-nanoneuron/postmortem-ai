@@ -31,7 +31,10 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./tests/setup.ts"],
-    include: ["tests/**/*.test.tsx"],
+    // .test.ts too, not just .test.tsx -- a pure-logic unit test with no
+    // JSX (readable-detail.test.ts) was silently never run under the
+    // narrower pattern, with no error or warning that it had been skipped.
+    include: ["tests/**/*.test.{ts,tsx}"],
     server: {
       deps: {
         inline: [/^react$/, /^react-dom$/, /^react-dom\//],

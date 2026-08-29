@@ -136,7 +136,8 @@ async def user_by_webhook_token(database: Database, settings: Settings, token: s
     if not token:
         return None
     row = await database.fetch_one(
-        "SELECT id::text, email, subscription_status, current_period_end FROM users WHERE webhook_token=%s",
+        "SELECT id::text, email, subscription_status, current_period_end, free_incident_id"
+        " FROM users WHERE webhook_token=%s",
         (token,),
     )
     if not row:
@@ -147,6 +148,12 @@ async def user_by_webhook_token(database: Database, settings: Settings, token: s
         is_founder=_is_founder(row["email"], settings.founder_email),
         subscription_status=row["subscription_status"],
         current_period_end=row["current_period_end"],
+        # Previously omitted -- harmless today (webhooks.py's paywall only
+        # ever checks has_active_subscription, which doesn't depend on this
+        # field), but the constructed User silently didn't match the real
+        # DB row, a latent inconsistency worth closing rather than leaving
+        # for whatever reads this object next to trip over.
+        free_incident_id=row["free_incident_id"],
     )
 
 

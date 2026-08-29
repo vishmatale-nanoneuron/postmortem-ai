@@ -1,3 +1,5 @@
+import { readableDetail } from "./api";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 
 export type AuthUser = {
@@ -19,7 +21,7 @@ async function authRequest<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail ?? `Request failed: ${response.status}`);
+    throw new Error(readableDetail(body.detail) ?? `Request failed: ${response.status}`);
   }
   return response.json() as Promise<T>;
 }
@@ -73,7 +75,7 @@ export const auth = {
     const response = await fetch(`${API_BASE}/v1/auth/me`, { method: "DELETE", credentials: "include" });
     if (!response.ok && response.status !== 204) {
       const body = await response.json().catch(() => ({}));
-      throw new Error(body.detail ?? `Request failed: ${response.status}`);
+      throw new Error(readableDetail(body.detail) ?? `Request failed: ${response.status}`);
     }
     await fetch("/api/session", { method: "DELETE" }).catch(() => {});
   },
