@@ -80,6 +80,10 @@ export default function DocsPage() {
             <Link className="underline underline-offset-2" href="/blog/grounding-mechanism">
               How postmortem drafting is grounded, mechanically
             </Link>
+            . Real, unedited output on a public incident:{" "}
+            <Link className="underline underline-offset-2" href="/blog/github-outage-demo">
+              what our tool drafted from GitHub&apos;s August 2026 outage
+            </Link>
             .
           </p>
         </>,
