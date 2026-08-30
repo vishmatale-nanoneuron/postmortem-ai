@@ -19,7 +19,14 @@ const CURRENCY_SYMBOLS: Record<string, string> = { USD: "$", GBP: "Â£", EUR: "â‚
 
 async function fetchJson<T>(path: string): Promise<T | null> {
   try {
-    const response = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
+    // UPI/wire pricing changes rarely (a manual env-var update, not a
+    // per-request value) -- `cache: "no-store"` forced a real cross-service
+    // network round-trip to the FastAPI backend on every single visit to
+    // this exact page, the one a prospect hits right before deciding to
+    // pay. 5-minute revalidation (matching the public postmortem pages'
+    // own caching window) makes repeat visits near-instant while still
+    // picking up a real pricing change within minutes, not next deploy.
+    const response = await fetch(`${API_BASE}${path}`, { next: { revalidate: 300 } });
     if (!response.ok) return null;
     return (await response.json()) as T;
   } catch {
