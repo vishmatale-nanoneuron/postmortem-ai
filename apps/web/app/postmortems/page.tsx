@@ -1,11 +1,28 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { CtaBanner } from "./cta-banner";
+
+const TITLE = "Published postmortems";
+const DESCRIPTION = "Publicly shared, evidence-grounded incident postmortems.";
 
 export const metadata: Metadata = {
-  title: "Published postmortems",
-  description: "Publicly shared, evidence-grounded incident postmortems.",
+  title: TITLE,
+  description: DESCRIPTION,
   robots: { index: true, follow: true },
   alternates: { canonical: "/postmortems" },
+  // Defining `openGraph` here replaces the root layout's entirely (Next.js
+  // doesn't deep-merge it across segments) -- previously this page defined
+  // no openGraph object at all, so it inherited none of the parent's,
+  // which for `og:title`/`og:description` meant a link to this page shared
+  // anywhere showed the homepage's own generic title, not this page's.
+  openGraph: {
+    title: TITLE,
+    description: DESCRIPTION,
+    type: "website",
+    url: "https://www.nanoneuron.ai/postmortems",
+    images: [{ url: "/opengraph-image", width: 1200, height: 630, alt: TITLE }],
+  },
+  twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/opengraph-image"] },
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
@@ -38,6 +55,8 @@ export default async function PublicPostmortemsIndex() {
           .
         </p>
       </div>
+
+      <CtaBanner />
 
       {postmortems.length === 0 ? (
         <p className="text-sm text-muted">No public postmortems yet.</p>

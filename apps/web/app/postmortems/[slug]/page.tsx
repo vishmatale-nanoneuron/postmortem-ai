@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { CtaBanner } from "../cta-banner";
+import { ShareLinks } from "../share-links";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 
@@ -36,12 +38,21 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   if (!postmortem) return { title: "Postmortem not found", robots: { index: false, follow: false } };
 
   const title = `${postmortem.incident_title} — Postmortem`;
+  const url = `https://www.nanoneuron.ai/postmortems/${slug}`;
+  // Defining `openGraph` here replaces the root layout's entirely (Next.js
+  // doesn't deep-merge it across segments) -- omitting `images` previously
+  // meant a link to this exact page, shared on Slack/X/LinkedIn, rendered
+  // with no preview image at all, silently. Reusing the site's own static
+  // OG image rather than generating one per postmortem, which would need
+  // a dynamic image route this doesn't have yet.
+  const image = { url: "/opengraph-image", width: 1200, height: 630, alt: title };
   return {
     title,
     description: postmortem.summary,
     robots: { index: true, follow: true },
     alternates: { canonical: `/postmortems/${slug}` },
-    openGraph: { title, description: postmortem.summary, type: "article", url: `https://www.nanoneuron.ai/postmortems/${slug}` },
+    openGraph: { title, description: postmortem.summary, type: "article", url, images: [image] },
+    twitter: { card: "summary_large_image", title, description: postmortem.summary, images: [image.url] },
   };
 }
 
@@ -67,15 +78,46 @@ export default async function PublicPostmortemPage({ params }: { params: Promise
   const postmortem = await fetchPostmortem(slug);
   if (!postmortem) notFound();
 
+  const url = `https://www.nanoneuron.ai/postmortems/${slug}`;
+  // TechArticle, not Article -- this is a technical incident report, and
+  // schema.org's more specific type is what search/AI answer engines
+  // actually prefer when one applies. Kept in sync with the real
+  // published fields only -- no fabricated author name (client_email is
+  // deliberately never exposed publicly, per the API's own comment on
+  // PublicPostmortemOut), never an invented organization.
+  const structuredData = {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    headline: postmortem.incident_title,
+    description: postmortem.summary,
+    url,
+    ...(postmortem.approved_at ? { datePublished: new Date(postmortem.approved_at).toISOString() } : {}),
+    publisher: { "@type": "Organization", name: "PostMortem AI", url: "https://www.nanoneuron.ai" },
+  };
+
   return (
     <main className="mx-auto max-w-2xl px-4 py-10">
-      <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 duration-700">
+      <script
+        type="application/ld+json"
+        // Static JSON built entirely from this page's own already-rendered
+        // fields, no raw user input -- safe despite dangerouslySetInnerHTML.
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+      />
+      <Link href="/postmortems" className="mb-4 inline-block text-xs text-muted underline underline-offset-2 hover:text-ink">
+        ← All postmortems
+      </Link>
+      <div className="mb-6 animate-in fade-in slide-in-from-bottom-2 duration-700">
         <div className="text-xs font-medium tracking-widest text-muted uppercase">Postmortem -- {postmortem.severity}</div>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">{postmortem.incident_title}</h1>
-        {postmortem.approved_at && (
-          <p className="mt-1 text-xs text-muted">Published {new Date(postmortem.approved_at).toLocaleDateString()}</p>
-        )}
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          {postmortem.approved_at && (
+            <p className="text-xs text-muted">Published {new Date(postmortem.approved_at).toLocaleDateString()}</p>
+          )}
+          <ShareLinks url={url} title={postmortem.incident_title} />
+        </div>
       </div>
+
+      <CtaBanner />
 
       {section(
         0,
@@ -117,6 +159,8 @@ export default async function PublicPostmortemPage({ params }: { params: Promise
             </ul>
           </>,
         )}
+
+      <CtaBanner />
 
       <p className="mt-6 text-xs text-muted">
         Every claim above is grounded to the recorded evidence for this incident --{" "}
