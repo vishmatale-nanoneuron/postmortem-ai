@@ -5,7 +5,7 @@ Short index: https://www.nanoneuron.ai/llms.txt
 Docs: https://www.nanoneuron.ai/docs
 Grounding mechanism (long form): https://www.nanoneuron.ai/blog/grounding-mechanism
 Contact: vish.matale@gmail.com
-Last factual review: 2026-08-28
+Last factual review: 2026-08-30
 
 This file is the complete reference; llms.txt above is the short index. Every
 claim here is checked against the running code and, where practical, against
@@ -33,7 +33,7 @@ incidents — no shared organizations, teams, or roles yet.
   Claude is a real, configured fallback provider (not just described), used
   only when Gemini's own call fails or its circuit breaker is open — each
   provider has its own independent circuit breaker (closed/open/half-open).
-- 20 forward-only SQL migrations as of this review.
+- 22 forward-only SQL migrations as of this review.
 
 ## The core guarantee: grounded drafting
 
@@ -189,7 +189,10 @@ automatically (verification only — a founder's explicit approval is the only
 thing that ever activates access, regardless of automated verification).
 Every real payment endpoint verifies against the provider's own record
 (amount, currency, signature, captured status), never against
-frontend-supplied state.
+frontend-supplied state. An account that drafted a real postmortem on its
+free incident and never subscribed receives exactly one automated
+reminder email, at least 24 hours after that draft — a plain link to
+pricing, never a repeat send and never a fabricated urgency claim.
 
 ## What this doesn't do
 

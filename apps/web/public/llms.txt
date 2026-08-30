@@ -4,7 +4,7 @@ Canonical product: https://www.nanoneuron.ai/
 Docs: https://www.nanoneuron.ai/docs
 Full reference (API surface, architecture, verified behavior): https://www.nanoneuron.ai/llms-full.txt
 Contact: vish.matale@gmail.com
-Last factual review: 2026-08-28
+Last factual review: 2026-08-30
 
 ## What this is
 
@@ -96,7 +96,10 @@ activates immediately, no manual step), or a manual UPI (India) /
 international SWIFT wire claim with the founder reviewing and approving
 each submitted reference. Self-serve subscription management (cancel,
 update card, view invoices) is available via the Stripe Customer Portal
-for accounts that paid by card.
+for accounts that paid by card. An account that used its free incident,
+got a real draft out of it, and never subscribed receives exactly one
+automated reminder email, at least 24 hours later -- never a repeat, and
+never a fabricated urgency claim (no countdown, no "X spots left").
 
 ## What it does not do
 
