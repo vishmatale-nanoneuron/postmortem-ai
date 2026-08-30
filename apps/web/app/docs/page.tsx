@@ -118,6 +118,20 @@ export default function DocsPage() {
       )}
 
       {section(
+        3.5,
+        <>
+          <h2 className={h2}>Automatic evidence via webhook</h2>
+          <p className={p}>
+            Every account has its own real, rotatable webhook URL -- posting JSON to it from any monitoring tool,
+            alert, script, or CI job creates a new incident or appends evidence to an existing open one, the same
+            write path and paywall as the authenticated app itself. Deliberately generic rather than
+            vendor-specific: there&apos;s no named field-mapping for any particular monitoring tool, so this works
+            with whatever your stack already sends, not just a pre-approved integration list.
+          </p>
+        </>,
+      )}
+
+      {section(
         4,
         <>
           <h2 className={h2}>Reliability</h2>
@@ -147,10 +161,12 @@ export default function DocsPage() {
         <>
           <h2 className={h2}>Payments</h2>
           <p className={p}>
-            An active subscription is required for the product&apos;s actual work (creating incidents, drafting,
-            publishing) -- viewing your own history stays available regardless. Payment today is manual and
-            human-verified: pay via UPI (India) or an international SWIFT wire, submit the transaction reference,
-            and the founder approves it. Card payments (Stripe) are built and tested but not yet live.
+            Every account gets one incident fully free -- record evidence, run AI extraction, and draft a real
+            grounded postmortem with no card required, so you can see the actual output before deciding anything.
+            Publishing it, or creating a second incident, requires an active subscription. Three real ways to pay:
+            instant self-serve card checkout via Stripe (access activates immediately, no manual step, and it&apos;s
+            self-service to cancel or update via the Stripe customer portal), or a manual UPI (India) / international
+            SWIFT wire claim with the founder reviewing and approving each submitted reference.
           </p>
         </>,
       )}
@@ -162,8 +178,12 @@ export default function DocsPage() {
           <ul className="list-disc space-y-1 pl-5 text-sm text-muted">
             <li>Doesn&apos;t auto-publish anything -- publishing is always a deliberate human action.</li>
             <li>Doesn&apos;t estimate cost, revenue, or customer-impact figures the evidence didn&apos;t state.</li>
-            <li>Doesn&apos;t integrate with PagerDuty, Datadog, or other monitoring tools yet.</li>
-            <li>Doesn&apos;t support teams or organizations yet.</li>
+            <li>
+              Doesn&apos;t have named, vendor-specific parsing for PagerDuty, Datadog, or any particular monitoring
+              tool -- the webhook above accepts a generic event shape any tool can send, not a pre-built integration
+              tested against that vendor&apos;s real payload format.
+            </li>
+            <li>Doesn&apos;t support teams or organizations yet -- each account is a single person&apos;s own incidents.</li>
           </ul>
         </>,
       )}
