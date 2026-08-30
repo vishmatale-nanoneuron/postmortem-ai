@@ -29,6 +29,8 @@ import { usePolling } from "./use-polling";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   emailOnlySchema,
   evidenceSchema,
@@ -649,32 +651,39 @@ function SubscribeGate({ hasFreeIncidentAvailable }: { hasFreeIncidentAvailable:
             ? "Create one incident, record evidence, and draft a grounded postmortem with no payment -- see the real output before you decide. Publishing it (making it a permanent, citable record) and creating a second incident both require a subscription."
             : "You've used your free postmortem. Subscribe below to publish it, or to create another incident -- your existing history stays available either way."}
       </p>
-      <div className="mb-3 flex gap-1.5">
-        {cardConfigured && (
-          <button
-            className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === "card" ? "bg-ink text-paper" : "border border-line text-muted"}`}
-            onClick={() => setTab("card")}
-            type="button"
+      <Tabs value={tab} onValueChange={(value) => setTab(value as "card" | "upi" | "wire")} className="gap-3">
+        <TabsList className="h-auto justify-start gap-1.5 rounded-none bg-transparent p-0">
+          {cardConfigured && (
+            <TabsTrigger
+              value="card"
+              className="rounded-md border border-line px-3 py-1.5 text-sm font-medium text-muted shadow-none data-active:border-ink data-active:bg-ink data-active:text-paper data-active:shadow-none"
+            >
+              Card (instant)
+            </TabsTrigger>
+          )}
+          <TabsTrigger
+            value="upi"
+            className="rounded-md border border-line px-3 py-1.5 text-sm font-medium text-muted shadow-none data-active:border-ink data-active:bg-ink data-active:text-paper data-active:shadow-none"
           >
-            Card (instant)
-          </button>
-        )}
-        <button
-          className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === "upi" ? "bg-ink text-paper" : "border border-line text-muted"}`}
-          onClick={() => setTab("upi")}
-          type="button"
-        >
-          UPI (India)
-        </button>
-        <button
-          className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === "wire" ? "bg-ink text-paper" : "border border-line text-muted"}`}
-          onClick={() => setTab("wire")}
-          type="button"
-        >
-          International wire (SWIFT)
-        </button>
-      </div>
-      {tab === "card" ? <CardPayment /> : tab === "upi" ? <UpiPayment /> : <WirePayment />}
+            UPI (India)
+          </TabsTrigger>
+          <TabsTrigger
+            value="wire"
+            className="rounded-md border border-line px-3 py-1.5 text-sm font-medium text-muted shadow-none data-active:border-ink data-active:bg-ink data-active:text-paper data-active:shadow-none"
+          >
+            International wire (SWIFT)
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="card" className="animate-in fade-in duration-300">
+          <CardPayment />
+        </TabsContent>
+        <TabsContent value="upi" className="animate-in fade-in duration-300">
+          <UpiPayment />
+        </TabsContent>
+        <TabsContent value="wire" className="animate-in fade-in duration-300">
+          <WirePayment />
+        </TabsContent>
+      </Tabs>
     </Card>
   );
 }
@@ -1836,14 +1845,30 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
             {evidence.length === 0 ? (
               <p className="mb-3 text-sm text-muted">No evidence recorded yet.</p>
             ) : (
-              <ul className="mb-3 space-y-1.5 text-sm">
-                {evidence.map((entry) => (
-                  <li key={entry.id} className="rounded-md bg-paper px-3 py-2">
-                    <span className="font-medium">[{entry.source}]</span> {entry.summary}{" "}
-                    {entry.detail && <span className="text-muted">-- {entry.detail}</span>}
-                  </li>
-                ))}
-              </ul>
+              <div className="mb-3 rounded-md border border-line">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-line hover:bg-transparent">
+                      <TableHead className="text-ink">Source</TableHead>
+                      <TableHead className="text-ink">Summary</TableHead>
+                      <TableHead className="text-ink">Detail</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {evidence.map((entry, i) => (
+                      <TableRow
+                        key={entry.id}
+                        className="animate-in fade-in slide-in-from-left-1 border-line duration-300 hover:bg-paper"
+                        style={{ animationDelay: `${Math.min(i, 10) * 30}ms` }}
+                      >
+                        <TableCell className="font-medium text-ink">{entry.source}</TableCell>
+                        <TableCell className="whitespace-normal text-ink">{entry.summary}</TableCell>
+                        <TableCell className="whitespace-normal text-muted">{entry.detail ?? "--"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             )}
             <EvidenceExtractor incidentId={selectedId} onAdded={() => void refreshSelected(selectedId)} setMessage={setMessage} />
             <form action={addEvidence}>
