@@ -116,6 +116,19 @@ export default function Workspace() {
 
 const POLL_INTERVAL_MS = 20_000;
 
+// The polling above was already keeping data live every 20s, but with no
+// visible sign of it -- a user watching the screen had no way to tell
+// whether it was current or stale. Recomputed at render time (no separate
+// ticking timer needed): the poll cycle and any user action already
+// re-render this component often enough to keep the text reasonably fresh.
+function timeAgo(timestampMs: number): string {
+  const seconds = Math.max(0, Math.round((Date.now() - timestampMs) / 1000));
+  if (seconds < 5) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  return `${minutes}m ago`;
+}
+
 function FounderDashboard() {
   const [summary, setSummary] = useState<FounderSummary | null>(null);
   const [error, setError] = useState("");
@@ -1306,6 +1319,12 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  // The 20s poll (usePolling below) already keeps this data live, but that
+  // was entirely invisible before -- nothing told a user their screen was
+  // updating itself, or gave them a way to force it right now instead of
+  // waiting out the interval. lastUpdated/refreshing surface both.
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   async function refreshIncidents() {
     // Independent GETs -- run in parallel rather than serially, halving
@@ -1313,6 +1332,17 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
     const [incidentsResult, summaryResult] = await Promise.all([api.listIncidents(), api.summary()]);
     setIncidents(incidentsResult);
     setSummary(summaryResult);
+    setLastUpdated(Date.now());
+  }
+
+  async function manualRefresh() {
+    setRefreshing(true);
+    try {
+      await refreshIncidents();
+      if (selectedId) await refreshSelected(selectedId);
+    } finally {
+      setRefreshing(false);
+    }
   }
 
   async function toggleResolved(incident: Incident) {
@@ -1469,7 +1499,21 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
       )}
 
       <section className={card}>
-        <h2 className="mb-3 text-base font-semibold">Incidents</h2>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 className="text-base font-semibold">Incidents</h2>
+          <div className="flex items-center gap-2 text-xs text-muted">
+            {lastUpdated && <span title={new Date(lastUpdated).toLocaleTimeString()}>Updated {timeAgo(lastUpdated)}</span>}
+            <button
+              type="button"
+              onClick={() => void manualRefresh()}
+              disabled={refreshing}
+              className="rounded-md border border-line px-2 py-1 text-xs text-ink transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label="Refresh now"
+            >
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
+        </div>
         {incidents.length === 0 ? (
           <p className="mb-3 text-sm text-muted">No incidents yet.</p>
         ) : (
