@@ -132,12 +132,31 @@ function timeAgo(timestampMs: number): string {
 function FounderDashboard() {
   const [summary, setSummary] = useState<FounderSummary | null>(null);
   const [error, setError] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   function refresh() {
     api
       .founderSummary()
-      .then(setSummary)
+      .then((result) => {
+        setSummary(result);
+        setLastUpdated(Date.now());
+      })
       .catch((err) => setError(err instanceof Error ? err.message : "Could not load founder summary."));
+  }
+
+  async function manualRefresh() {
+    setRefreshing(true);
+    try {
+      await api.founderSummary().then((result) => {
+        setSummary(result);
+        setLastUpdated(Date.now());
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load founder summary.");
+    } finally {
+      setRefreshing(false);
+    }
   }
 
   useEffect(refresh, []);
@@ -170,7 +189,21 @@ function FounderDashboard() {
 
   return (
     <section className={card}>
-      <h2 className="mb-3 text-base font-semibold">Founder dashboard</h2>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="text-base font-semibold">Founder dashboard</h2>
+        <div className="flex items-center gap-2 text-xs text-muted">
+          {lastUpdated && <span title={new Date(lastUpdated).toLocaleTimeString()}>Updated {timeAgo(lastUpdated)}</span>}
+          <button
+            type="button"
+            onClick={() => void manualRefresh()}
+            disabled={refreshing}
+            className="rounded-md border border-line px-2 py-1 text-xs text-ink transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Refresh now"
+          >
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
+      </div>
       <div
         className={cn(
           "mb-4 flex items-center justify-between rounded-md px-3 py-2 text-sm",
@@ -249,9 +282,21 @@ function PaymentClaimsReview() {
   const [claims, setClaims] = useState<PaymentClaim[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   async function refresh() {
     setClaims(await founderBilling.paymentClaims());
+    setLastUpdated(Date.now());
+  }
+
+  async function manualRefresh() {
+    setRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      setRefreshing(false);
+    }
   }
 
   useEffect(() => {
@@ -310,7 +355,21 @@ function PaymentClaimsReview() {
 
   return (
     <>
-      <h3 className="mt-4 mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">Payment claims</h3>
+      <div className="mt-4 mb-1.5 flex items-center justify-between gap-2">
+        <h3 className="text-xs font-medium tracking-wide text-muted uppercase">Payment claims</h3>
+        <div className="flex items-center gap-2 text-xs text-muted">
+          {lastUpdated && <span title={new Date(lastUpdated).toLocaleTimeString()}>Updated {timeAgo(lastUpdated)}</span>}
+          <button
+            type="button"
+            onClick={() => void manualRefresh()}
+            disabled={refreshing}
+            className="rounded-md border border-line px-2 py-0.5 text-xs text-ink transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Refresh now"
+          >
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
+      </div>
       <ul className="space-y-1.5 text-sm">
         {claims.length === 0 ? (
           <li className="text-muted">None yet.</li>
