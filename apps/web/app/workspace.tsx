@@ -145,6 +145,37 @@ export default function Workspace() {
         />
       )}
       {user.is_founder && <FounderDashboard />}
+      {/* A returning client landed on a page with no way to jump to
+          "Webhook" or "Dashboard" without scrolling past everything above
+          it -- same real gap as the founder dashboard had, fixed the same
+          way: a sticky quick-nav to the sections that are always present,
+          regardless of scroll position or which incident (if any) is
+          selected below. Evidence/Draft aren't included -- they only
+          exist once an incident is selected, and sit immediately below
+          Incidents either way, so a jump link for them would be either
+          broken or redundant depending on state. */}
+      <nav
+        aria-label="Client dashboard sections"
+        className="sticky top-0 z-10 mb-4 flex flex-wrap gap-1.5 border-b border-line bg-paper/95 px-1 py-2 backdrop-blur-sm"
+      >
+        {(
+          [
+            !user.is_founder && (["Billing", "#client-billing"] as [string, string]),
+            ["Integrations", "#client-integrations"],
+            ["Webhook", "#client-webhook"],
+            ["Dashboard", "#client-dashboard"],
+            ["Incidents", "#client-incidents"],
+          ].filter(Boolean) as [string, string][]
+        ).map(([label, href]) => (
+          <a
+            key={href}
+            href={href}
+            className="rounded-md px-2 py-1 text-xs text-muted transition hover:bg-white hover:text-ink"
+          >
+            {label}
+          </a>
+        ))}
+      </nav>
       {/* Unlike before, an unsubscribed account still sees the real
           workspace underneath -- the free-tier account's one incident
           (once created) needs to stay reachable for adding evidence and
@@ -1987,13 +2018,21 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
     <>
       <p className="mb-6 text-sm text-muted">Evidence-grounded incident postmortem drafting.</p>
 
-      {!isFounder && <ManageBilling />}
-      <IntegrationsSettings />
-      <WebhookSettings />
+      {!isFounder && (
+        <div id="client-billing" className="scroll-mt-16">
+          <ManageBilling />
+        </div>
+      )}
+      <div id="client-integrations" className="scroll-mt-16">
+        <IntegrationsSettings />
+      </div>
+      <div id="client-webhook" className="scroll-mt-16">
+        <WebhookSettings />
+      </div>
 
       {!loaded && <DashboardSkeleton />}
       {summary && (
-        <Card className={card}>
+        <Card id="client-dashboard" className={cn(card, "scroll-mt-16")}>
           <h2 className="mb-3 text-base font-semibold">Dashboard</h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {(
@@ -2014,7 +2053,7 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
         </Card>
       )}
 
-      <Card className={card}>
+      <Card id="client-incidents" className={cn(card, "scroll-mt-16")}>
         <div className="mb-3 flex items-center justify-between gap-2">
           <h2 className="text-base font-semibold">Incidents</h2>
           <div className="flex items-center gap-2 text-xs text-muted">
