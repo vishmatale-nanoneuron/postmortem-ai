@@ -181,10 +181,17 @@ whether the account exists — deliberately, to prevent account enumeration.
 
 One incident is fully usable for free — evidence, AI extraction, drafting —
 with no card. Publishing and creating a second incident require an active
-subscription. Three real paths: (1) Stripe Checkout, self-serve, instant
-activation on webhook receipt, cancel/manage via the Stripe Customer Portal;
-(2) manual UPI (India), founder-reviewed; (3) manual international SWIFT
-wire, founder-reviewed. Manual claims are matched to real bank alerts
+subscription. For clients in any country, two real paths work today: (1)
+manual UPI (India), founder-reviewed; (2) manual international SWIFT wire
+(USD/GBP/EUR), founder-reviewed. A third path — Stripe Checkout,
+self-serve, instant activation on webhook receipt, cancel/manage via the
+Stripe Customer Portal — is fully built and code-complete but not yet
+switched on for real payments (the production Stripe key is currently
+test-mode; `card_pricing`'s own `configured` check requires a live-mode
+key, confirmed by inspecting a real live checkout session before that
+check existed). It will appear as an option automatically once live keys
+are set, with no other change needed. Manual claims are matched to real
+bank alerts
 automatically (verification only — a founder's explicit approval is the only
 thing that ever activates access, regardless of automated verification).
 Every real payment endpoint verifies against the provider's own record

@@ -90,13 +90,14 @@ configured.
 Every account may create and fully work on one incident for free -- record
 evidence, run AI evidence extraction, draft a grounded postmortem -- with
 no payment. Publishing (making it a permanent, citable record) and
-creating a second incident both require an active subscription. Two ways
-to pay: instant self-serve card payment via Stripe Checkout (access
-activates immediately, no manual step), or a manual UPI (India) /
-international SWIFT wire claim with the founder reviewing and approving
-each submitted reference. Self-serve subscription management (cancel,
-update card, view invoices) is available via the Stripe Customer Portal
-for accounts that paid by card. An account that used its free incident,
+creating a second incident both require an active subscription. For
+clients in any country, an international SWIFT wire (USD/GBP/EUR) or UPI
+(India) works today -- submit the transaction reference and the founder
+reviews and approves it personally. Self-serve card payment via Stripe
+Checkout is built (and self-serve subscription management via the Stripe
+Customer Portal) but not yet switched on for real payments -- it appears
+automatically once it is, with no other change needed here. An account
+that used its free incident,
 got a real draft out of it, and never subscribed receives exactly one
 automated reminder email, at least 24 hours later -- never a repeat, and
 never a fabricated urgency claim (no countdown, no "X spots left").

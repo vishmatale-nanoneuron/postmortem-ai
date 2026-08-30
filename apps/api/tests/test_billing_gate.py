@@ -25,7 +25,13 @@ async def context(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
     monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
     monkeypatch.setenv("COOKIE_SECURE", "false")
-    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_not-called-in-these-tests")
+    # sk_live_ prefix, not sk_test_ -- card_pricing/`_client` (billing.py)
+    # both now require this exact prefix to treat Stripe as genuinely
+    # configured (a real test-mode key produces a real, unmistakably
+    # TestMode checkout session that cannot process real money, confirmed
+    # live before that fix existed). This key is still never actually
+    # called in these tests -- only its shape matters here.
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_live_not-called-in-these-tests")
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_not-called-in-these-tests")
     monkeypatch.setenv("STRIPE_PRICE_ID", "price_not-called-in-these-tests")
     monkeypatch.setenv("FOUNDER_EMAIL", FOUNDER_EMAIL)
@@ -133,6 +139,46 @@ async def test_card_pricing_reports_unconfigured_without_a_stripe_price_id(conte
     response = await client.get("/v1/billing/card/pricing")
     assert response.status_code == 200
     assert response.json() == {"configured": False}
+
+
+@pytest.mark.asyncio
+async def test_a_test_mode_stripe_key_reports_unconfigured_not_a_false_positive(
+    context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real bug this covers: a test-mode key (sk_test_...) makes real,
+    real-shaped Stripe API calls that succeed and produce a real Checkout
+    Session URL -- nothing about the response shape reveals it can't
+    process real money. configured=True here would tell a real client
+    "card payment works," and only Stripe's own checkout page (unmistakably
+    marked TestMode) would ever reveal otherwise -- caught live in
+    production, not by this test alone."""
+    from app.settings import get_settings
+
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_looks-configured-but-is-not-live")
+    get_settings.cache_clear()
+    client, _ = context
+    response = await client.get("/v1/billing/card/pricing")
+    assert response.status_code == 200
+    assert response.json() == {"configured": False}
+
+
+@pytest.mark.asyncio
+async def test_checkout_refuses_to_create_a_session_on_a_test_mode_key(
+    context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defense in depth beyond card_pricing's own check above: even a
+    caller that never looked at /card/pricing first (a stale cached
+    frontend build, a direct API call, an MCP tool) must not be able to
+    create a real Checkout Session URL on a test-mode key."""
+    from app.settings import get_settings
+
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_looks-configured-but-is-not-live")
+    get_settings.cache_clear()
+    client, _ = context
+    await client.post("/v1/auth/register", json={"email": UNPAID_EMAIL, "password": "correct-horse-battery"})
+
+    response = await client.post("/v1/billing/checkout")
+    assert response.status_code == 503
     get_settings.cache_clear()
 
 

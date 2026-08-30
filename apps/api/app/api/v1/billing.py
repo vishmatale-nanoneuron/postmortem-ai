@@ -47,10 +47,19 @@ class BillingStatusOut(BaseModel):
 
 
 def _client(settings: Settings) -> stripe.StripeClient:
-    if not settings.stripe_secret_key:
+    # A test-mode key (sk_test_...) would create a real, real-shaped
+    # Checkout Session that opens unmistakably TestMode once a real
+    # visitor reaches it -- unable to process real money, confirmed live
+    # against a real session before this fix, silently, with no error
+    # anywhere in this flow. Refusing to even create the session here
+    # (not just hiding the frontend's "Card" tab via card_pricing's own
+    # is_live_key check above) closes the same gap for any other caller
+    # of this endpoint -- MCP, a stale cached frontend build, a direct
+    # API call -- not just the one UI surface that happens to check first.
+    if not settings.stripe_secret_key or not settings.stripe_secret_key.startswith("sk_live_"):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Card payments are not available yet -- use UPI (/v1/billing/upi/info)",
+            detail="Card payments are not available yet -- use UPI or wire instead (/v1/billing/upi/info, /v1/billing/wire/info)",
         )
     return stripe.StripeClient(api_key=settings.stripe_secret_key)
 
@@ -148,8 +157,20 @@ async def card_pricing(settings: Settings = Depends(get_settings)) -> CardPricin
     payment and self-serve subscription management (cancel, update card,
     view invoices via the Customer Portal) were both effectively dead code
     from a client's perspective. This endpoint is what lets the frontend
-    turn that back on safely, everywhere it's actually configured."""
-    return CardPricingOut(configured=bool(settings.stripe_secret_key and settings.stripe_price_id))
+    turn that back on safely, everywhere it's actually configured.
+
+    'configured' means genuinely able to charge a real card, not just "a
+    key is present" -- confirmed live against a real checkout session
+    before this fix that a test-mode secret key (sk_test_...) produces a
+    real-looking, real-shaped Checkout Session that is unmistakably
+    TestMode once opened, silently unable to process real money while
+    every doc/UI surface described card payment as live. Stripe's own
+    stable convention (sk_live_ vs sk_test_/sk_test_-prefixed restricted
+    keys) is the one place this is actually knowable server-side without
+    an extra config flag to remember to flip later -- this self-corrects
+    the moment real live keys are set, with nothing else to update."""
+    is_live_key = bool(settings.stripe_secret_key) and settings.stripe_secret_key.startswith("sk_live_")
+    return CardPricingOut(configured=is_live_key and bool(settings.stripe_price_id))
 
 
 async def _apply_subscription(database: Database, customer_id: str, subscription: stripe.Subscription) -> None:

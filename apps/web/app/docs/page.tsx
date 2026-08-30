@@ -163,10 +163,11 @@ export default function DocsPage() {
           <p className={p}>
             Every account gets one incident fully free -- record evidence, run AI extraction, and draft a real
             grounded postmortem with no card required, so you can see the actual output before deciding anything.
-            Publishing it, or creating a second incident, requires an active subscription. Three real ways to pay:
-            instant self-serve card checkout via Stripe (access activates immediately, no manual step, and it&apos;s
-            self-service to cancel or update via the Stripe customer portal), or a manual UPI (India) / international
-            SWIFT wire claim with the founder reviewing and approving each submitted reference.
+            Publishing it, or creating a second incident, requires an active subscription. For clients anywhere in
+            the world, an international SWIFT wire (USD/GBP/EUR) or UPI (India) works today -- submit the
+            transaction reference and the founder reviews and approves it personally, usually quickly. Self-serve
+            card checkout via Stripe is built but not switched on for real payments yet; when it is, it&apos;ll
+            appear as an option automatically, without anything else here needing to change.
           </p>
         </>,
       )}
