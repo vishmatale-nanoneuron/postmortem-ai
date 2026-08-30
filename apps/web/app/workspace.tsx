@@ -33,6 +33,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LogoMark } from "./logo-mark";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -113,7 +114,10 @@ export default function Workspace() {
   return (
     <main className="mx-auto max-w-2xl px-4 py-10">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">PostMortem AI</h1>
+        <h1 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight">
+          <LogoMark size={26} />
+          PostMortem AI
+        </h1>
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           {user.is_founder && (
             <span className="shrink-0 rounded-full bg-ink px-2.5 py-0.5 text-xs font-medium text-paper">Founder</span>

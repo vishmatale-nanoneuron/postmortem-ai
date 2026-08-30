@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { LogoMark } from "./logo-mark";
 
 export function Hero() {
   return (
@@ -30,6 +31,7 @@ export function Hero() {
         className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[32rem] bg-[radial-gradient(60%_50%_at_50%_0%,color-mix(in_oklab,var(--color-accent)_14%,transparent),transparent)]"
       />
       <div className="mx-auto max-w-3xl px-4 pt-20 pb-12 text-center sm:pt-28">
+        <LogoMark size={40} className="mx-auto mb-5 animate-in fade-in zoom-in-95 duration-700" />
         <Badge
           variant="outline"
           className="h-auto animate-in fade-in slide-in-from-bottom-2 gap-1.5 rounded-full border-line px-3 py-1 text-[11px] text-muted duration-700"
