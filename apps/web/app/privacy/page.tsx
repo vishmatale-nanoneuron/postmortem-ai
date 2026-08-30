@@ -111,14 +111,22 @@ export default function PrivacyPage() {
       {section(
         4,
         <>
-          <h2 className={h2}>Session</h2>
+          <h2 className={h2}>Cookies (and clients outside any one country)</h2>
           <p className={p}>
-            Signing in sets one HTTP-only cookie (a signed session token) -- not read by any script on the page,
-            not shared with any third-party analytics or ad script. See{" "}
+            Confirmed directly, not assumed: this site sets no cookie at all before you sign in. The only cookie
+            anywhere is one HTTP-only, secure session token, set only after registration or login, read by no
+            script on the page and shared with no third party. Page-view analytics (Vercel Web Analytics, if
+            enabled) is cookieless by design -- no persistent identifier is stored in your browser either way.
+            Under GDPR/ePrivacy, a strictly-necessary session cookie like this one is exempt from consent-banner
+            requirements -- which is why there isn&apos;t one here; it&apos;s not an oversight.
+          </p>
+          <p className={p}>
+            See{" "}
             <Link className="underline underline-offset-2" href="/status">
               system status
             </Link>{" "}
-            for the backend&apos;s live health.
+            for the backend&apos;s live health, checked the same way regardless of which country you&apos;re
+            connecting from.
           </p>
         </>,
       )}
