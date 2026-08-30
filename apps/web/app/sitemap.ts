@@ -23,6 +23,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${SITE_URL}/blog/grounding-mechanism`, changeFrequency: "yearly", priority: 0.6 },
     { url: `${SITE_URL}/blog/github-outage-demo`, changeFrequency: "yearly", priority: 0.6 },
     { url: `${SITE_URL}/postmortems`, changeFrequency: "daily", priority: 0.6 },
+    { url: `${SITE_URL}/status`, changeFrequency: "daily", priority: 0.3 },
+    { url: `${SITE_URL}/privacy`, changeFrequency: "monthly", priority: 0.3 },
+    { url: `${SITE_URL}/terms`, changeFrequency: "monthly", priority: 0.3 },
   ];
 
   const postmortems = await fetchPublicSlugs();

@@ -204,3 +204,28 @@ export function WhatThisIsnt() {
     </div>
   );
 }
+
+export function SiteFooter() {
+  const links: [string, string][] = [
+    ["Docs", "/docs"],
+    ["Pricing", "/pricing"],
+    ["Postmortems", "/postmortems"],
+    ["Status", "/status"],
+    ["Privacy", "/privacy"],
+    ["Terms", "/terms"],
+  ];
+  return (
+    <footer className="border-t border-line px-4 py-8">
+      <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 text-xs text-muted">
+        <span>&copy; {new Date().getFullYear()} PostMortem AI</span>
+        <nav className="flex flex-wrap gap-x-4 gap-y-1.5">
+          {links.map(([label, href]) => (
+            <Link key={href} className="underline-offset-2 hover:text-ink hover:underline" href={href}>
+              {label}
+            </Link>
+          ))}
+        </nav>
+      </div>
+    </footer>
+  );
+}

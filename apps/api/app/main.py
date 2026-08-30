@@ -2,7 +2,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -15,6 +15,7 @@ from .api.v1.internal import router as internal_router
 from .api.v1.postmortems import router as postmortems_router
 from .api.v1.webhooks import router as webhooks_router
 from .database import Database
+from .dependencies import get_database
 from .mcp_server import MCPBearerAuthMiddleware, build_mcp_server
 from .settings import get_settings
 
@@ -116,8 +117,19 @@ def create_app() -> FastAPI:
     app.include_router(webhooks_router)
 
     @app.get("/health")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
+    async def health(database: Database = Depends(get_database)) -> JSONResponse:
+        # A static {"status": "ok"} would have kept reporting healthy
+        # straight through this project's own real db() outage (see
+        # CLAUDE.md's "Resolved: db() site-wide outage") -- the actual
+        # failure mode was the database being unreachable while every
+        # other route 500'd. A real round-trip query is the only honest
+        # signal a status page can build on.
+        try:
+            await database.fetch_one("SELECT 1")
+        except Exception:
+            logger.exception("health_check_database_unreachable")
+            return JSONResponse(status_code=503, content={"status": "degraded", "database": "unreachable"})
+        return JSONResponse(status_code=200, content={"status": "ok", "database": "reachable"})
 
     # Mounted at "/", not "/mcp" -- streamable_http_app() already mounts
     # its own handler internally at settings.streamable_http_path (default

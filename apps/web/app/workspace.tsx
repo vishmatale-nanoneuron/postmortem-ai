@@ -24,7 +24,7 @@ import {
 } from "./api";
 import { auth, type AuthUser } from "./auth";
 import { cn } from "@/lib/utils";
-import { GroundingExample, Hero, HowItWorks, WhatThisIsnt } from "./landing";
+import { GroundingExample, Hero, HowItWorks, SiteFooter, WhatThisIsnt } from "./landing";
 import { usePolling } from "./use-polling";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -154,6 +154,7 @@ export default function Workspace() {
           enforced server-side regardless of what renders here. */}
       {!user.has_active_subscription && <SubscribeGate hasFreeIncidentAvailable={user.has_free_incident_available} />}
       <IncidentWorkspace isFounder={user.is_founder} />
+      <SiteFooter />
     </main>
   );
 }
@@ -695,6 +696,7 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
         </Card>
       </div>
       <WhatThisIsnt />
+      <SiteFooter />
     </main>
   );
 }
