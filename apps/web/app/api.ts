@@ -106,6 +106,14 @@ export type FounderSummary = {
     avg_latency_ms: number | null;
   }[];
   pending_payment_claims: number;
+  conversion_funnel: {
+    signups: number;
+    tried_free_incident: number;
+    ever_paid: number;
+    ever_paid_via_stripe: number;
+    currently_paying: number;
+    approved_manual_claims: number;
+  };
   recent_users: { id: string; email: string; created_at: number }[];
   recent_ai_runs: {
     id: string;

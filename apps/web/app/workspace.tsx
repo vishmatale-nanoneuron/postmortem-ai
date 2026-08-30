@@ -267,6 +267,7 @@ function FounderDashboard() {
           </div>
         ))}
       </div>
+      <ConversionFunnelPanel funnel={summary.conversion_funnel} />
       {summary.ai_runs_by_feature.length > 0 && (
         <>
           <h3 className="mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">AI features (by prompt version)</h3>
@@ -315,6 +316,52 @@ function FounderDashboard() {
       </ul>
       <PaymentClaimsReview />
     </Card>
+  );
+}
+
+// Answers "where do accounts actually drop off," which raw activity counts
+// (incidents, drafts) don't -- a signup who never touches the free incident,
+// one who tries it and never pays, and one who paid once and lapsed are
+// three different problems needing three different fixes, not one blended
+// "conversion rate."
+function ConversionFunnelPanel({ funnel }: { funnel: FounderSummary["conversion_funnel"] }) {
+  const pct = (n: number) => (funnel.signups === 0 ? "--" : `${Math.round((n / funnel.signups) * 100)}%`);
+  const stages: [string, number, string][] = [
+    ["Signed up", funnel.signups, "100%"],
+    ["Tried the free incident", funnel.tried_free_incident, pct(funnel.tried_free_incident)],
+    ["Ever paid", funnel.ever_paid, pct(funnel.ever_paid)],
+    ["Currently paying", funnel.currently_paying, pct(funnel.currently_paying)],
+  ];
+  return (
+    <div className="mb-4">
+      <h3 className="mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">Conversion funnel</h3>
+      {funnel.signups === 0 ? (
+        <p className="rounded-md bg-paper px-3 py-2 text-sm text-muted">
+          No real signups yet (founder account excluded) -- nothing to convert until there&apos;s real traffic.
+        </p>
+      ) : (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {stages.map(([label, value, percent], i) => (
+            <div
+              key={label}
+              className="animate-in fade-in slide-in-from-bottom-1 rounded-md bg-paper px-3 py-2 fill-mode-backwards duration-300"
+              style={{ animationDelay: `${i * 60}ms` }}
+            >
+              <div className="text-lg font-semibold text-ink">
+                {value} <span className="text-xs font-normal text-muted">({percent})</span>
+              </div>
+              <div className="text-xs text-muted">{label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {funnel.ever_paid > 0 && (
+        <p className="mt-2 text-xs text-muted">
+          Of {funnel.ever_paid} who ever paid: {funnel.ever_paid_via_stripe} via Stripe checkout,{" "}
+          {funnel.approved_manual_claims} via a founder-approved manual UPI/wire claim.
+        </p>
+      )}
+    </div>
   );
 }
 

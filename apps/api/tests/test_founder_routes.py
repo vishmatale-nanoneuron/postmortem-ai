@@ -157,3 +157,61 @@ async def test_a_founder_summary_call_without_a_session_is_unauthorized(context)
     client, _ = context
     response = await client.get("/v1/founder/summary")
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_conversion_funnel_excludes_the_founder_and_tracks_real_signups(context) -> None:
+    """The funnel exists to answer "where do accounts actually drop off,"
+    which the founder's own account (always is_founder, never a real paying
+    customer) would only distort if counted."""
+    client, database = context
+    await client.post("/v1/auth/register", json={"email": FOUNDER_EMAIL, "password": "correct-horse-battery"})
+
+    baseline = (await client.get("/v1/founder/summary")).json()["conversion_funnel"]
+
+    # A regular signup that never touches an incident -- counts as a signup,
+    # nothing else.
+    await client.post(
+        "/v1/auth/register", json={"email": "founder-test-cold@example.com", "password": "correct-horse-battery"}
+    )
+    # A signup that uses its free incident but never pays.
+    warm_client_cookies = await client.post(
+        "/v1/auth/register", json={"email": "founder-test-warm@example.com", "password": "correct-horse-battery"}
+    )
+    assert warm_client_cookies.status_code == 201
+    await client.post("/v1/postmortems/incidents", json={"title": "Free incident", "severity": "sev3"})
+    await client.post("/v1/auth/logout")
+
+    # A signup with a real, currently-active manual (UPI/wire) subscription --
+    # directly via the database rather than the real payment-claim approval
+    # flow, since only the exact resulting user row state matters here, not
+    # re-testing that flow (already covered by its own tests).
+    await client.post(
+        "/v1/auth/register", json={"email": "founder-test-paying@example.com", "password": "correct-horse-battery"}
+    )
+    await database.execute(
+        "UPDATE users SET subscription_status='active', current_period_end=%s WHERE email=%s",
+        (9999999999, "founder-test-paying@example.com"),
+    )
+    await client.post("/v1/auth/logout")
+
+    # A signup whose manual subscription lapsed -- still 'ever_paid' (their
+    # stored status never flips back to 'none' on its own, per
+    # auth.py's has_free_incident_available reasoning) but not
+    # 'currently_paying'.
+    await client.post(
+        "/v1/auth/register", json={"email": "founder-test-lapsed@example.com", "password": "correct-horse-battery"}
+    )
+    await database.execute(
+        "UPDATE users SET subscription_status='active', current_period_end=%s WHERE email=%s",
+        (1, "founder-test-lapsed@example.com"),
+    )
+    await client.post("/v1/auth/logout")
+
+    await client.post("/v1/auth/login", json={"email": FOUNDER_EMAIL, "password": "correct-horse-battery"})
+    funnel = (await client.get("/v1/founder/summary")).json()["conversion_funnel"]
+
+    assert funnel["signups"] - baseline["signups"] == 4
+    assert funnel["tried_free_incident"] - baseline["tried_free_incident"] == 1
+    assert funnel["ever_paid"] - baseline["ever_paid"] == 2
+    assert funnel["currently_paying"] - baseline["currently_paying"] == 1

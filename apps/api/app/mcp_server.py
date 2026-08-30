@@ -172,7 +172,11 @@ def build_mcp_server(get_database: Callable[[], Database], settings: Settings) -
         success/failure/latency, pending payment claims, recent signups."""
         database = get_database()
         founder = require_mcp_founder()
-        return await founder_routes.founder_summary(database=database, _founder=founder)
+        # founder_summary's `settings` param carries a real Depends() default
+        # for FastAPI's own injector to resolve on an HTTP request -- this
+        # call site invokes it directly instead, so that default is never
+        # replaced; pass the real resolved Settings already in scope here.
+        return await founder_routes.founder_summary(database=database, _founder=founder, settings=settings)
 
     @mcp.tool()
     @_audited("list_payment_claims")

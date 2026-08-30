@@ -7,6 +7,7 @@ from ...auth import User, current_founder
 from ...database import Database
 from ...dependencies import get_database
 from ...services.billing import activate_manual_subscription, record_claim_event
+from ...settings import Settings, get_settings
 
 router = APIRouter(prefix="/v1/founder", tags=["founder"])
 
@@ -15,6 +16,7 @@ router = APIRouter(prefix="/v1/founder", tags=["founder"])
 async def founder_summary(
     database: Database = Depends(get_database),
     _founder: User = Depends(current_founder),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     """Platform-wide aggregates -- unlike /v1/postmortems/summary (scoped to
     one client's own email), this is founder-only precisely because it
@@ -22,6 +24,36 @@ async def founder_summary(
     client/subscription state, per the same invariant as
     nanoneuron-software-company."""
     user_counts = await database.fetch_one("SELECT count(*) AS total FROM users")
+    # A real revenue/conversion funnel, not just activity counts -- the
+    # existing stats above answer "is the AI pipeline healthy" but not
+    # "why isn't this making money," which needs to see where accounts
+    # actually drop off. Excludes the founder's own account (is_founder
+    # isn't a DB column -- it's an email comparison against
+    # settings.founder_email, same as auth.py's _is_founder) since it's
+    # not a real conversion data point. subscription_status <> 'none' is
+    # "ever paid" per auth.py's own has_free_incident_available reasoning
+    # (a lapsed manual subscription stays 'active' forever in storage, so
+    # this can't just check the current status); has_active_subscription's
+    # exact expiry logic (current_period_end is stored in *seconds*, not
+    # the milliseconds every other timestamp column here uses) is
+    # replicated in SQL rather than refetched per-row in Python.
+    funnel = await database.fetch_one(
+        """SELECT
+               count(*) AS signups,
+               count(*) FILTER (WHERE free_incident_id IS NOT NULL) AS tried_free_incident,
+               count(*) FILTER (WHERE subscription_status <> 'none') AS ever_paid,
+               count(*) FILTER (WHERE stripe_subscription_id IS NOT NULL) AS ever_paid_via_stripe,
+               count(*) FILTER (
+                   WHERE subscription_status IN ('active', 'trialing')
+                     AND (current_period_end IS NULL OR current_period_end > extract(epoch FROM now()))
+               ) AS currently_paying
+           FROM users
+           WHERE lower(email) <> lower(%s)""",
+        (settings.founder_email,),
+    )
+    approved_claims = await database.fetch_one(
+        "SELECT count(*) AS total FROM payment_claims WHERE status = 'approved'"
+    )
     incident_counts = await database.fetch_one(
         """SELECT count(*) AS total,
                   count(*) FILTER (WHERE status = 'open') AS open,
@@ -106,6 +138,14 @@ async def founder_summary(
             for row in ai_runs_by_feature
         ],
         "pending_payment_claims": (pending_claims or {}).get("total", 0),
+        "conversion_funnel": {
+            "signups": (funnel or {}).get("signups", 0),
+            "tried_free_incident": (funnel or {}).get("tried_free_incident", 0),
+            "ever_paid": (funnel or {}).get("ever_paid", 0),
+            "ever_paid_via_stripe": (funnel or {}).get("ever_paid_via_stripe", 0),
+            "currently_paying": (funnel or {}).get("currently_paying", 0),
+            "approved_manual_claims": (approved_claims or {}).get("total", 0),
+        },
         "recent_users": recent_users,
         "recent_ai_runs": recent_ai_runs,
     }
