@@ -11,6 +11,7 @@ from .api.v1.bank_alerts import router as bank_alerts_router
 from .api.v1.billing import router as billing_router
 from .api.v1.founder import router as founder_router
 from .api.v1.integrations import router as integrations_router
+from .api.v1.internal import router as internal_router
 from .api.v1.postmortems import router as postmortems_router
 from .api.v1.webhooks import router as webhooks_router
 from .database import Database
@@ -110,6 +111,7 @@ def create_app() -> FastAPI:
     app.include_router(billing_router)
     app.include_router(founder_router)
     app.include_router(integrations_router)
+    app.include_router(internal_router)
     app.include_router(postmortems_router)
     app.include_router(webhooks_router)
 

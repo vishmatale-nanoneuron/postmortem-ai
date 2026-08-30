@@ -1,3 +1,9 @@
 {
-  "framework": "fastapi"
+  "framework": "fastapi",
+  "crons": [
+    {
+      "path": "/v1/internal/cron/free-incident-nudge",
+      "schedule": "0 12 * * *"
+    }
+  ]
 }

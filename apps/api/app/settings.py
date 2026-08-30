@@ -74,6 +74,14 @@ class Settings(BaseSettings):
     # not-yet-provisioned integration in this codebase.
     bank_alert_webhook_secret: str | None = Field(default=None, alias="BANK_ALERT_WEBHOOK_SECRET")
 
+    # Vercel Cron's own convention: when a project has both a `crons` entry
+    # in vercel.json and this env var set, Vercel automatically sends
+    # `Authorization: Bearer <CRON_SECRET>` on the scheduled request -- no
+    # separate webhook-signing scheme to invent. Unset means the endpoint
+    # is disabled (any request rejected), same "unconfigured means off"
+    # stance as bank_alert_webhook_secret above.
+    cron_secret: str | None = Field(default=None, alias="CRON_SECRET")
+
     # Manual international wire (SWIFT) payment -- same pattern as UPI:
     # client wires the money directly, submits a reference, founder
     # approves. Beneficiary details are shared across currencies; the
