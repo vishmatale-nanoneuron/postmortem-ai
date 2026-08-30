@@ -210,15 +210,70 @@ async def test_a_webhook_event_cannot_touch_another_accounts_open_incident(conte
 
 
 @pytest.mark.asyncio
-async def test_an_unpaid_account_is_blocked_from_the_webhook_path(context) -> None:
+async def test_an_unpaid_account_with_no_free_slot_left_is_blocked_from_the_webhook_path(context) -> None:
+    """A genuinely unpaid account that already spent its one free incident
+    elsewhere -- not a brand-new signup -- is correctly blocked."""
     client, database, token = context
-    await database.execute("UPDATE users SET subscription_status='none' WHERE email=%s", (CLIENT_EMAIL,))
+    # free_incident_id is a real foreign key to incidents.id -- needs an
+    # actual row, not an arbitrary string, or the UPDATE itself would fail
+    # a constraint violation before the test even gets to the assertion.
+    await database.execute(
+        """INSERT INTO incidents (id, client_email, title, severity, status, created_at, updated_at)
+           VALUES ('already-used-elsewhere', %s, 'Used elsewhere', 'sev3', 'open', 0, 0)""",
+        (CLIENT_EMAIL,),
+    )
+    await database.execute(
+        "UPDATE users SET subscription_status='none', free_incident_id='already-used-elsewhere' WHERE email=%s",
+        (CLIENT_EMAIL,),
+    )
 
     response = await client.post(
         f"/v1/webhooks/incidents/{token}",
         json={"source": "alert", "summary": "Should be blocked by the paywall"},
     )
     assert response.status_code == 402
+
+
+@pytest.mark.asyncio
+async def test_an_unpaid_account_can_still_use_its_free_incident_via_webhook(context) -> None:
+    """The webhook path's own docstring, and the public docs, both claim
+    this is 'the same write path and paywall' as the authenticated REST
+    endpoints -- create_incident/record_evidence both let an unpaid account
+    through exactly once, via require_active_subscription_or_free_slot /
+    _or_free_incident (auth.py). A brand-new signup (subscription_status
+    'none', free_incident_id never set) must get the same allowance here,
+    not a flat paywall -- this was a real bug, caught by testing this
+    exact scenario live against production before this test existed."""
+    client, database, token = context
+    await database.execute("UPDATE users SET subscription_status='none' WHERE email=%s", (CLIENT_EMAIL,))
+
+    create = await client.post(
+        f"/v1/webhooks/incidents/{token}",
+        json={"source": "alert", "summary": "First incident, on the house"},
+    )
+    assert create.status_code == 201, create.text
+    incident_id = create.json()["incident_id"]
+
+    user_row = await database.fetch_one("SELECT free_incident_id FROM users WHERE email=%s", (CLIENT_EMAIL,))
+    assert user_row is not None
+    assert user_row["free_incident_id"] == incident_id
+
+    # Appending more evidence to that same free incident is also allowed --
+    # require_active_subscription_or_free_incident's exact condition.
+    append = await client.post(
+        f"/v1/webhooks/incidents/{token}",
+        json={"source": "alert", "summary": "More evidence, same free incident", "incident_id": incident_id},
+    )
+    assert append.status_code == 201, append.text
+    assert append.json()["created_incident"] is False
+
+    # A second, *different* incident is still correctly blocked -- the free
+    # slot is spent.
+    second = await client.post(
+        f"/v1/webhooks/incidents/{token}",
+        json={"source": "alert", "summary": "A second, different incident"},
+    )
+    assert second.status_code == 402
 
 
 @pytest.mark.asyncio

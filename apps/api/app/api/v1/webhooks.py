@@ -130,22 +130,23 @@ async def receive_webhook_event(
         # other not-found resource -- doesn't reveal whether a guessed
         # token is malformed vs. simply doesn't belong to any account.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown webhook token")
-    if not user.has_active_subscription:
-        # Same paywall as postmortems.py's create_incident/record_evidence
-        # -- without this, the webhook token would be a second, unpaywalled
-        # write path into the exact actions the paywall exists to gate.
-        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="An active subscription is required")
-
-    if not await try_record_action(
-        database, user.id, "webhook_event", MAX_WEBHOOK_EVENTS_PER_HOUR, 60 * 60 * 1000
-    ):
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
 
     now = int(time.time() * 1000)
     occurred_at = payload.occurred_at or now
 
+    # Resolve which incident this event targets BEFORE the paywall check --
+    # the free-tier allowance genuinely differs between the two cases
+    # (require_active_subscription_or_free_incident vs.
+    # _or_free_slot in auth.py), so which one applies depends on whether
+    # this is an append or a create, not a single flat check. The previous
+    # version here used a single `has_active_subscription` check for both
+    # cases -- despite this file's own module docstring and public
+    # documentation both claiming this is "the same paywall" as the
+    # authenticated REST endpoints, it silently was not: a brand-new
+    # unpaid account got a 402 on its very first webhook call, even for
+    # what would have been its one free incident through the normal app.
+    # Confirmed live against production before this fix, not assumed.
     incident_id: str | None = None
-    created_incident = False
     if payload.incident_id:
         existing = await database.fetch_one(
             "SELECT id FROM incidents WHERE id=%s AND client_email=%s AND status='open'",
@@ -154,15 +155,33 @@ async def receive_webhook_event(
         if existing:
             incident_id = existing["id"]
 
-    if incident_id is None:
+    created_incident = incident_id is None
+    if created_incident:
+        if not (user.has_active_subscription or user.has_free_incident_available):
+            raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="An active subscription is required")
+    else:
+        if not (user.has_active_subscription or user.free_incident_id == incident_id):
+            raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="An active subscription is required")
+
+    if not await try_record_action(
+        database, user.id, "webhook_event", MAX_WEBHOOK_EVENTS_PER_HOUR, 60 * 60 * 1000
+    ):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
+
+    if created_incident:
         incident_id = f"inc-{now}-{secrets.token_hex(4)}"
-        created_incident = True
         title = payload.title or payload.summary[:200]
         await database.execute(
             """INSERT INTO incidents (id, client_email, title, severity, status, impact, created_at, updated_at)
                VALUES (%s, %s, %s, %s, 'open', NULL, %s, %s)""",
             (incident_id, user.email, title, payload.severity, now, now),
         )
+        # Mirrors create_incident's own ordering exactly (postmortems.py):
+        # only spend the free slot once the insert above actually
+        # succeeded, and only for an account that isn't already a real
+        # subscriber.
+        if not user.has_active_subscription:
+            await database.execute("UPDATE users SET free_incident_id=%s WHERE id=%s", (incident_id, user.id))
 
     evidence_row = await database.fetch_one(
         """INSERT INTO incident_evidence
