@@ -267,6 +267,16 @@ export const api = {
   previousDraft: (incidentId: string) =>
     request<PreviousDraft | null>(`/v1/postmortems/incidents/${incidentId}/previous-draft`),
   qualitySummary: () => request<EvidenceQualitySummary>("/v1/postmortems/quality-summary"),
+  exportData: () => request<ExportedData>("/v1/postmortems/export"),
+};
+
+export type ExportedData = {
+  exported_at: number;
+  account_email: string;
+  incidents: unknown[];
+  evidence: unknown[];
+  postmortems: unknown[];
+  actions: unknown[];
 };
 
 export type SimilarIncident = { incident_title: string; summary: string; root_cause: string };

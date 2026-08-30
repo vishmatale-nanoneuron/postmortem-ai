@@ -68,6 +68,12 @@ MAX_EVIDENCE_PER_HOUR = 100
 MAX_STATUS_CHANGES_PER_HOUR = 60
 MAX_DRAFTS_PER_HOUR = 20
 MAX_EXTRACTIONS_PER_HOUR = 20
+# A full account export is a real, if infrequent, thing a real client does
+# (backing up their own data, or before cancelling) -- generous enough to
+# never interfere with that, still bounded against a scripted hammering of
+# the one read query in this file that scans every incident/evidence/
+# postmortem row for an account at once rather than one row/page at a time.
+MAX_EXPORTS_PER_HOUR = 10
 # Same real cost as drafting's own RAG lookup (one embedding call), just
 # reachable on its own now instead of only ever running invisibly inside
 # draft_postmortem -- rate-limited the same way for the same reason.
@@ -167,6 +173,66 @@ async def list_incidents(
         "SELECT id, title, severity, status FROM incidents WHERE client_email=%s ORDER BY created_at DESC",
         (user.email,),
     )
+
+
+@router.get("/export")
+async def export_my_data(
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> dict[str, object]:
+    """Everything this account owns, as one downloadable JSON document --
+    the real, concrete form 'you can always get your own data out' takes
+    here, not a policy statement on a privacy page with nothing backing
+    it. Every incident, every piece of evidence, and every postmortem
+    (draft or published) this account's client_email owns, in three flat
+    lists rather than nested per-incident (a client restoring into another
+    tool, or just archiving, wants raw rows, not this app's own internal
+    incident-centric shape). Scoped by client_email exactly like every
+    other read in this file -- no cross-account leak is possible here any
+    more than anywhere else.
+    """
+    if not await try_record_action(database, user.id, "export_data", MAX_EXPORTS_PER_HOUR, 60 * 60 * 1000):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
+
+    incidents = await database.fetch_all(
+        """SELECT id, title, severity, status, impact, created_at, updated_at
+           FROM incidents WHERE client_email=%s ORDER BY created_at""",
+        (user.email,),
+    )
+    evidence = await database.fetch_all(
+        """SELECT e.incident_id, e.id::text AS id, e.occurred_at, e.source, e.summary, e.detail,
+                  e.authorized_by, e.recorded_at
+           FROM incident_evidence e
+           JOIN incidents i ON i.id = e.incident_id
+           WHERE i.client_email=%s ORDER BY e.recorded_at""",
+        (user.email,),
+    )
+    postmortems = await database.fetch_all(
+        """SELECT p.incident_id, p.status, p.summary, p.root_cause, p.detection, p.resolution,
+                  p.contributing_factors, p.cited_evidence_ids, p.unsupported_claims_dropped,
+                  p.prompt_version, p.approved_by, p.approved_at, p.is_public, p.slug, p.updated_at
+           FROM incident_postmortems p
+           JOIN incidents i ON i.id = p.incident_id
+           WHERE i.client_email=%s ORDER BY p.updated_at""",
+        (user.email,),
+    )
+    actions = await database.fetch_all(
+        """SELECT p.incident_id, a.title, a.rationale, a.owner, a.status, a.evidence_id::text AS evidence_id,
+                  a.created_at, a.updated_at
+           FROM postmortem_actions a
+           JOIN incident_postmortems p ON p.id = a.postmortem_id
+           JOIN incidents i ON i.id = p.incident_id
+           WHERE i.client_email=%s ORDER BY a.created_at""",
+        (user.email,),
+    )
+    return {
+        "exported_at": int(time.time() * 1000),
+        "account_email": user.email,
+        "incidents": incidents,
+        "evidence": evidence,
+        "postmortems": postmortems,
+        "actions": actions,
+    }
 
 
 class IncidentStatusUpdate(BaseModel):

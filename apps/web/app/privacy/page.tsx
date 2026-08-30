@@ -97,9 +97,14 @@ export default function PrivacyPage() {
       {section(
         3,
         <>
-          <h2 className={h2}>Deleting your account</h2>
+          <h2 className={h2}>Exporting and deleting your account</h2>
           <p className={p}>
-            Deleting your account (from account settings) really deletes your user row, and any pending payment
+            Account settings has a real &quot;Export my data&quot; button -- every incident, evidence entry,
+            postmortem, and action your account owns, as one downloadable JSON file, on demand. Your own backup,
+            not a promise about one.
+          </p>
+          <p className={p}>
+            Deleting your account (from the same page) really deletes your user row, and any pending payment
             claims with it. What it does <em>not</em> delete: incidents and postmortems you already created stay on
             record, the same append-only-history stance this product applies to its own payment audit trail --
             useful if you ever need to prove what a postmortem said after the account that wrote it is gone. If you

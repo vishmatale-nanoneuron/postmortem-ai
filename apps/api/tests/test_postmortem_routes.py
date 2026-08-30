@@ -838,3 +838,45 @@ async def test_the_summary_reflects_real_counts_scoped_to_the_caller(context) ->
     assert body["total_incidents"] >= 1
     assert body["resolved_incidents"] >= 1
     assert any(row["id"] == INCIDENT for row in body["recent_incidents"])
+
+
+@pytest.mark.asyncio
+async def test_export_returns_every_real_record_this_account_owns(context) -> None:
+    """The actual, concrete form of 'you can always get your own data
+    out' -- not a policy statement, a real endpoint returning real rows."""
+    client, _, _, _ = context
+    await seed_two_entries(client)
+    draft = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
+    assert draft.status_code == 201, draft.text
+
+    export = await client.get("/v1/postmortems/export")
+    assert export.status_code == 200
+    body = export.json()
+
+    assert body["account_email"] == CLIENT_EMAIL
+    assert any(row["id"] == INCIDENT for row in body["incidents"])
+    assert len([row for row in body["evidence"] if row["incident_id"] == INCIDENT]) == 2
+    assert any(row["incident_id"] == INCIDENT for row in body["postmortems"])
+    # GOOD_RESPONSE (this file's own fake drafting response) includes one
+    # real, cited action -- confirms the export's join actually reaches
+    # postmortem_actions, not just that the key exists as an empty list.
+    assert any(row["incident_id"] == INCIDENT for row in body["actions"])
+
+
+@pytest.mark.asyncio
+async def test_export_never_includes_another_accounts_data(context) -> None:
+    _, _, database, application = context
+    other_email = "postmortem-test-export-other@example.com"
+    await database.execute("DELETE FROM users WHERE email=%s", (other_email,))
+
+    async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as other:
+        register = await other.post("/v1/auth/register", json={"email": other_email, "password": TEST_PASSWORD})
+        assert register.status_code == 201
+
+        export = await other.get("/v1/postmortems/export")
+        assert export.status_code == 200
+        body = export.json()
+        assert body["account_email"] == other_email
+        assert all(row["id"] != INCIDENT for row in body["incidents"])
+        assert body["evidence"] == []
+        assert body["postmortems"] == []

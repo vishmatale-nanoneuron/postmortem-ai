@@ -1228,6 +1228,34 @@ export function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [exporting, setExporting] = useState(false);
+
+  // The real, concrete form "you can always get your data out" takes --
+  // not a policy promise on the privacy page with nothing backing it.
+  // Downloads client-side via a temporary object URL rather than a plain
+  // link to the API route, since the export needs the caller's own
+  // session cookie (credentials: "include", handled by api.ts's request()
+  // wrapper already) -- a bare <a href> to the API origin wouldn't carry it.
+  async function exportData() {
+    setExporting(true);
+    setError("");
+    try {
+      const data = await api.exportData();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `postmortem-ai-export-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not export your data.");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function save(form: FormData) {
     const email = String(form.get("email") || "").trim();
@@ -1304,6 +1332,19 @@ export function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser
       </form>
       {message && <p className="mt-2 text-sm text-accent">{message}</p>}
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      <div className="mt-4 border-t border-line pt-3">
+        <button
+          className="text-xs text-ink underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={exporting}
+          type="button"
+          onClick={() => void exportData()}
+        >
+          {exporting ? "Preparing export…" : "Export my data (JSON)"}
+        </button>
+        <p className="mt-1 text-xs text-muted">
+          Every incident, evidence entry, postmortem, and action this account owns -- your own backup, on demand.
+        </p>
+      </div>
       {!user.is_founder && (
         <div className="mt-4 border-t border-line pt-3">
           <button className="text-xs text-red-600 underline underline-offset-2" disabled={busy} type="button" onClick={() => void deleteAccount()}>
