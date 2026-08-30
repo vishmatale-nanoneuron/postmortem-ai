@@ -801,8 +801,16 @@ export function PendingClaim({ claim, onChanged }: { claim: Claim; onChanged: ()
   if (editing) {
     return (
       <form action={saveReference} className="rounded-md bg-paper px-3 py-2">
-        <label className={fieldLabel}>Transaction reference</label>
-        <input className={fieldInput} name="reference" defaultValue={claim.reference} required />
+        <label className={fieldLabel} htmlFor={`claim-reference-${claim.id}`}>
+          Transaction reference
+        </label>
+        <input
+          id={`claim-reference-${claim.id}`}
+          className={fieldInput}
+          name="reference"
+          defaultValue={claim.reference}
+          required
+        />
         <div className="flex gap-2">
           <button className={primaryButton} disabled={busy} type="submit">
             Save
@@ -892,8 +900,10 @@ function UpiPayment() {
         <PendingClaim claim={latestPending} onChanged={refresh} />
       ) : (
         <form action={submitReference}>
-          <label className={fieldLabel}>UPI transaction reference / UTR number</label>
-          <input className={fieldInput} name="reference" placeholder="e.g. 123456789012" required />
+          <label className={fieldLabel} htmlFor="upi-reference">
+            UPI transaction reference / UTR number
+          </label>
+          <input id="upi-reference" className={fieldInput} name="reference" placeholder="e.g. 123456789012" required />
           <button className={primaryButton} disabled={busy} type="submit">
             {busy ? "Submitting..." : "I've paid -- submit reference"}
           </button>
@@ -985,8 +995,16 @@ function WirePayment() {
         <PendingClaim claim={latestPending} onChanged={refresh} />
       ) : (
         <form action={submitReference}>
-          <label className={fieldLabel}>Wire transaction reference</label>
-          <input className={fieldInput} name="reference" placeholder="e.g. SWIFT MT103 reference" required />
+          <label className={fieldLabel} htmlFor="wire-reference">
+            Wire transaction reference
+          </label>
+          <input
+            id="wire-reference"
+            className={fieldInput}
+            name="reference"
+            placeholder="e.g. SWIFT MT103 reference"
+            required
+          />
           <button className={primaryButton} disabled={busy} type="submit">
             {busy ? "Submitting..." : "I've paid -- submit reference"}
           </button>
@@ -1135,10 +1153,28 @@ export function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser
       <h2 className="mb-1 text-base font-semibold">Account</h2>
       <p className="mb-3 text-xs text-muted">Update your login email or password.</p>
       <form action={save} className="space-y-1">
-        <label className={fieldLabel}>Email</label>
-        <input className={fieldInput} name="email" type="email" defaultValue={user.email} disabled={user.is_founder} />
-        <label className={fieldLabel}>New password (leave blank to keep current)</label>
-        <input className={fieldInput} name="password" type="password" placeholder="••••••••" minLength={8} />
+        <label className={fieldLabel} htmlFor="account-email">
+          Email
+        </label>
+        <input
+          id="account-email"
+          className={fieldInput}
+          name="email"
+          type="email"
+          defaultValue={user.email}
+          disabled={user.is_founder}
+        />
+        <label className={fieldLabel} htmlFor="account-password">
+          New password (leave blank to keep current)
+        </label>
+        <input
+          id="account-password"
+          className={fieldInput}
+          name="password"
+          type="password"
+          placeholder="••••••••"
+          minLength={8}
+        />
         <button className={secondaryButton} disabled={busy} type="submit">
           Save changes
         </button>
@@ -1211,7 +1247,9 @@ function IntegrationsSettings() {
       </p>
       <form action={save} className="space-y-1">
         <div className="flex items-center justify-between">
-          <label className={fieldLabel}>Slack incoming webhook URL</label>
+          <label className={fieldLabel} htmlFor="slack-webhook-url">
+            Slack incoming webhook URL
+          </label>
           {state.slack_connected && (
             <span className="text-xs text-accent">
               Connected --{" "}
@@ -1227,13 +1265,16 @@ function IntegrationsSettings() {
           )}
         </div>
         <input
+          id="slack-webhook-url"
           className={fieldInput}
           name="slack_webhook_url"
           placeholder={state.slack_connected ? "•••• (connected)" : "https://hooks.slack.com/services/..."}
         />
 
         <div className="flex items-center justify-between">
-          <label className={fieldLabel}>Linear personal API key</label>
+          <label className={fieldLabel} htmlFor="linear-api-key">
+            Linear personal API key
+          </label>
           {state.linear_connected && (
             <span className="text-xs text-accent">
               Connected --{" "}
@@ -1248,10 +1289,23 @@ function IntegrationsSettings() {
             </span>
           )}
         </div>
-        <input className={fieldInput} name="linear_api_key" placeholder={state.linear_connected ? "•••• (connected)" : "lin_api_..."} />
+        <input
+          id="linear-api-key"
+          className={fieldInput}
+          name="linear_api_key"
+          placeholder={state.linear_connected ? "•••• (connected)" : "lin_api_..."}
+        />
 
-        <label className={fieldLabel}>Linear team ID</label>
-        <input className={fieldInput} name="linear_team_id" defaultValue={state.linear_team_id ?? ""} placeholder="team-id" />
+        <label className={fieldLabel} htmlFor="linear-team-id">
+          Linear team ID
+        </label>
+        <input
+          id="linear-team-id"
+          className={fieldInput}
+          name="linear_team_id"
+          defaultValue={state.linear_team_id ?? ""}
+          placeholder="team-id"
+        />
 
         <button className={secondaryButton} disabled={busy} type="submit">
           Save
@@ -1417,8 +1471,11 @@ function EvidenceExtractor({
 
   return (
     <div className="mb-4 rounded-md border border-line bg-paper p-3">
-      <label className={fieldLabel}>Paste a Slack thread, log excerpt, or notes to extract evidence from</label>
+      <label className={fieldLabel} htmlFor="evidence-extract-text">
+        Paste a Slack thread, log excerpt, or notes to extract evidence from
+      </label>
       <textarea
+        id="evidence-extract-text"
         className={cn(fieldInput, "min-h-24 font-mono text-xs")}
         value={text}
         onChange={(event) => setText(event.target.value)}
@@ -1919,17 +1976,23 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
           </ul>
         )}
         <form action={createIncident}>
-          <label className={fieldLabel}>Title</label>
-          <input className={fieldInput} name="title" required />
-          <label className={fieldLabel}>Severity</label>
-          <select className={fieldInput} name="severity" defaultValue="sev2">
+          <label className={fieldLabel} htmlFor="incident-title">
+            Title
+          </label>
+          <input id="incident-title" className={fieldInput} name="title" required />
+          <label className={fieldLabel} htmlFor="incident-severity">
+            Severity
+          </label>
+          <select id="incident-severity" className={fieldInput} name="severity" defaultValue="sev2">
             <option value="sev1">sev1</option>
             <option value="sev2">sev2</option>
             <option value="sev3">sev3</option>
             <option value="sev4">sev4</option>
           </select>
-          <label className={fieldLabel}>Impact</label>
-          <input className={fieldInput} name="impact" />
+          <label className={fieldLabel} htmlFor="incident-impact">
+            Impact
+          </label>
+          <input id="incident-impact" className={fieldInput} name="impact" />
           <button className={primaryButton} disabled={busy} type="submit">
             Create incident
           </button>
@@ -1971,8 +2034,10 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
             )}
             <EvidenceExtractor incidentId={selectedId} onAdded={() => void refreshSelected(selectedId)} setMessage={setMessage} />
             <form action={addEvidence}>
-              <label className={fieldLabel}>Source</label>
-              <select className={fieldInput} name="source" defaultValue="alert">
+              <label className={fieldLabel} htmlFor="evidence-source">
+                Source
+              </label>
+              <select id="evidence-source" className={fieldInput} name="source" defaultValue="alert">
                 <option value="alert">alert</option>
                 <option value="log">log</option>
                 <option value="deploy">deploy</option>
@@ -1980,10 +2045,14 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
                 <option value="human_note">human_note</option>
                 <option value="customer_report">customer_report</option>
               </select>
-              <label className={fieldLabel}>Summary</label>
-              <input className={fieldInput} name="summary" required />
-              <label className={fieldLabel}>Detail (optional)</label>
-              <input className={fieldInput} name="detail" />
+              <label className={fieldLabel} htmlFor="evidence-summary">
+                Summary
+              </label>
+              <input id="evidence-summary" className={fieldInput} name="summary" required />
+              <label className={fieldLabel} htmlFor="evidence-detail">
+                Detail (optional)
+              </label>
+              <input id="evidence-detail" className={fieldInput} name="detail" />
               <button className={primaryButton} disabled={busy} type="submit">
                 Add evidence
               </button>
