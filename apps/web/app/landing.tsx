@@ -149,6 +149,7 @@ const steps = [
 export function HowItWorks() {
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">
+      <h2 className="mb-4 text-center text-xs font-semibold tracking-wide text-muted uppercase">How it works</h2>
       <div className="grid gap-4 sm:grid-cols-3">
         {steps.map((step, i) => (
           <div
