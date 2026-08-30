@@ -251,6 +251,51 @@ async def test_updating_to_an_email_already_taken_is_a_conflict(context) -> None
 
 
 @pytest.mark.asyncio
+async def test_changing_email_does_not_orphan_the_accounts_own_incidents(context) -> None:
+    # Regression test: incidents.client_email / incident_evidence.client_email
+    # are plain text, not a real foreign key into users(email) (deliberately
+    # not one -- see _apply_account_update's own comment on why a strict FK
+    # conflicts with delete_account()'s "keep incidents as history" design).
+    # Confirmed live against production before this fix: changing an
+    # account's email via this exact endpoint made every one of its own
+    # incidents silently vanish from GET /incidents -- still present in the
+    # database, just orphaned under the old email, since incident lookups
+    # filter by the session's *current* email. Fixed by propagating the
+    # email change to both tables in the same transaction as the update.
+    client, database = context
+    await client.post(
+        "/v1/auth/register", json={"email": "auth-test-email-change@example.com", "password": "correct-horse-battery"}
+    )
+    incident = await client.post(
+        "/v1/postmortems/incidents", json={"title": "Before email change", "severity": "sev3"}
+    )
+    assert incident.status_code == 201, incident.text
+    incident_id = incident.json()["id"]
+    evidence = await client.post(
+        f"/v1/postmortems/incidents/{incident_id}/evidence",
+        json={"source": "human_note", "summary": "Something happened", "occurred_at": 1_700_000_000_000},
+    )
+    assert evidence.status_code == 201, evidence.text
+
+    changed = await client.patch("/v1/auth/me", json={"email": "auth-test-email-changed@example.com"})
+    assert changed.status_code == 200, changed.text
+
+    listing = await client.get("/v1/postmortems/incidents")
+    assert listing.status_code == 200
+    assert any(i["id"] == incident_id for i in listing.json()), "incident vanished after the account's own email change"
+
+    evidence_listing = await client.get(f"/v1/postmortems/incidents/{incident_id}/evidence")
+    assert evidence_listing.status_code == 200
+    assert len(evidence_listing.json()) == 1
+
+    # Confirm it's a real propagation, not just a lucky lookup path: the
+    # database rows themselves must carry the new email, not the old one.
+    row = await database.fetch_one("SELECT client_email FROM incidents WHERE id=%s", (incident_id,))
+    assert row is not None
+    assert row["client_email"] == "auth-test-email-changed@example.com"
+
+
+@pytest.mark.asyncio
 async def test_the_founder_account_cannot_reassign_its_own_email(context, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FOUNDER_EMAIL", "auth-test-founder@example.com")
     from app.settings import get_settings

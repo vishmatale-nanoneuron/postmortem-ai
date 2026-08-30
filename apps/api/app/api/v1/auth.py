@@ -302,12 +302,35 @@ async def _apply_account_update(
         values.append(await run_in_threadpool(hash_password, password))
     values.append(user.id)
 
-    row = await database.fetch_one(
-        f"UPDATE users SET {', '.join(fields)} WHERE id=%s "
-        "RETURNING id::text, email, subscription_status, current_period_end, free_incident_id",
-        tuple(values),
-    )
-    assert row is not None
+    # incidents.client_email / incident_evidence.client_email are plain
+    # text, not a real foreign key into users(email) -- deliberately not
+    # one, since delete_account() intentionally keeps an account's
+    # incidents as a historical record after the account itself is
+    # deleted (see its own docstring); a strict FK would force choosing
+    # between ON DELETE CASCADE (destroying that history) or the default
+    # NO ACTION (blocking account deletion outright whenever any incident
+    # exists), either of which breaks an already-tested, deliberate
+    # behavior. But without an FK's ON UPDATE CASCADE, nothing propagated
+    # an email change to these columns -- confirmed live before this fix:
+    # changing an account's email via this exact endpoint made every one
+    # of its own incidents silently and permanently disappear from
+    # GET /incidents (still present in the database, just orphaned under
+    # the old email string, since incident lookups filter by the
+    # session's *current* email). Propagating it here, in the same
+    # transaction as the users row update, is the correct fix that
+    # preserves the delete-keeps-history design instead of fighting it.
+    async with database.transaction() as tx:
+        row = await tx.fetch_one(
+            f"UPDATE users SET {', '.join(fields)} WHERE id=%s "
+            "RETURNING id::text, email, subscription_status, current_period_end, free_incident_id",
+            tuple(values),
+        )
+        assert row is not None
+        if email is not None and email != user.email:
+            await tx.execute("UPDATE incidents SET client_email=%s WHERE client_email=%s", (email, user.email))
+            await tx.execute(
+                "UPDATE incident_evidence SET client_email=%s WHERE client_email=%s", (email, user.email)
+            )
     return _user_out(row, settings)
 
 
