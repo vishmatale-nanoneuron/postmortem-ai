@@ -232,6 +232,15 @@ function FounderDashboard() {
       : `${summary.ai_runs_24h_succeeded}/${summary.ai_runs_24h_total} succeeded in the last 24h`;
   const health24hOk = summary.ai_runs_24h_failed === 0;
 
+  const nav: [string, string][] = [
+    ["AI health", "#founder-ai-health"],
+    ["Stats", "#founder-stats"],
+    ["Funnel", "#founder-funnel"],
+    ["Signups", "#founder-signups"],
+    ["AI runs", "#founder-ai-runs"],
+    ["Payment claims", "#founder-claims"],
+  ];
+
   return (
     <Card className={card}>
       <div className="mb-3 flex items-center justify-between gap-2">
@@ -249,9 +258,31 @@ function FounderDashboard() {
           </button>
         </div>
       </div>
+      {/* A long single-scroll page previously had no way to jump between
+          sections -- a sticky quick-nav so "check payment claims" or
+          "check AI health" doesn't mean scrolling past everything else
+          every single visit. Sticky within the card's own scroll context
+          (top-0 relative to the viewport once this section reaches it),
+          not a page-wide fixed bar, so it never covers the app's own
+          header above it. */}
+      <nav
+        aria-label="Founder dashboard sections"
+        className="sticky top-0 z-10 -mx-4 mb-4 flex flex-wrap gap-1.5 border-b border-line bg-white/95 px-4 py-2 backdrop-blur-sm sm:-mx-5 sm:px-5"
+      >
+        {nav.map(([label, href]) => (
+          <a
+            key={href}
+            href={href}
+            className="rounded-md px-2 py-1 text-xs text-muted transition hover:bg-paper hover:text-ink"
+          >
+            {label}
+          </a>
+        ))}
+      </nav>
       <div
+        id="founder-ai-health"
         className={cn(
-          "mb-4 flex items-center justify-between rounded-md px-3 py-2 text-sm",
+          "scroll-mt-16 mb-4 flex items-center justify-between rounded-md px-3 py-2 text-sm",
           summary.ai_runs_24h_total === 0
             ? "bg-paper text-muted"
             : health24hOk
@@ -264,7 +295,7 @@ function FounderDashboard() {
           <span>avg {summary.ai_runs_24h_avg_latency_ms} ms</span>
         )}
       </div>
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div id="founder-stats" className="mb-4 grid scroll-mt-16 grid-cols-2 gap-3 sm:grid-cols-4">
         {stats.map(([label, value]) => (
           <div key={label} className="rounded-md bg-paper px-3 py-2">
             <div className="text-lg font-semibold text-ink">{value}</div>
@@ -272,7 +303,9 @@ function FounderDashboard() {
           </div>
         ))}
       </div>
-      <ConversionFunnelPanel funnel={summary.conversion_funnel} />
+      <div id="founder-funnel" className="scroll-mt-16">
+        <ConversionFunnelPanel funnel={summary.conversion_funnel} />
+      </div>
       {summary.ai_runs_by_feature.length > 0 && (
         <>
           <h3 className="mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">AI features (by prompt version)</h3>
@@ -290,7 +323,9 @@ function FounderDashboard() {
           </ul>
         </>
       )}
-      <h3 className="mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">Recent signups</h3>
+      <h3 id="founder-signups" className="mb-1.5 scroll-mt-16 text-xs font-medium tracking-wide text-muted uppercase">
+        Recent signups
+      </h3>
       <ul className="mb-4 space-y-1 text-sm">
         {summary.recent_users.length === 0 ? (
           <li className="text-muted">None yet.</li>
@@ -303,7 +338,9 @@ function FounderDashboard() {
           ))
         )}
       </ul>
-      <h3 className="mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">Recent AI runs</h3>
+      <h3 id="founder-ai-runs" className="mb-1.5 scroll-mt-16 text-xs font-medium tracking-wide text-muted uppercase">
+        Recent AI runs
+      </h3>
       <ul className="space-y-1 text-sm">
         {summary.recent_ai_runs.length === 0 ? (
           <li className="text-muted">None yet.</li>
@@ -319,7 +356,9 @@ function FounderDashboard() {
           ))
         )}
       </ul>
-      <PaymentClaimsReview />
+      <div id="founder-claims" className="scroll-mt-16">
+        <PaymentClaimsReview />
+      </div>
     </Card>
   );
 }
