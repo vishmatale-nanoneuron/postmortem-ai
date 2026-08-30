@@ -26,6 +26,9 @@ import { auth, type AuthUser } from "./auth";
 import { cn } from "@/lib/utils";
 import { GroundingExample, Hero, HowItWorks, WhatThisIsnt } from "./landing";
 import { usePolling } from "./use-polling";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import {
   emailOnlySchema,
   evidenceSchema,
@@ -37,14 +40,31 @@ import {
   registerSchema,
 } from "./validation";
 
-const card = "rounded-lg border border-line bg-white p-4 shadow-sm mb-4";
+// Used as an override on shadcn's <Card>, not a standalone className --
+// Card's own defaults (flex flex-col + gap-(--card-spacing), ring-1
+// ring-foreground/10, text-card-foreground, py-(--card-spacing)) are all
+// shadcn's own theme tokens/layout, tuned for shadcn's default palette,
+// not this app's own ink/paper/line/muted design system. Every one of
+// those is explicitly neutralized here so wrapping the existing plain
+// block sections in a real <Card> doesn't change their layout or colors
+// at all -- block+gap-0 cancels the flex/gap, ring-0 removes the added
+// ring border, text-ink matches this app's own body text color.
+const card =
+  "block gap-0 animate-in fade-in slide-in-from-bottom-1 rounded-lg border border-line bg-white p-4 py-4 text-ink shadow-sm ring-0 duration-500 mb-4";
 const fieldLabel = "block text-xs font-medium text-muted mb-1";
 const fieldInput =
   "w-full rounded-md border border-line px-3 py-2 mb-3 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent";
+// Kept as plain <button>+className rather than swapping to shadcn's
+// <Button> (Base UI) primitive across these 13 call sites -- several
+// submit inside React 19's <form action={fn}> pattern, and that
+// interaction isn't one this session could verify by rendering in a real
+// browser. Polished with the same hover-lift already proven on the
+// landing page's CTA instead: real, safe animation without changing the
+// underlying element.
 const primaryButton =
-  "rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper transition hover:bg-ink/90 disabled:cursor-not-allowed disabled:opacity-50";
+  "rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper transition-[transform,background-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-ink/90 hover:shadow-md disabled:pointer-events-none disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none";
 const secondaryButton =
-  "rounded-md border border-line px-4 py-2 text-sm font-medium text-ink transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-50";
+  "rounded-md border border-line px-4 py-2 text-sm font-medium text-ink transition-[transform,background-color] duration-200 hover:-translate-y-0.5 hover:bg-paper disabled:pointer-events-none disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50";
 
 const CURRENCY_SYMBOLS: Record<string, string> = { INR: "₹", USD: "$", GBP: "£", EUR: "€" };
 function currencySymbol(currency: string): string {
@@ -191,7 +211,7 @@ function FounderDashboard() {
   const health24hOk = summary.ai_runs_24h_failed === 0;
 
   return (
-    <section className={card}>
+    <Card className={card}>
       <div className="mb-3 flex items-center justify-between gap-2">
         <h2 className="text-base font-semibold">Founder dashboard</h2>
         <div className="flex items-center gap-2 text-xs text-muted">
@@ -277,7 +297,7 @@ function FounderDashboard() {
         )}
       </ul>
       <PaymentClaimsReview />
-    </section>
+    </Card>
   );
 }
 
@@ -614,7 +634,7 @@ function SubscribeGate({ hasFreeIncidentAvailable }: { hasFreeIncidentAvailable:
   const expired = status?.subscription_status === "expired";
 
   return (
-    <section className={card}>
+    <Card className={card}>
       <h2 className="mb-2 text-base font-semibold">
         {expired
           ? "Your subscription has expired"
@@ -655,7 +675,7 @@ function SubscribeGate({ hasFreeIncidentAvailable }: { hasFreeIncidentAvailable:
         </button>
       </div>
       {tab === "card" ? <CardPayment /> : tab === "upi" ? <UpiPayment /> : <WirePayment />}
-    </section>
+    </Card>
   );
 }
 
@@ -971,7 +991,7 @@ function ManageBilling() {
   if (!status) return null;
 
   return (
-    <section className={card}>
+    <Card className={card}>
       <div className="text-sm">
         <span className="font-medium">Subscription:</span> {status.subscription_status}
         {status.current_period_end && (
@@ -1006,7 +1026,7 @@ function ManageBilling() {
           {status.subscription_status === "expired" ? " to make a new payment and reactivate." : " to renew or ask a question."}
         </p>
       )}
-    </section>
+    </Card>
   );
 }
 
@@ -1058,7 +1078,7 @@ export function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser
   }
 
   return (
-    <section className={card}>
+    <Card className={card}>
       <h2 className="mb-1 text-base font-semibold">Account</h2>
       <p className="mb-3 text-xs text-muted">Update your login email or password.</p>
       <form action={save} className="space-y-1">
@@ -1079,7 +1099,7 @@ export function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser
           </button>
         </div>
       )}
-    </section>
+    </Card>
   );
 }
 
@@ -1131,7 +1151,7 @@ function IntegrationsSettings() {
   if (!state) return null;
 
   return (
-    <section className={card}>
+    <Card className={card}>
       <h2 className="mb-1 text-base font-semibold">Integrations</h2>
       <p className="mb-3 text-xs text-muted">
         Publishing a postmortem notifies Slack and creates a Linear ticket per action item, when connected.
@@ -1186,7 +1206,7 @@ function IntegrationsSettings() {
       </form>
       {message && <p className="mt-2 text-sm text-accent">{message}</p>}
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-    </section>
+    </Card>
   );
 }
 
@@ -1238,7 +1258,7 @@ function WebhookSettings() {
   if (!token) return null;
 
   return (
-    <section className={card}>
+    <Card className={card}>
       <h2 className="mb-1 text-base font-semibold">Webhook</h2>
       <p className="mb-3 text-xs text-muted">
         POST JSON to this URL from any monitoring tool or script to create an incident or add evidence
@@ -1256,7 +1276,7 @@ function WebhookSettings() {
         Rotate URL
       </button>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-    </section>
+    </Card>
   );
 }
 
@@ -1381,6 +1401,40 @@ function EvidenceExtractor({
 // because a reviewer calibrating how much to trust a draft benefits from
 // knowing which kind of evidence it actually rests on.
 const AUTOMATED_SOURCES = new Set(["alert", "log", "deploy", "metric"]);
+
+// Same Badge-plus-app-token-override pattern already used in landing.tsx's
+// Hero (variant="outline" as the structural base, this app's own
+// ink/paper/line/muted/accent colors layered on via className, not
+// shadcn's own default theme tokens).
+function SeverityBadge({ severity }: { severity: string }) {
+  const isCritical = severity === "sev1" || severity === "sev2";
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "shrink-0 border-line font-mono text-[10px] uppercase",
+        isCritical ? "border-red-200 bg-red-50 text-red-700" : "text-muted",
+      )}
+    >
+      {severity}
+    </Badge>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const isResolved = status === "resolved";
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "shrink-0 border-line text-[10px]",
+        isResolved ? "bg-paper text-muted" : "border-accent/30 bg-accent/10 text-accent",
+      )}
+    >
+      {status}
+    </Badge>
+  );
+}
 
 function EvidenceQualitySummary({ evidence }: { evidence: Evidence[] }) {
   const automated = evidence.filter((e) => AUTOMATED_SOURCES.has(e.source)).length;
@@ -1684,7 +1738,7 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
       <WebhookSettings />
 
       {summary && (
-        <section className={card}>
+        <Card className={card}>
           <h2 className="mb-3 text-base font-semibold">Dashboard</h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {(
@@ -1702,10 +1756,10 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
             ))}
           </div>
           <QualitySummaryPanel />
-        </section>
+        </Card>
       )}
 
-      <section className={card}>
+      <Card className={card}>
         <div className="mb-3 flex items-center justify-between gap-2">
           <h2 className="text-base font-semibold">Incidents</h2>
           <div className="flex items-center gap-2 text-xs text-muted">
@@ -1725,25 +1779,33 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
           <p className="mb-3 text-sm text-muted">No incidents yet.</p>
         ) : (
           <ul className="mb-3 space-y-1.5">
-            {incidents.map((incident) => (
-              <li key={incident.id} className="flex items-center gap-1.5">
+            {incidents.map((incident, i) => (
+              <li
+                key={incident.id}
+                style={{ animationDelay: `${Math.min(i, 10) * 40}ms` }}
+                className="flex animate-in fade-in slide-in-from-bottom-1 items-center gap-1.5 fill-mode-backwards duration-300"
+              >
                 <button
-                  className={`w-full rounded-md px-3 py-2 text-left text-sm transition ${
+                  className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition ${
                     selectedId === incident.id ? "bg-accent/10 font-medium text-accent" : "hover:bg-paper"
                   }`}
                   onClick={() => setSelectedId(incident.id)}
                   type="button"
                 >
-                  {incident.title} <span className="text-muted">({incident.severity}, {incident.status})</span>
+                  <span className="min-w-0 flex-1 truncate">{incident.title}</span>
+                  <SeverityBadge severity={incident.severity} />
+                  <StatusBadge status={incident.status} />
                 </button>
-                <button
-                  className="shrink-0 rounded-md border border-line px-2 py-1 text-xs text-muted transition hover:bg-paper disabled:opacity-50"
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 border-line text-xs text-muted hover:bg-paper hover:text-ink"
                   disabled={busy}
                   onClick={() => void toggleResolved(incident)}
                   type="button"
                 >
                   {incident.status === "resolved" ? "Reopen" : "Mark resolved"}
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
@@ -1764,11 +1826,11 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
             Create incident
           </button>
         </form>
-      </section>
+      </Card>
 
       {selectedId && (
         <>
-          <section className={card}>
+          <Card className={card}>
             <h2 className="mb-3 text-base font-semibold">Evidence</h2>
             {evidence.length > 0 && <EvidenceQualitySummary evidence={evidence} />}
             {evidence.length === 0 ? (
@@ -1802,9 +1864,9 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
                 Add evidence
               </button>
             </form>
-          </section>
+          </Card>
 
-          <section className={card}>
+          <Card className={card}>
             <h2 className="mb-3 text-base font-semibold">Draft</h2>
             <SimilarIncidentsPanel incidentId={selectedId} />
             <button
@@ -1886,7 +1948,7 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
                 )}
               </div>
             )}
-          </section>
+          </Card>
         </>
       )}
 
