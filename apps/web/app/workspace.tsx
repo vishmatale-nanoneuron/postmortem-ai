@@ -31,6 +31,20 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import {
   emailOnlySchema,
   evidenceSchema,
@@ -509,16 +523,33 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
       <GroundingExample />
       <HowItWorks />
       <div id="get-started" className="mx-auto mb-16 max-w-sm px-4">
-        <div className="rounded-xl border border-line bg-white p-6 shadow-lg shadow-ink/5">
+        <Card className="animate-in fade-in slide-in-from-bottom-1 rounded-xl border border-line bg-white p-6 text-ink shadow-lg shadow-ink/5 duration-500">
           <h2 className="mb-1 text-lg font-semibold text-ink">{heading}</h2>
           <p className="mb-4 text-sm text-muted">{subheading}</p>
           <form action={submit}>
-            <label className={fieldLabel}>Email</label>
-            <input className={fieldInput} name="email" type="email" required />
+            <Label className={fieldLabel} htmlFor="auth-email">
+              Email
+            </Label>
+            <Input
+              id="auth-email"
+              className="mb-3 rounded-md border-line text-ink focus-visible:ring-accent/30"
+              name="email"
+              type="email"
+              required
+            />
             {mode !== "forgot" && (
               <>
-                <label className={fieldLabel}>Password</label>
-                <input className={fieldInput} name="password" type="password" minLength={8} required />
+                <Label className={fieldLabel} htmlFor="auth-password">
+                  Password
+                </Label>
+                <Input
+                  id="auth-password"
+                  className="mb-3 rounded-md border-line text-ink focus-visible:ring-accent/30"
+                  name="password"
+                  type="password"
+                  minLength={8}
+                  required
+                />
               </>
             )}
             <button className={`${primaryButton} w-full`} disabled={busy} type="submit">
@@ -526,14 +557,14 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
             </button>
           </form>
           {message && (
-            <p role="status" className="mt-3 text-sm text-accent">
-              {message}
-            </p>
+            <Alert role="status" className="mt-3 animate-in fade-in border-accent/30 bg-accent/10 text-accent">
+              <AlertDescription className="text-accent">{message}</AlertDescription>
+            </Alert>
           )}
           {error && (
-            <p role="status" className="mt-3 text-sm text-red-600">
-              {error}
-            </p>
+            <Alert role="status" variant="destructive" className="mt-3 animate-in fade-in border-red-200 bg-red-50">
+              <AlertDescription className="text-red-700">{error}</AlertDescription>
+            </Alert>
           )}
           {mode === "login" && (
             <p className="mt-2 text-sm text-muted">
@@ -597,7 +628,7 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
               </button>
             )}
           </p>
-        </div>
+        </Card>
       </div>
       <WhatThisIsnt />
     </main>
@@ -1251,7 +1282,6 @@ function WebhookSettings() {
   }
 
   async function rotate() {
-    if (!window.confirm("Rotate your webhook URL? Any tool still configured with the old one will stop working.")) return;
     setBusy(true);
     setError("");
     try {
@@ -1281,9 +1311,29 @@ function WebhookSettings() {
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      <button className="mt-3 text-xs text-red-600 underline underline-offset-2" disabled={busy} type="button" onClick={() => void rotate()}>
-        Rotate URL
-      </button>
+      <AlertDialog>
+        <AlertDialogTrigger
+          className="mt-3 text-xs text-red-600 underline underline-offset-2"
+          disabled={busy}
+          render={<button type="button" />}
+        >
+          Rotate URL
+        </AlertDialogTrigger>
+        <AlertDialogContent className="border-line bg-white text-ink">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-ink">Rotate your webhook URL?</AlertDialogTitle>
+            <AlertDialogDescription className="text-muted">
+              Any tool still configured with the old URL will stop working immediately. This can&apos;t be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-line text-ink hover:bg-paper">Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 text-white hover:bg-red-700" onClick={() => void rotate()}>
+              Rotate URL
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
     </Card>
   );
