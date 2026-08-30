@@ -32,6 +32,7 @@ import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -202,7 +203,7 @@ function FounderDashboard() {
   usePolling(refresh, POLL_INTERVAL_MS);
 
   if (error) return <p className="mb-4 text-sm text-red-600">{error}</p>;
-  if (!summary) return null;
+  if (!summary) return <DashboardSkeleton />;
 
   const stats: [string, number | string][] = [
     ["Users", summary.total_users],
@@ -323,10 +324,12 @@ function PaymentClaimsReview() {
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   async function refresh() {
     setClaims(await founderBilling.paymentClaims());
     setLastUpdated(Date.now());
+    setLoaded(true);
   }
 
   async function manualRefresh() {
@@ -409,6 +412,15 @@ function PaymentClaimsReview() {
           </button>
         </div>
       </div>
+      {!loaded ? (
+        <ul className="space-y-1.5" aria-hidden="true">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <li key={i}>
+              <Skeleton className="h-10 w-full rounded-md bg-paper" />
+            </li>
+          ))}
+        </ul>
+      ) : (
       <ul className="space-y-1.5 text-sm">
         {claims.length === 0 ? (
           <li className="text-muted">None yet.</li>
@@ -459,6 +471,7 @@ function PaymentClaimsReview() {
           ))
         )}
       </ul>
+      )}
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
     </>
   );
@@ -1480,6 +1493,34 @@ function SeverityBadge({ severity }: { severity: string }) {
   );
 }
 
+// Shown in place of a stats grid while its first fetch is in flight, so a
+// dashboard loads in as "clearly still loading" rather than a blank gap
+// that's indistinguishable from a slow/broken request.
+function DashboardSkeleton({ tiles = 4 }: { tiles?: number }) {
+  return (
+    <Card className={card}>
+      <Skeleton className="mb-3 h-5 w-40 bg-paper" />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {Array.from({ length: tiles }).map((_, i) => (
+          <Skeleton key={i} className="h-14 rounded-md bg-paper" />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function IncidentListSkeleton() {
+  return (
+    <ul className="mb-3 space-y-1.5" aria-hidden="true">
+      {Array.from({ length: 3 }).map((_, i) => (
+        <li key={i}>
+          <Skeleton className="h-10 w-full rounded-md bg-paper" />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function StatusBadge({ status }: { status: string }) {
   const isResolved = status === "resolved";
   return (
@@ -1636,6 +1677,10 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
   // waiting out the interval. lastUpdated/refreshing surface both.
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  // Distinguishes "still loading the first time" from "loaded, genuinely
+  // zero incidents" -- incidents/summary both start empty/null either way,
+  // so without this the loading and empty states were visually identical.
+  const [loaded, setLoaded] = useState(false);
 
   async function refreshIncidents() {
     // Independent GETs -- run in parallel rather than serially, halving
@@ -1644,6 +1689,7 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
     setIncidents(incidentsResult);
     setSummary(summaryResult);
     setLastUpdated(Date.now());
+    setLoaded(true);
   }
 
   async function manualRefresh() {
@@ -1796,6 +1842,7 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
       <IntegrationsSettings />
       <WebhookSettings />
 
+      {!loaded && <DashboardSkeleton />}
       {summary && (
         <Card className={card}>
           <h2 className="mb-3 text-base font-semibold">Dashboard</h2>
@@ -1834,7 +1881,9 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
             </button>
           </div>
         </div>
-        {incidents.length === 0 ? (
+        {!loaded ? (
+          <IncidentListSkeleton />
+        ) : incidents.length === 0 ? (
           <p className="mb-3 text-sm text-muted">No incidents yet.</p>
         ) : (
           <ul className="mb-3 space-y-1.5">
