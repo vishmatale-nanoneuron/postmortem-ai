@@ -112,6 +112,49 @@ async def test_a_webhook_event_with_a_matching_open_incident_id_appends_evidence
 
 
 @pytest.mark.asyncio
+async def test_a_webhook_event_with_resolved_true_closes_the_incident(context) -> None:
+    client, database, token = context
+    first = await client.post(
+        f"/v1/webhooks/incidents/{token}",
+        json={"source": "alert", "summary": "Latency spike", "title": "Checkout latency"},
+    )
+    incident_id = first.json()["incident_id"]
+
+    resolve = await client.post(
+        f"/v1/webhooks/incidents/{token}",
+        json={"source": "metric", "summary": "Latency back to baseline", "incident_id": incident_id, "resolved": True},
+    )
+    assert resolve.status_code == 201, resolve.text
+    assert resolve.json()["resolved"] is True
+    assert resolve.json()["created_incident"] is False
+
+    row = await database.fetch_one("SELECT status FROM incidents WHERE id=%s", (incident_id,))
+    assert row is not None
+    assert row["status"] == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_resolved_true_on_a_brand_new_incident_does_not_resolve_it(context) -> None:
+    # Deliberate scope limit (see WebhookEventIn.resolved's own docstring):
+    # resolved only ever takes effect when appending to an *existing*
+    # incident. A brand-new incident being born already resolved isn't a
+    # real scenario -- confirm the flag is silently ignored here, not
+    # accidentally honored.
+    client, database, token = context
+    response = await client.post(
+        f"/v1/webhooks/incidents/{token}",
+        json={"source": "alert", "summary": "New alert", "title": "New incident", "resolved": True},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["created_incident"] is True
+    assert response.json()["resolved"] is False
+
+    row = await database.fetch_one("SELECT status FROM incidents WHERE id=%s", (response.json()["incident_id"],))
+    assert row is not None
+    assert row["status"] == "open"
+
+
+@pytest.mark.asyncio
 async def test_a_webhook_event_naming_a_resolved_incident_starts_a_new_one_instead(context) -> None:
     client, database, token = context
     first = await client.post(

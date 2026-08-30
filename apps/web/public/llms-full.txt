@@ -96,7 +96,25 @@ immediately invalidates every URL built with the old token). Posting to
 the same write path and paywall as the authenticated app, just authenticated
 by token instead of session cookie. Rate-limited to 100 events/hour per
 account. Deliberately generic (no named parsing for Datadog, PagerDuty, etc.)
-— put the sending tool's name in `summary`/`detail`.
+— put the sending tool's name in `summary`/`detail`. An optional `resolved:
+true` on an event appending to an existing incident auto-transitions it to
+resolved, matching the resolved-event most real monitoring tools already
+send — one-directional only (never reopens a resolved incident) and only
+takes effect when appending to an existing incident, never on creation.
+
+## Similar-incident retrieval, evidence quality, and draft comparison
+
+`GET /incidents/{id}/similar` runs the same account-scoped, published-only
+similarity search drafting already uses internally as hidden RAG context,
+reachable directly so a human can see "3 incidents like this before" ahead
+of drafting, not just have it invisibly shape the model's output.
+`GET /quality-summary` aggregates how often each of the four required
+sections came back as the fixed unsupported marker across the account's
+own drafts — a pattern-level signal about evidence habits, not a
+judgment on any single draft. `GET /incidents/{id}/previous-draft`
+returns the snapshot taken immediately before the most recent re-draft
+overwrote it (`postmortem_draft_history`, append-only), so a re-draft is
+comparable to what it replaced instead of an unexplained rewrite.
 
 ## MCP
 

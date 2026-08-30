@@ -9,12 +9,15 @@ import {
   type Claim,
   type DashboardSummary,
   type Evidence,
+  type EvidenceQualitySummary,
   type ExtractedEvidence,
   type FounderSummary,
   type Incident,
   type Integrations,
   type PaymentClaim,
   type Postmortem,
+  type PreviousDraft,
+  type SimilarIncident,
   type UpiPricing,
   webhooks,
   type WirePricing,
@@ -1370,11 +1373,147 @@ function EvidenceExtractor({
   );
 }
 
+// Automated sources (an alert, a log line, a deploy note, a metric) carry
+// different weight than a human's own recollection typed in after the
+// fact -- an incident grounded only in human_note/customer_report entries
+// is a real, honest signal worth surfacing, not because either source type
+// is invalid (both are real evidence, both can ground a draft), but
+// because a reviewer calibrating how much to trust a draft benefits from
+// knowing which kind of evidence it actually rests on.
+const AUTOMATED_SOURCES = new Set(["alert", "log", "deploy", "metric"]);
+
+function EvidenceQualitySummary({ evidence }: { evidence: Evidence[] }) {
+  const automated = evidence.filter((e) => AUTOMATED_SOURCES.has(e.source)).length;
+  const human = evidence.length - automated;
+  const parts: string[] = [];
+  if (automated > 0) parts.push(`${automated} automated source${automated === 1 ? "" : "s"}`);
+  if (human > 0) parts.push(`${human} human note${human === 1 ? "" : "s"}`);
+  return (
+    <p className="mb-3 text-xs text-muted">
+      Grounded in {parts.join(" + ")}
+      {automated === 0 && " -- no automated signal backs this incident yet."}
+    </p>
+  );
+}
+
+// Surfaces the same similar-past-incident retrieval that already runs
+// silently inside drafting (as hidden RAG context for the model) directly
+// to the human -- so a real pattern ("you've had 3 incidents like this")
+// is something a reviewer can actually notice, not just something that
+// invisibly shapes the model's output.
+function SimilarIncidentsPanel({ incidentId }: { incidentId: string }) {
+  const [similar, setSimilar] = useState<SimilarIncident[] | null>(null);
+
+  useEffect(() => {
+    setSimilar(null);
+    api
+      .similarIncidents(incidentId)
+      .then(setSimilar)
+      .catch(() => setSimilar([]));
+  }, [incidentId]);
+
+  if (!similar || similar.length === 0) return null;
+
+  return (
+    <div className="mb-3 rounded-md bg-paper px-3 py-2.5 text-xs">
+      <p className="mb-1.5 font-medium text-ink">Similar past incidents ({similar.length})</p>
+      <ul className="space-y-1.5">
+        {similar.map((item) => (
+          <li key={item.incident_title + item.summary} className="text-muted">
+            <span className="font-medium text-ink">{item.incident_title}</span> -- {item.root_cause}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1.5 text-muted">Reference only -- shown for context, never used as a citation source.</p>
+    </div>
+  );
+}
+
+// A field-by-field comparison against the draft this one replaced, rather
+// than a re-draft looking like an unexplained full rewrite. Deliberately
+// simple (changed vs. unchanged per structured field, not a text diff
+// library) -- this app's draft shape is already four discrete sections,
+// so a real diffing library would be solving a problem that doesn't exist
+// here.
+function DraftComparison({ postmortem, previous }: { postmortem: Postmortem; previous: PreviousDraft }) {
+  const fields: [string, string, string][] = [
+    ["Summary", previous.summary, postmortem.summary],
+    ["Root cause", previous.root_cause, postmortem.root_cause],
+    ["Detection", previous.detection, postmortem.detection],
+    ["Resolution", previous.resolution, postmortem.resolution],
+  ];
+  const changed = fields.filter(([, before, after]) => before !== after);
+
+  if (changed.length === 0) {
+    return <p className="mt-3 text-xs text-muted">Unchanged from the previous draft.</p>;
+  }
+
+  return (
+    <div className="mt-3 rounded-md bg-paper px-3 py-2.5 text-xs">
+      <p className="mb-1.5 font-medium text-ink">
+        Changed since the previous draft ({new Date(previous.superseded_at).toLocaleString()}):
+      </p>
+      <ul className="space-y-2">
+        {changed.map(([label, before]) => (
+          <li key={label}>
+            <span className="font-medium text-ink">{label}</span>
+            <div className="mt-0.5 rounded bg-red-50 px-2 py-1 text-red-700 line-through">{before}</div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// Turns the fixed "Not established by the recorded evidence." marker from
+// a per-draft error message into an account-wide, self-fetching signal --
+// not a quality judgment on any single incident, but something worth
+// noticing as a pattern (e.g. resolution unsupported on most incidents
+// might mean evidence habits worth adjusting).
+function QualitySummaryPanel() {
+  const [summary, setSummary] = useState<EvidenceQualitySummary | null>(null);
+
+  useEffect(() => {
+    api.qualitySummary().then(setSummary).catch(() => setSummary(null));
+  }, []);
+
+  if (!summary || summary.total_drafts === 0) return null;
+
+  const sectionLabels: Record<string, string> = {
+    summary: "Summary",
+    root_cause: "Root cause",
+    detection: "Detection",
+    resolution: "Resolution",
+  };
+  const sectionsWithGaps = Object.entries(summary.unsupported_by_section).filter(([, count]) => count > 0);
+
+  return (
+    <div className="mt-3 rounded-md bg-paper px-3 py-2.5 text-xs text-muted">
+      <p>
+        <span className="font-medium text-ink">{summary.drafts_with_any_unsupported_section}</span> of{" "}
+        <span className="font-medium text-ink">{summary.total_drafts}</span> drafts have at least one section marked
+        unsupported.
+      </p>
+      {sectionsWithGaps.length > 0 && (
+        <p className="mt-1">
+          Most often:{" "}
+          {sectionsWithGaps
+            .sort((a, b) => b[1] - a[1])
+            .map(([section, count]) => `${sectionLabels[section] ?? section} (${count})`)
+            .join(", ")}
+          . Not a mistake -- usually means that section&apos;s evidence wasn&apos;t recorded.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [evidence, setEvidence] = useState<Evidence[]>([]);
   const [postmortem, setPostmortem] = useState<Postmortem | null>(null);
+  const [previousDraft, setPreviousDraft] = useState<PreviousDraft | null>(null);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1425,8 +1564,10 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
     // whole thing (and lose the evidence result) on that expected 404.
     const evidencePromise = api.listEvidence(id);
     const postmortemPromise = api.getPostmortem(id).catch(() => null);
+    const previousDraftPromise = api.previousDraft(id).catch(() => null);
     setEvidence(await evidencePromise);
     setPostmortem(await postmortemPromise);
+    setPreviousDraft(await previousDraftPromise);
   }
 
   useEffect(() => {
@@ -1493,6 +1634,12 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
     try {
       const draft = await api.draft(selectedId);
       setPostmortem(draft);
+      // The snapshot of whatever this draft just replaced is only written
+      // server-side inside the draft call above -- fetch it fresh
+      // afterward (sequentially, not in parallel with the draft call
+      // itself, since it doesn't exist until that call has committed)
+      // rather than reusing whatever was loaded before this ran.
+      setPreviousDraft(await api.previousDraft(selectedId).catch(() => null));
       setMessage("Draft generated.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not draft postmortem.");
@@ -1554,6 +1701,7 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
               </div>
             ))}
           </div>
+          <QualitySummaryPanel />
         </section>
       )}
 
@@ -1622,6 +1770,7 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
         <>
           <section className={card}>
             <h2 className="mb-3 text-base font-semibold">Evidence</h2>
+            {evidence.length > 0 && <EvidenceQualitySummary evidence={evidence} />}
             {evidence.length === 0 ? (
               <p className="mb-3 text-sm text-muted">No evidence recorded yet.</p>
             ) : (
@@ -1657,6 +1806,7 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
 
           <section className={card}>
             <h2 className="mb-3 text-base font-semibold">Draft</h2>
+            <SimilarIncidentsPanel incidentId={selectedId} />
             <button
               className={primaryButton}
               disabled={busy || evidence.length === 0}
@@ -1665,6 +1815,7 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
             >
               Generate draft
             </button>
+            {postmortem && previousDraft && <DraftComparison postmortem={postmortem} previous={previousDraft} />}
             {postmortem && (
               <div className="mt-4 space-y-2 text-sm">
                 <p>

@@ -312,6 +312,95 @@ async def test_a_grounded_draft_is_stored_with_its_citations(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_no_previous_draft_before_the_first_ever_draft(context) -> None:
+    client, _, _, _ = context
+    await seed_two_entries(client)
+    response = await client.get(f"/v1/postmortems/incidents/{INCIDENT}/previous-draft")
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+@pytest.mark.asyncio
+async def test_redrafting_snapshots_the_previous_draft_for_comparison(context) -> None:
+    # Regression coverage for the real gap this closes: re-drafting used to
+    # silently overwrite incident_postmortems' single row with no way to
+    # see what changed. First draft -> previous-draft still None (nothing
+    # to compare against yet). Second draft (different fake response) ->
+    # previous-draft now returns exactly what the first draft produced.
+    client, provider, database, _ = context
+    await seed_two_entries(client)
+
+    first = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
+    assert first.status_code == 201, first.text
+    first_summary = first.json()["summary"]
+
+    still_none = await client.get(f"/v1/postmortems/incidents/{INCIDENT}/previous-draft")
+    assert still_none.json() is None
+
+    provider.response = {**GOOD_RESPONSE, "summary": {"text": "A materially different summary.", "citations": [1]}}
+    second = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
+    assert second.status_code == 201, second.text
+    assert second.json()["summary"] != first_summary
+
+    previous = await client.get(f"/v1/postmortems/incidents/{INCIDENT}/previous-draft")
+    assert previous.status_code == 200
+    body = previous.json()
+    assert body is not None
+    assert body["summary"] == first_summary
+
+    row = await database.fetch_one(
+        "SELECT count(*) AS n FROM postmortem_draft_history WHERE incident_id=%s", (INCIDENT,)
+    )
+    assert row is not None
+    assert row["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_evidence_quality_summary_counts_unsupported_sections(context) -> None:
+    client, provider, _, _ = context
+    await add_evidence(client)
+
+    # A response with no root_cause citation -- ground_draft replaces it
+    # with the fixed UNSUPPORTED marker, which quality-summary should then
+    # count.
+    provider.response = {
+        "summary": {"text": "Something happened.", "citations": [1]},
+        "root_cause": {"text": "An uncited guess.", "citations": []},
+        "detection": {"text": "An alert fired.", "citations": [1]},
+        "resolution": {"text": "It was resolved.", "citations": [1]},
+        "contributing_factors": [],
+        "actions": [],
+    }
+    draft = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")
+    assert draft.status_code == 201, draft.text
+    assert draft.json()["root_cause"] == "Not established by the recorded evidence."
+
+    summary = await client.get("/v1/postmortems/quality-summary")
+    assert summary.status_code == 200
+    body = summary.json()
+    assert body["total_drafts"] >= 1
+    assert body["drafts_with_any_unsupported_section"] >= 1
+    assert body["unsupported_by_section"]["root_cause"] >= 1
+    assert body["unsupported_by_section"]["summary"] == 0
+
+
+@pytest.mark.asyncio
+async def test_similar_incidents_endpoint_is_reachable_and_excludes_self(context) -> None:
+    client, _, _, _ = context
+    await seed_two_entries(client)
+    response = await client.get(f"/v1/postmortems/incidents/{INCIDENT}/similar")
+    assert response.status_code == 200
+    # No other published postmortems exist yet in this test's isolated
+    # data -- the real behavior under test is that this endpoint is
+    # reachable and returns a well-formed (possibly empty) list, not that
+    # retrieval finds anything here specifically (see
+    # test_a_published_postmortem_surfaces_as_rag_context_for_a_later_draft
+    # below for the real similarity-retrieval coverage against
+    # find_similar_postmortems directly).
+    assert isinstance(response.json(), list)
+
+
+@pytest.mark.asyncio
 async def test_a_published_postmortem_surfaces_as_rag_context_for_a_later_draft(context) -> None:
     # RAG: a published postmortem should show up as reference context on a
     # LATER incident's draft -- and, just as importantly, that context

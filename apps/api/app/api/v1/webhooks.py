@@ -97,12 +97,24 @@ class WebhookEventIn(BaseModel):
     # existing one, which already has its own title/severity).
     title: str | None = Field(default=None, max_length=200)
     severity: str = Field(default="sev3", pattern="^(sev1|sev2|sev3|sev4)$")
+    # Most real monitoring tools (PagerDuty, Datadog) already send a
+    # distinct "resolved" event when the underlying condition clears --
+    # this lets that map directly to the incident's own open/resolved
+    # status instead of requiring a human to notice and click resolve by
+    # hand. Deliberately narrow: only ever transitions open -> resolved,
+    # never resolved -> open (a resolved incident reopening itself from an
+    # automated signal, with no human involved, is a much riskier default
+    # than the one-directional case) and only takes effect when appending
+    # to an existing incident -- a brand-new incident being born resolved
+    # is not a real scenario worth building for.
+    resolved: bool = False
 
 
 class WebhookEventOut(BaseModel):
     incident_id: str
     evidence_id: str
     created_incident: bool
+    resolved: bool
 
 
 @router.post("/incidents/{token}", status_code=status.HTTP_201_CREATED, response_model=WebhookEventOut)
@@ -162,10 +174,21 @@ async def receive_webhook_event(
     )
     assert evidence_row is not None
 
+    resolved = False
+    if payload.resolved and not created_incident:
+        updated = await database.execute(
+            "UPDATE incidents SET status='resolved', updated_at=%s WHERE id=%s AND client_email=%s AND status='open'",
+            (now, incident_id, user.email),
+        )
+        resolved = bool(updated)
+
     logger.info(
-        "webhook_event_received incident_id=%s created_incident=%s source=%s",
+        "webhook_event_received incident_id=%s created_incident=%s source=%s resolved=%s",
         incident_id,
         created_incident,
         payload.source,
+        resolved,
     )
-    return WebhookEventOut(incident_id=incident_id, evidence_id=evidence_row["id"], created_incident=created_incident)
+    return WebhookEventOut(
+        incident_id=incident_id, evidence_id=evidence_row["id"], created_incident=created_incident, resolved=resolved
+    )

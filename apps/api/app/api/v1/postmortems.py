@@ -35,6 +35,7 @@ from ...security.rate_limit import try_record_action
 from ...services.postmortem import (
     EXTRACTION_PROMPT_VERSION,
     PROMPT_VERSION,
+    UNSUPPORTED,
     EvidenceEntry,
     bound_evidence_by_chars,
     build_draft_request,
@@ -67,6 +68,10 @@ MAX_EVIDENCE_PER_HOUR = 100
 MAX_STATUS_CHANGES_PER_HOUR = 60
 MAX_DRAFTS_PER_HOUR = 20
 MAX_EXTRACTIONS_PER_HOUR = 20
+# Same real cost as drafting's own RAG lookup (one embedding call), just
+# reachable on its own now instead of only ever running invisibly inside
+# draft_postmortem -- rate-limited the same way for the same reason.
+MAX_SIMILAR_SEARCHES_PER_HOUR = 20
 RATE_LIMITED_DETAIL = "Too many requests. Try again later."
 
 
@@ -227,6 +232,56 @@ async def dashboard_summary(
     }
 
 
+class EvidenceQualitySummaryOut(BaseModel):
+    total_drafts: int
+    drafts_with_any_unsupported_section: int
+    unsupported_by_section: dict[str, int]
+
+
+@router.get("/quality-summary", response_model=EvidenceQualitySummaryOut)
+async def evidence_quality_summary(
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> EvidenceQualitySummaryOut:
+    """Turns 'Not established by the recorded evidence.' from a per-draft
+    error marker into an account-wide signal. The fixed UNSUPPORTED text is
+    already stored verbatim in whichever of the four required sections
+    couldn't be grounded (see ground_draft) -- this just counts how often
+    that's true across the account's own drafts, broken down by which
+    section it happens to most, rather than inventing a new tracking
+    mechanism for something the data already records. Nothing here is a
+    quality judgment on any one incident (an incomplete-evidence incident
+    isn't a mistake) -- it's meant to help someone notice a pattern, e.g.
+    'resolution is unsupported on 8 of my last 10 incidents' suggesting
+    evidence habits worth adjusting, not any single draft worth doubting.
+    """
+    row = await database.fetch_one(
+        """SELECT count(*) AS total,
+                  count(*) FILTER (
+                      WHERE p.summary = %s OR p.root_cause = %s OR p.detection = %s OR p.resolution = %s
+                  ) AS any_unsupported,
+                  count(*) FILTER (WHERE p.summary = %s) AS summary_unsupported,
+                  count(*) FILTER (WHERE p.root_cause = %s) AS root_cause_unsupported,
+                  count(*) FILTER (WHERE p.detection = %s) AS detection_unsupported,
+                  count(*) FILTER (WHERE p.resolution = %s) AS resolution_unsupported
+           FROM incident_postmortems p
+           JOIN incidents i ON i.id = p.incident_id
+           WHERE i.client_email = %s""",
+        (UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, user.email),
+    )
+    row = row or {}
+    return EvidenceQualitySummaryOut(
+        total_drafts=row.get("total", 0) or 0,
+        drafts_with_any_unsupported_section=row.get("any_unsupported", 0) or 0,
+        unsupported_by_section={
+            "summary": row.get("summary_unsupported", 0) or 0,
+            "root_cause": row.get("root_cause_unsupported", 0) or 0,
+            "detection": row.get("detection_unsupported", 0) or 0,
+            "resolution": row.get("resolution_unsupported", 0) or 0,
+        },
+    )
+
+
 @router.post("/incidents/{incident_id}/evidence", status_code=status.HTTP_201_CREATED)
 async def record_evidence(
     incident_id: str,
@@ -360,6 +415,53 @@ async def extract_evidence(
         extra={"incident_id": incident_id, "entries_extracted": len(extracted)},
     )
     return [ExtractedEvidenceOut(source=e.source, summary=e.summary, detail=e.detail) for e in extracted]
+
+
+class SimilarIncidentOut(BaseModel):
+    incident_title: str
+    summary: str
+    root_cause: str
+
+
+@router.get("/incidents/{incident_id}/similar", response_model=list[SimilarIncidentOut])
+async def similar_incidents(
+    incident_id: str,
+    database: Database = Depends(get_database),
+    user: User = Depends(require_active_subscription_or_free_incident),
+    settings: Settings = Depends(get_settings),
+) -> list[SimilarIncidentOut]:
+    """Surfaces the same similar-past-incident retrieval draft_postmortem
+    already runs internally as hidden RAG context for the model -- reachable
+    directly now so a human can see "you've had 3 incidents like this
+    before" *before* committing to a draft, not just have it silently
+    shape the model's output. Same retrieval, same account-scoped,
+    published-only pool (see ai/rag.py's find_similar_postmortems) --
+    intentionally not a second implementation.
+    """
+    if not await try_record_action(
+        database, user.id, "similar_incidents", MAX_SIMILAR_SEARCHES_PER_HOUR, 60 * 60 * 1000
+    ):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
+
+    incident = await require_incident(database, incident_id, user.email)
+    evidence = await load_evidence(database, incident_id)
+    if not evidence:
+        return []
+
+    evidence = bound_evidence_by_chars(evidence)
+    try:
+        query_text = f"{incident.get('title')}\n{render_evidence(evidence)}"
+        embedding_client = get_embedding_client(settings.gemini_api_key)
+        query_embedding = await embed_text(embedding_client, query_text)
+        similar = await find_similar_postmortems(database, user.email, query_embedding, incident_id)
+    except Exception:
+        logger.warning("similar_incidents_lookup_failed", extra={"incident_id": incident_id}, exc_info=True)
+        return []
+
+    return [
+        SimilarIncidentOut(incident_title=s.incident_title, summary=s.summary, root_cause=s.root_cause)
+        for s in similar
+    ]
 
 
 @router.post("/incidents/{incident_id}/draft", status_code=status.HTTP_201_CREATED)
@@ -510,6 +612,40 @@ async def draft_postmortem(
     now = int(time.time() * 1000)
 
     async with database.transaction() as tx:
+        # Snapshot whatever draft already exists (if any -- the first-ever
+        # draft has nothing to snapshot) before the UPSERT below overwrites
+        # it, so a re-draft is comparable to what it replaced instead of
+        # just silently vanishing. Same transaction as the overwrite: this
+        # snapshot and the new draft either both land or neither does.
+        existing = await tx.fetch_one(
+            """SELECT summary, root_cause, detection, resolution, contributing_factors, unsupported_claims_dropped
+               FROM incident_postmortems WHERE incident_id=%s""",
+            (incident_id,),
+        )
+        if existing is not None:
+            await tx.execute(
+                """INSERT INTO postmortem_draft_history
+                     (incident_id, summary, root_cause, detection, resolution,
+                      contributing_factors, unsupported_claims_dropped, superseded_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    incident_id,
+                    existing["summary"],
+                    existing["root_cause"],
+                    existing["detection"],
+                    existing["resolution"],
+                    # existing["contributing_factors"] comes back from SELECT
+                    # already deserialized into a native Python list (psycopg3's
+                    # jsonb adapter does this automatically on read) -- writing
+                    # it into another jsonb column needs the same explicit
+                    # json.dumps() every other write in this file uses (see
+                    # json_list below), not the raw list passed straight through.
+                    json_list(existing["contributing_factors"]),
+                    existing["unsupported_claims_dropped"],
+                    now,
+                ),
+            )
+
         postmortem = await tx.fetch_one(
             """INSERT INTO incident_postmortems
                  (id,incident_id,status,summary,root_cause,detection,resolution,
@@ -565,6 +701,51 @@ async def draft_postmortem(
             )
 
     return await _load_postmortem(database, incident_id)
+
+
+class PreviousDraftOut(BaseModel):
+    summary: str
+    root_cause: str
+    detection: str
+    resolution: str
+    contributing_factors: list[str]
+    unsupported_claims_dropped: int
+    superseded_at: int
+
+
+@router.get("/incidents/{incident_id}/previous-draft", response_model=PreviousDraftOut | None)
+async def previous_draft(
+    incident_id: str,
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> PreviousDraftOut | None:
+    """The one snapshot draft_postmortem takes immediately before each
+    overwrite (see postmortem_draft_history, migration 0021) -- lets a
+    client diff the current draft against what it replaced instead of a
+    re-draft looking like an unexplained full rewrite. Read-only; nothing
+    here can grant the paywalled actions drafting/publishing require --
+    the same current_user dependency /incidents/{id} itself uses, since
+    viewing your own history is meant to stay reachable even for a lapsed
+    account (see require_active_subscription's own docstring)."""
+    await require_incident(database, incident_id, user.email)
+    row = await database.fetch_one(
+        """SELECT summary, root_cause, detection, resolution, contributing_factors,
+                  unsupported_claims_dropped, superseded_at
+           FROM postmortem_draft_history WHERE incident_id=%s
+           ORDER BY superseded_at DESC LIMIT 1""",
+        (incident_id,),
+    )
+    if row is None:
+        return None
+    return PreviousDraftOut(
+        summary=row["summary"],
+        root_cause=row["root_cause"],
+        detection=row["detection"],
+        resolution=row["resolution"],
+        contributing_factors=list(row["contributing_factors"] or []),
+        unsupported_claims_dropped=row["unsupported_claims_dropped"],
+        superseded_at=row["superseded_at"],
+    )
 
 
 @router.get("/incidents/{incident_id}")

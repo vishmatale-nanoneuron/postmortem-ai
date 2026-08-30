@@ -254,4 +254,27 @@ export const api = {
   getPostmortem: (incidentId: string) => request<Postmortem>(`/v1/postmortems/incidents/${incidentId}`),
   publish: (incidentId: string) =>
     request<Postmortem>(`/v1/postmortems/incidents/${incidentId}/publish`, { method: "POST" }),
+  similarIncidents: (incidentId: string) =>
+    request<SimilarIncident[]>(`/v1/postmortems/incidents/${incidentId}/similar`),
+  previousDraft: (incidentId: string) =>
+    request<PreviousDraft | null>(`/v1/postmortems/incidents/${incidentId}/previous-draft`),
+  qualitySummary: () => request<EvidenceQualitySummary>("/v1/postmortems/quality-summary"),
+};
+
+export type SimilarIncident = { incident_title: string; summary: string; root_cause: string };
+
+export type PreviousDraft = {
+  summary: string;
+  root_cause: string;
+  detection: string;
+  resolution: string;
+  contributing_factors: string[];
+  unsupported_claims_dropped: number;
+  superseded_at: number;
+};
+
+export type EvidenceQualitySummary = {
+  total_drafts: number;
+  drafts_with_any_unsupported_section: number;
+  unsupported_by_section: Record<string, number>;
 };
