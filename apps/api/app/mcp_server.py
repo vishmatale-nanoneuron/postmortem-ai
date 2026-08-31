@@ -9,9 +9,13 @@ Auth: FastMCP 1.9.x's Context has no direct HTTP-request accessor, so
 authentication happens one layer down, in MCPBearerAuthMiddleware, which
 resolves an `Authorization: Bearer <session JWT>` header (the same tokens
 /v1/auth/login issues) into a User stored in a contextvar every tool reads
-from. Subscription gating is enforced identically to the REST API
-(_require_active_subscription mirrors auth.require_active_subscription) --
-an MCP client gets no more access than a browser session would.
+from. Subscription gating mirrors the REST API's own three-tier scheme
+exactly (require_mcp_active_subscription /
+require_mcp_active_subscription_or_free_slot /
+_or_free_incident, matching auth.py's own three functions) -- an MCP
+client gets no more and no less access than a browser session would,
+including the free-tier allowance (fixed here after being found missing,
+the same bug class the webhook path had).
 """
 
 import contextvars
@@ -68,6 +72,36 @@ def require_mcp_active_subscription() -> User:
     return user
 
 
+def require_mcp_active_subscription_or_free_slot() -> User:
+    """Mirrors auth.require_active_subscription_or_free_slot exactly --
+    gates incident *creation* specifically, letting a brand-new unpaid
+    account through once (its own free incident). Found via a real audit
+    (not assumed) that create_incident/add_evidence/draft_postmortem here
+    all used the flat require_mcp_active_subscription() above -- the same
+    bug class as the webhook path's own free-tier gap fixed earlier: a
+    brand-new signup calling this tool via an MCP client (Claude Desktop,
+    etc.) got an immediate 'subscription required' error on their very
+    first call, unable to reach the free incident the REST API and the
+    webhook path both correctly grant."""
+    user = current_mcp_user()
+    if user.has_active_subscription or user.has_free_incident_available:
+        return user
+    raise PermissionError("An active subscription is required")
+
+
+def require_mcp_active_subscription_or_free_incident(incident_id: str) -> User:
+    """Mirrors auth.require_active_subscription_or_free_incident -- gates
+    actions on an *existing* incident (evidence, drafting): a subscriber,
+    or a free-tier account acting on specifically the one incident its
+    free slot was spent on, never any other incident_id."""
+    user = current_mcp_user()
+    if user.has_active_subscription:
+        return user
+    if user.free_incident_id is not None and user.free_incident_id == incident_id:
+        return user
+    raise PermissionError("An active subscription is required")
+
+
 class MCPBearerAuthMiddleware:
     """Resolves the caller from an Authorization: Bearer <session JWT>
     header into a User, stored in a contextvar tools read from."""
@@ -90,8 +124,19 @@ class MCPBearerAuthMiddleware:
             payload = verify_token(self.settings.session_secret, token)
             if payload is not None:
                 database: Database = request.app.state.database
+                # free_incident_id was missing from this SELECT entirely --
+                # found via a real audit of the free-tier gating functions
+                # above, not assumed. Every MCP-authenticated User's
+                # free_incident_id defaulted to the dataclass's own None,
+                # regardless of the real column value, which would have
+                # made has_free_incident_available/the free-incident checks
+                # above evaluate against a permanently-empty value instead
+                # of the account's real state -- the same class of gap as
+                # auth.py's own current_user (REST) and
+                # user_by_webhook_token, both of which already select it.
                 row = await database.fetch_one(
-                    "SELECT id::text, email, subscription_status, current_period_end FROM users WHERE id=%s",
+                    "SELECT id::text, email, subscription_status, current_period_end, free_incident_id"
+                    " FROM users WHERE id=%s",
                     (payload.user_id,),
                 )
                 if row:
@@ -101,6 +146,7 @@ class MCPBearerAuthMiddleware:
                         is_founder=_is_founder(row["email"], self.settings.founder_email),
                         subscription_status=row["subscription_status"],
                         current_period_end=row["current_period_end"],
+                        free_incident_id=row["free_incident_id"],
                     )
 
         if user is None:
@@ -261,9 +307,11 @@ def build_mcp_server(get_database: Callable[[], Database], settings: Settings) -
     @_audited("create_incident")
     async def create_incident(title: str, severity: str, impact: str | None = None) -> dict:
         """Create a new incident. severity must be one of sev1/sev2/sev3/sev4.
-        Requires an active subscription, same as the product's own paywall."""
+        Requires an active subscription -- or, for a brand-new account,
+        this is allowed to be the one free incident, same as the product's
+        own paywall."""
         database = get_database()
-        user = require_mcp_active_subscription()
+        user = require_mcp_active_subscription_or_free_slot()
         payload = postmortem_routes.IncidentCreate(title=title, severity=severity, impact=impact)
         return await postmortem_routes.create_incident(payload, database=database, user=user)
 
@@ -276,7 +324,7 @@ def build_mcp_server(get_database: Callable[[], Database], settings: Settings) -
         incidents. source must be one of alert/log/deploy/metric/
         human_note/customer_report. occurred_at is a Unix ms timestamp."""
         database = get_database()
-        user = require_mcp_active_subscription()
+        user = require_mcp_active_subscription_or_free_incident(incident_id)
         payload = postmortem_routes.EvidenceCreate(
             occurred_at=occurred_at, source=source, summary=summary, detail=detail
         )
@@ -291,7 +339,7 @@ def build_mcp_server(get_database: Callable[[], Database], settings: Settings) -
         is still cited-or-dropped -- see the grounding algorithm in
         CLAUDE.md."""
         database = get_database()
-        user = require_mcp_active_subscription()
+        user = require_mcp_active_subscription_or_free_incident(incident_id)
         provider = create_model_provider(settings)
         return await postmortem_routes.draft_postmortem(
             incident_id, database=database, provider=provider, user=user, settings=settings

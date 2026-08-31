@@ -168,8 +168,48 @@ async def test_a_founder_can_call_get_founder_summary(context) -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_unpaid_client_cannot_create_an_incident_via_mcp(context) -> None:
+async def test_a_brand_new_unpaid_client_can_create_its_free_incident_via_mcp(context) -> None:
+    """Real bug found by auditing every entry path for free-tier parity,
+    not assumed fixed: create_incident/add_evidence/draft_postmortem here
+    all used the flat require_mcp_active_subscription() (no free-slot
+    allowance) until this fix -- a brand-new signup calling this tool via
+    an MCP client (Claude Desktop, etc.) got an immediate 'subscription
+    required' error on their very first call, unable to reach the exact
+    free incident the REST API and the webhook path both correctly grant.
+    The CLIENT_EMAIL account in this fixture is a genuinely fresh signup
+    (registered above, never given a subscription, free_incident_id never
+    set) -- the real case this bug affected."""
     app, _founder_token, client_token = context
+    async with mcp_session(app, token=client_token) as session:
+        result = await session.call_tool("create_incident", {"title": "Free incident via MCP", "severity": "sev2"})
+    assert result.isError is not True, result.content
+
+
+@pytest.mark.asyncio
+async def test_an_account_that_already_spent_its_free_slot_is_blocked_via_mcp(context) -> None:
+    from app.database import Database
+    from app.settings import get_settings
+
+    app, _founder_token, client_token = context
+    database = Database(get_settings())
+    await database.open()
+    try:
+        # incidents.client_email isn't a cascading FK (kept as historical
+        # record even after the account that created it is deleted, by
+        # design) -- clean up this hardcoded id explicitly so a prior
+        # run's leftover row can't collide with this one.
+        await database.execute("DELETE FROM incidents WHERE id='mcp-free-slot-used'")
+        await database.execute(
+            """INSERT INTO incidents (id, client_email, title, severity, status, created_at, updated_at)
+               VALUES ('mcp-free-slot-used', %s, 'Used elsewhere', 'sev3', 'open', 0, 0)""",
+            (CLIENT_EMAIL,),
+        )
+        await database.execute(
+            "UPDATE users SET free_incident_id='mcp-free-slot-used' WHERE email=%s", (CLIENT_EMAIL,)
+        )
+    finally:
+        await database.close()
+
     async with mcp_session(app, token=client_token) as session:
         result = await session.call_tool("create_incident", {"title": "Should be blocked", "severity": "sev2"})
     assert result.isError is True
