@@ -26,7 +26,7 @@ import {
 } from "./api";
 import { auth, type AuthUser } from "./auth";
 import { cn } from "@/lib/utils";
-import { GroundingExample, Hero, HowItWorks, SiteFooter, WhatThisIsnt } from "./landing";
+import { GroundingExample, Hero, HowItWorks, IntegrationLogos, SiteFooter, WhatThisIsnt } from "./landing";
 import { usePolling } from "./use-polling";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -675,6 +675,7 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
       <Hero />
       <GroundingExample />
       <HowItWorks />
+      <IntegrationLogos />
       <div id="get-started" className="mx-auto mb-16 max-w-sm px-4">
         <Card className="animate-in fade-in slide-in-from-bottom-1 rounded-xl border border-line bg-white p-6 text-ink shadow-lg shadow-ink/5 duration-500">
           <h2 className="mb-1 text-lg font-semibold text-ink">{heading}</h2>

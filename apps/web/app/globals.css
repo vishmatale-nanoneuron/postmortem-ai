@@ -213,3 +213,24 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* IntegrationLogos' marquee (landing.tsx): the track holds the logo list
+   twice back-to-back and scrolls exactly one list-width left, so the loop
+   point is invisible -- a plain CSS animation, no carousel library needed
+   for something this simple. Paused on hover/focus so a logo's title
+   (native <title> tooltip) is readable, and collapsed to a static row by
+   the prefers-reduced-motion block above (animation-duration: 0.01ms
+   effectively freezes it in place rather than jumping to the end, since
+   the transform at any given instant is still mid-track). */
+@keyframes logo-marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+.logo-marquee-track {
+  animation: logo-marquee 28s linear infinite;
+}
+.logo-marquee-track:hover,
+.logo-marquee-track:focus-within {
+  animation-play-state: paused;
+}

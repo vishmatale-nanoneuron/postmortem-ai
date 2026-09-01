@@ -19,6 +19,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { LogoMark } from "./logo-mark";
+import { GeminiLogo, LinearLogo, StripeLogo } from "./brand-icons";
 
 export function Hero() {
   return (
@@ -173,6 +174,44 @@ export function HowItWorks() {
             </Card>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// A real "who we integrate with" bar -- not a "trusted by" customer-logo
+// wall. Every logo here is a service this app actually calls in production
+// (Stripe for billing, Google Gemini as the drafting model) or an account
+// can actually connect (Linear, via IntegrationsSettings in workspace.tsx).
+// Deliberately doesn't include Slack: this app has a real Slack webhook
+// integration too, but Slack's mark isn't in the CC0 icon set this file
+// sources from and hand-drawing an approximation of someone else's
+// trademark is worse than a shorter, accurate list. The list is duplicated
+// once so the CSS marquee (globals.css) can loop seamlessly; aria-hidden on
+// the duplicate keeps a screen reader from announcing each logo twice.
+const integrations = [
+  { name: "Stripe", Icon: StripeLogo },
+  { name: "Linear", Icon: LinearLogo },
+  { name: "Google Gemini", Icon: GeminiLogo },
+];
+
+export function IntegrationLogos() {
+  return (
+    <div className="mx-auto max-w-3xl px-4 py-8">
+      <h2 className="mb-6 text-center text-xs font-semibold tracking-wide text-muted uppercase">Integrates with</h2>
+      <div className="overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_10%,black_90%,transparent)]">
+        <div className="logo-marquee-track flex w-max items-center gap-16">
+          {[integrations, integrations].map((group, groupIndex) => (
+            <div key={groupIndex} className="flex shrink-0 items-center gap-16" aria-hidden={groupIndex === 1}>
+              {group.map(({ name, Icon }) => (
+                <div key={name} className="flex items-center gap-2.5 text-muted transition-colors hover:text-ink">
+                  <Icon className="size-5 shrink-0" />
+                  <span className="text-sm font-medium whitespace-nowrap">{name}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
