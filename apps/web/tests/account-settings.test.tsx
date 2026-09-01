@@ -6,7 +6,18 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../app/api", () => ({}));
+// AccountSettings now also renders ActivityLogPanel and its own export
+// button, both of which call real api.* methods (activityLog on mount,
+// exportData only on click) -- an empty mock broke as soon as
+// ActivityLogPanel's useEffect ran, caught by this test suite itself,
+// not assumed. Resolving to an empty array is the correct "nothing to
+// show yet" case ActivityLogPanel already handles by rendering nothing.
+vi.mock("../app/api", () => ({
+  api: {
+    activityLog: vi.fn().mockResolvedValue([]),
+    exportData: vi.fn(),
+  },
+}));
 vi.mock("../app/auth", () => ({
   auth: {
     updateAccount: vi.fn(),

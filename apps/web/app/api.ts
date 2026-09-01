@@ -279,6 +279,7 @@ export const api = {
     request<PreviousDraft | null>(`/v1/postmortems/incidents/${incidentId}/previous-draft`),
   qualitySummary: () => request<EvidenceQualitySummary>("/v1/postmortems/quality-summary"),
   exportData: () => request<ExportedData>("/v1/postmortems/export"),
+  activityLog: () => request<ActivityLogEntry[]>("/v1/postmortems/activity-log"),
   updateStatusPageVisibility: (incidentId: string, isPublic: boolean) =>
     request<Incident>(`/v1/postmortems/incidents/${incidentId}/status-page`, {
       method: "PATCH",
@@ -303,6 +304,8 @@ export type ExportedData = {
   postmortems: unknown[];
   actions: unknown[];
 };
+
+export type ActivityLogEntry = { action: string; incident_id: string | null; detail: string | null; created_at: number };
 
 export type SimilarIncident = { incident_title: string; summary: string; root_cause: string };
 

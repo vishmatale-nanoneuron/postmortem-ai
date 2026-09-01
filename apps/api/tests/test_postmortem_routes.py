@@ -923,6 +923,69 @@ async def test_resolution_ms_is_null_for_an_open_incident(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_activity_log_records_real_account_actions(context) -> None:
+    """A real, queryable 'who did what, when' audit trail -- the kind of
+    thing a larger team evaluating this product would actually check for,
+    and genuinely useful for a single-person account too. Not a mock: this
+    drives the exact same endpoints a real client calls, then reads the
+    log back and checks it actually recorded what happened."""
+    # The fixture's own base INCIDENT is inserted via a raw SQL statement,
+    # not through the real API -- deliberately, so most tests don't need
+    # to drive a whole create-incident call just to get a fixture. That
+    # means it was never itself logged as "incident_created", so this test
+    # creates its own incident through the real endpoint to actually
+    # exercise (and verify) that log entry too, not just the later ones.
+    client, _, _, _ = context
+    created = await client.post(
+        "/v1/postmortems/incidents", json={"title": "Activity-logged incident", "severity": "sev2"}
+    )
+    assert created.status_code == 201, created.text
+    new_incident_id = created.json()["id"]
+
+    await client.post(
+        f"/v1/postmortems/incidents/{new_incident_id}/evidence",
+        json={"occurred_at": 1_000, "source": "alert", "summary": "Something happened", "detail": None},
+    )
+    draft = await client.post(f"/v1/postmortems/incidents/{new_incident_id}/draft")
+    assert draft.status_code == 201, draft.text
+    publish = await client.post(f"/v1/postmortems/incidents/{new_incident_id}/publish")
+    assert publish.status_code == 200, publish.text
+    resolved = await client.patch(
+        f"/v1/postmortems/incidents/{new_incident_id}/status", json={"status": "resolved"}
+    )
+    assert resolved.status_code == 200
+
+    log_response = await client.get("/v1/postmortems/activity-log")
+    assert log_response.status_code == 200
+    entries = log_response.json()
+    actions = [row["action"] for row in entries]
+    assert "incident_created" in actions
+    assert "postmortem_published" in actions
+    assert "status_changed" in actions
+
+    published_entry = next(row for row in entries if row["action"] == "postmortem_published")
+    assert published_entry["incident_id"] == new_incident_id
+    assert CLIENT_EMAIL in (published_entry["detail"] or "")
+
+
+@pytest.mark.asyncio
+async def test_activity_log_is_scoped_to_the_caller_only(context) -> None:
+    client, _, database, application = context
+    other_email = "postmortem-test-activity-log-other@example.com"
+    await database.execute("DELETE FROM users WHERE email=%s", (other_email,))
+
+    await client.post("/v1/postmortems/incidents", json={"title": "Should not leak", "severity": "sev2"})
+
+    async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as other:
+        register = await other.post("/v1/auth/register", json={"email": other_email, "password": TEST_PASSWORD})
+        assert register.status_code == 201
+
+        log_response = await other.get("/v1/postmortems/activity-log")
+        assert log_response.status_code == 200
+        assert log_response.json() == []
+
+
+@pytest.mark.asyncio
 async def test_export_returns_every_real_record_this_account_owns(context) -> None:
     """The actual, concrete form of 'you can always get your own data
     out' -- not a policy statement, a real endpoint returning real rows."""

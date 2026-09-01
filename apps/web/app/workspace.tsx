@@ -5,6 +5,7 @@ import {
   billing,
   founderBilling,
   integrations,
+  type ActivityLogEntry,
   type BillingStatus,
   type Claim,
   type DashboardSummary,
@@ -1362,6 +1363,7 @@ export function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser
           Every incident, evidence entry, postmortem, and action this account owns -- your own backup, on demand.
         </p>
       </div>
+      <ActivityLogPanel />
       {!user.is_founder && (
         <div className="mt-4 border-t border-line pt-3">
           <button className="text-xs text-red-600 underline underline-offset-2" disabled={busy} type="button" onClick={() => void deleteAccount()}>
@@ -1370,6 +1372,55 @@ export function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser
         </div>
       )}
     </Card>
+  );
+}
+
+// A real, queryable "who did what, when" audit trail -- the kind of thing
+// a larger team evaluating this product actually checks for before
+// adopting any tool, and genuinely useful for a single-person account
+// checking their own history too. Self-contained/self-fetching, same
+// pattern as QualitySummaryPanel and ConversionFunnelPanel elsewhere in
+// this file.
+function ActivityLogPanel() {
+  const [entries, setEntries] = useState<ActivityLogEntry[] | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    api.activityLog().then(setEntries).catch(() => setEntries([]));
+  }, []);
+
+  const ACTION_LABELS: Record<string, string> = {
+    incident_created: "Incident created",
+    status_changed: "Status changed",
+    postmortem_published: "Postmortem published",
+    data_exported: "Data exported",
+  };
+
+  if (!entries || entries.length === 0) return null;
+
+  return (
+    <div className="mt-4 border-t border-line pt-3">
+      <button
+        className="text-xs text-ink underline underline-offset-2"
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        {expanded ? "Hide" : "Show"} activity log ({entries.length})
+      </button>
+      {expanded && (
+        <ul className="mt-2 space-y-1 text-sm">
+          {entries.map((entry, i) => (
+            <li key={i} className="flex justify-between rounded-md bg-paper px-3 py-1.5 text-xs">
+              <span>
+                {ACTION_LABELS[entry.action] ?? entry.action}
+                {entry.detail && <span className="text-muted"> -- {entry.detail}</span>}
+              </span>
+              <span className="text-muted">{new Date(entry.created_at).toLocaleString()}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

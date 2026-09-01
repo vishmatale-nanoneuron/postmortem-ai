@@ -108,6 +108,25 @@ async def require_incident(database: Database, incident_id: str, email: str) -> 
     return incident
 
 
+async def log_activity(
+    database: Database, client_email: str, action: str, incident_id: str | None = None, detail: str | None = None
+) -> None:
+    """A real, queryable 'who did what, when' audit trail -- the same
+    append-only-ledger discipline this app already applies to payment
+    claims (payment_claim_events) and postmortem drafts
+    (postmortem_draft_history), extended to account-level actions. Best-
+    effort by design: a logging failure must never block the real action
+    it's recording -- see every call site below, all wrapped so an audit-
+    log write failure degrades to a log line, not a broken request."""
+    try:
+        await database.execute(
+            "INSERT INTO account_activity_log (client_email, action, incident_id, detail, created_at) VALUES (%s, %s, %s, %s, %s)",
+            (client_email, action, incident_id, detail, int(time.time() * 1000)),
+        )
+    except Exception:
+        logger.warning("activity_log_write_failed", extra={"action": action, "incident_id": incident_id}, exc_info=True)
+
+
 async def load_evidence(database: Database, incident_id: str) -> list[EvidenceEntry]:
     rows = await database.fetch_all(
         """SELECT id::text, occurred_at, source, summary, detail, authorized_by
@@ -161,6 +180,7 @@ async def create_incident(
     # an incident that doesn't exist).
     if not user.has_active_subscription:
         await database.execute("UPDATE users SET free_incident_id=%s WHERE id=%s", (incident_id, user.id))
+    await log_activity(database, user.email, "incident_created", incident_id, payload.title)
     return dict(row or {})
 
 
@@ -184,6 +204,33 @@ async def list_incidents(
            FROM incidents WHERE client_email=%s ORDER BY created_at DESC""",
         (user.email,),
     )
+
+
+class ActivityLogEntryOut(BaseModel):
+    action: str
+    incident_id: str | None
+    detail: str | None
+    created_at: int
+
+
+MAX_ACTIVITY_LOG_ROWS = 200
+
+
+@router.get("/activity-log", response_model=list[ActivityLogEntryOut])
+async def get_activity_log(
+    database: Database = Depends(get_database), user: User = Depends(current_user)
+) -> list[ActivityLogEntryOut]:
+    """The account's own real, queryable audit trail -- who did what and
+    when, not a promise about one. Genuinely enterprise-relevant (a common
+    real requirement before a larger team adopts any tool at all), and
+    just as useful for a single-person account checking their own history.
+    Scoped by client_email exactly like every other read in this file."""
+    rows = await database.fetch_all(
+        "SELECT action, incident_id, detail, created_at FROM account_activity_log"
+        " WHERE client_email=%s ORDER BY created_at DESC LIMIT %s",
+        (user.email, MAX_ACTIVITY_LOG_ROWS),
+    )
+    return [ActivityLogEntryOut(**row) for row in rows]
 
 
 @router.get("/export")
@@ -236,6 +283,10 @@ async def export_my_data(
            WHERE i.client_email=%s ORDER BY a.created_at""",
         (user.email,),
     )
+    # A real security-relevant event worth its own record -- "someone
+    # exported all of this account's data" is exactly the kind of thing
+    # you want a real answer to after the fact, not a guess.
+    await log_activity(database, user.email, "data_exported", detail=f"{len(incidents)} incidents")
     return {
         "exported_at": int(time.time() * 1000),
         "account_email": user.email,
@@ -268,6 +319,7 @@ async def update_incident_status(
         "UPDATE incidents SET status=%s, updated_at=%s WHERE id=%s RETURNING id, title, severity, status",
         (payload.status, now, incident_id),
     )
+    await log_activity(database, user.email, "status_changed", incident_id, payload.status)
     return dict(row or {})
 
 
@@ -858,6 +910,7 @@ async def publish_postmortem(
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No draft postmortem to publish")
 
+    await log_activity(database, user.email, "postmortem_published", incident_id, f"approved_by={user.email}")
     published = await _load_postmortem(database, incident_id)
     # Best-effort, never blocks the publish response -- a failure here
     # only means this postmortem won't surface as RAG context for future
