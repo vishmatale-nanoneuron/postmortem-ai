@@ -46,6 +46,23 @@ class BillingStatusOut(BaseModel):
     has_active_subscription: bool
 
 
+def _is_live_stripe_key(key: str | None) -> bool:
+    """Stripe's real key taxonomy (docs.stripe.com/keys) has two live
+    prefixes, not one: `sk_live_` (a full secret key) and `rk_live_` (a
+    restricted key -- scoped to specific permissions, and Stripe's own
+    documentation recommends using one over a full secret key wherever
+    possible, precisely because a leak of a restricted key risks far
+    less). An earlier version of this check only accepted `sk_live_` --
+    a real, genuinely live `rk_live_` key (the more secure option Stripe
+    itself recommends, and what Vercel's own Stripe Marketplace
+    integration may provision) would have been misreported as
+    not-configured here, the same false-negative shape as the original
+    test-mode bug this check exists to catch, just in the opposite
+    direction. Test-mode keys (`sk_test_`, `rk_test_`) are still
+    correctly rejected either way."""
+    return bool(key) and (key.startswith("sk_live_") or key.startswith("rk_live_"))
+
+
 def _client(settings: Settings) -> stripe.StripeClient:
     # A test-mode key (sk_test_...) would create a real, real-shaped
     # Checkout Session that opens unmistakably TestMode once a real
@@ -53,10 +70,11 @@ def _client(settings: Settings) -> stripe.StripeClient:
     # against a real session before this fix, silently, with no error
     # anywhere in this flow. Refusing to even create the session here
     # (not just hiding the frontend's "Card" tab via card_pricing's own
-    # is_live_key check above) closes the same gap for any other caller
-    # of this endpoint -- MCP, a stale cached frontend build, a direct
-    # API call -- not just the one UI surface that happens to check first.
-    if not settings.stripe_secret_key or not settings.stripe_secret_key.startswith("sk_live_"):
+    # _is_live_stripe_key check above) closes the same gap for any other
+    # caller of this endpoint -- MCP, a stale cached frontend build, a
+    # direct API call -- not just the one UI surface that happens to
+    # check first.
+    if not _is_live_stripe_key(settings.stripe_secret_key):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Card payments are not available yet -- use UPI or wire instead (/v1/billing/upi/info, /v1/billing/wire/info)",
@@ -165,12 +183,11 @@ async def card_pricing(settings: Settings = Depends(get_settings)) -> CardPricin
     real-looking, real-shaped Checkout Session that is unmistakably
     TestMode once opened, silently unable to process real money while
     every doc/UI surface described card payment as live. Stripe's own
-    stable convention (sk_live_ vs sk_test_/sk_test_-prefixed restricted
-    keys) is the one place this is actually knowable server-side without
-    an extra config flag to remember to flip later -- this self-corrects
-    the moment real live keys are set, with nothing else to update."""
-    is_live_key = bool(settings.stripe_secret_key) and settings.stripe_secret_key.startswith("sk_live_")
-    return CardPricingOut(configured=is_live_key and bool(settings.stripe_price_id))
+    stable key prefix convention (see _is_live_stripe_key) is the one
+    place this is actually knowable server-side without an extra config
+    flag to remember to flip later -- this self-corrects the moment real
+    live keys are set, with nothing else to update."""
+    return CardPricingOut(configured=_is_live_stripe_key(settings.stripe_secret_key) and bool(settings.stripe_price_id))
 
 
 async def _apply_subscription(database: Database, customer_id: str, subscription: stripe.Subscription) -> None:

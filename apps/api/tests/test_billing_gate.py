@@ -183,6 +183,46 @@ async def test_checkout_refuses_to_create_a_session_on_a_test_mode_key(
 
 
 @pytest.mark.asyncio
+async def test_a_live_restricted_key_reports_configured_not_a_false_negative(
+    context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The opposite bug from the test-mode case above: Stripe's own docs
+    recommend a restricted key (rk_live_...) over a full secret key
+    wherever possible, and Vercel's Stripe Marketplace integration may
+    provision one. A genuinely live rk_live_ key being reported as
+    unconfigured -- because an earlier version of this check only
+    recognized the sk_live_ prefix -- would block real revenue for a
+    caller who followed Stripe's own security recommendation."""
+    from app.settings import get_settings
+
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "rk_live_a-real-restricted-key-would-look-like-this")
+    get_settings.cache_clear()
+    client, _ = context
+    response = await client.get("/v1/billing/card/pricing")
+    assert response.status_code == 200
+    assert response.json() == {"configured": True}
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_a_test_mode_restricted_key_still_reports_unconfigured(
+    context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """rk_test_ must be rejected exactly like sk_test_ -- broadening the
+    check to accept restricted keys must not accidentally broaden it to
+    accept test-mode ones too."""
+    from app.settings import get_settings
+
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "rk_test_looks-configured-but-is-not-live")
+    get_settings.cache_clear()
+    client, _ = context
+    response = await client.get("/v1/billing/card/pricing")
+    assert response.status_code == 200
+    assert response.json() == {"configured": False}
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
 async def test_a_manually_approved_subscription_stops_granting_access_after_its_period_ends(context) -> None:
     # Regression for a real bug: approve_payment_claim (founder.py) computes
     # a 30-day current_period_end but, before this fix, nothing ever

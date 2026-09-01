@@ -18,7 +18,19 @@ type WireInfo = { currencies: WireCurrency[]; configured: boolean };
 
 const CURRENCY_SYMBOLS: Record<string, string> = { USD: "$", GBP: "£", EUR: "€" };
 
-async function fetchJson<T>(path: string): Promise<T | null> {
+// Two genuinely different outcomes were both collapsing into the same "—"
+// before this: the backend saying "this payment method isn't offered" and
+// this fetch simply failing (a transient network blip, a cold start, the
+// API briefly unreachable). UPI and wire are this app's actual live,
+// working payment rails -- the realistic failure mode on this exact page
+// (the one a real prospect is looking at right before deciding to pay) is
+// "couldn't reach the backend just now," not "this was never offered."
+// Telling those apart means a transient blip reads as "try again," not as
+// "this product doesn't take your money," which is what a bare "—" would
+// have implied.
+type FetchResult<T> = { status: "ok"; data: T } | { status: "unreachable" };
+
+async function fetchJson<T>(path: string): Promise<FetchResult<T>> {
   try {
     // UPI/wire pricing changes rarely (a manual env-var update, not a
     // per-request value) -- `cache: "no-store"` forced a real cross-service
@@ -28,10 +40,10 @@ async function fetchJson<T>(path: string): Promise<T | null> {
     // own caching window) makes repeat visits near-instant while still
     // picking up a real pricing change within minutes, not next deploy.
     const response = await fetch(`${API_BASE}${path}`, { next: { revalidate: 300 } });
-    if (!response.ok) return null;
-    return (await response.json()) as T;
+    if (!response.ok) return { status: "unreachable" };
+    return { status: "ok", data: (await response.json()) as T };
   } catch {
-    return null;
+    return { status: "unreachable" };
   }
 }
 
@@ -42,6 +54,9 @@ export default async function PricingPage() {
     fetchJson<UpiInfo>("/v1/billing/upi/pricing"),
     fetchJson<WireInfo>("/v1/billing/wire/pricing"),
   ]);
+
+  const upiUnreachable = upi.status === "unreachable";
+  const wireUnreachable = wire.status === "unreachable";
 
   return (
     <>
@@ -61,10 +76,14 @@ export default async function PricingPage() {
           <div tabIndex={0} className={cn(card, "tilt-card")}>
             <div className="text-xs font-medium tracking-wide text-muted uppercase">India</div>
             <div className="mt-1 text-3xl font-semibold text-ink">
-              {upi?.configured ? `₹${upi.amount_inr}` : "—"}
+              {upi.status === "ok" && upi.data.configured ? `₹${upi.data.amount_inr}` : "—"}
               <span className="text-base font-normal text-muted">/mo</span>
             </div>
-            <p className="mt-2 text-sm text-muted">Pay via UPI. Submit your transaction reference and get approved within the day.</p>
+            {upiUnreachable ? (
+              <p className="mt-2 text-sm text-muted">Couldn&apos;t load pricing just now -- try refreshing.</p>
+            ) : (
+              <p className="mt-2 text-sm text-muted">Pay via UPI. Submit your transaction reference and get approved within the day.</p>
+            )}
           </div>
         </div>
 
@@ -72,8 +91,8 @@ export default async function PricingPage() {
           <div tabIndex={0} className={cn(card, "tilt-card")}>
             <div className="text-xs font-medium tracking-wide text-muted uppercase">International</div>
             <div className="mt-1 space-y-1">
-              {wire?.configured && wire.currencies.length > 0 ? (
-                wire.currencies.map((c) => (
+              {wire.status === "ok" && wire.data.configured && wire.data.currencies.length > 0 ? (
+                wire.data.currencies.map((c) => (
                   <div key={c.currency} className="text-lg font-semibold text-ink">
                     {CURRENCY_SYMBOLS[c.currency] ?? `${c.currency} `}
                     {c.amount}
@@ -84,7 +103,11 @@ export default async function PricingPage() {
                 <div className="text-3xl font-semibold text-ink">—</div>
               )}
             </div>
-            <p className="mt-2 text-sm text-muted">Pay via international SWIFT wire. Same manual, human-approved process.</p>
+            {wireUnreachable ? (
+              <p className="mt-2 text-sm text-muted">Couldn&apos;t load pricing just now -- try refreshing.</p>
+            ) : (
+              <p className="mt-2 text-sm text-muted">Pay via international SWIFT wire. Same manual, human-approved process.</p>
+            )}
           </div>
         </div>
       </div>
