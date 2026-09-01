@@ -110,7 +110,11 @@ automatically once it is, with no other change needed here. An account
 that used its free incident,
 got a real draft out of it, and never subscribed receives exactly one
 automated reminder email, at least 24 hours later -- never a repeat, and
-never a fabricated urgency claim (no countdown, no "X spots left").
+never a fabricated urgency claim (no countdown, no "X spots left"). Not
+happy after subscribing? Email vish.matale@gmail.com within 14 days of
+your first charge and it's refunded -- the founder processes it
+personally, the same manual review as approving a payment in the first
+place.
 
 ## What it does not do
 

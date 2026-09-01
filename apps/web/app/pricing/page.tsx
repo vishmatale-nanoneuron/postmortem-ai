@@ -97,6 +97,18 @@ export default async function PricingPage() {
         .
       </p>
 
+      <div className={cn(card, "mt-8")}>
+        <div className="text-xs font-medium tracking-wide text-muted uppercase">14-day refund</div>
+        <p className="mt-2 text-sm text-muted">
+          Not happy? Email{" "}
+          <a className="underline underline-offset-2" href="mailto:vish.matale@gmail.com">
+            vish.matale@gmail.com
+          </a>{" "}
+          within 14 days of your first charge and you get it back -- the founder reviews and processes it
+          personally, same as approving a payment.
+        </p>
+      </div>
+
       <p className="mt-8 text-center">
         <Link
           href="/#get-started"

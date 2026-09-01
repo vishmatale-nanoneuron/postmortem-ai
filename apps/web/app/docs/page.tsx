@@ -177,7 +177,9 @@ export default function DocsPage() {
             the world, an international SWIFT wire (USD/GBP/EUR) or UPI (India) works today -- submit the
             transaction reference and the founder reviews and approves it personally, usually quickly. Self-serve
             card checkout via Stripe is built but not switched on for real payments yet; when it is, it&apos;ll
-            appear as an option automatically, without anything else here needing to change.
+            appear as an option automatically, without anything else here needing to change. Not happy after
+            subscribing? Email the founder within 14 days of your first charge and it&apos;s refunded -- the same
+            personal review as approving a payment, on any rail.
           </p>
         </>,
       )}

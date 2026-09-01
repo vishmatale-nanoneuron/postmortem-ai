@@ -220,13 +220,22 @@ frontend-supplied state. An account that drafted a real postmortem on its
 free incident and never subscribed receives exactly one automated
 reminder email, at least 24 hours after that draft — a plain link to
 pricing, never a repeat send and never a fabricated urgency claim.
+Refunds: email vish.matale@gmail.com within 14 days of the first charge
+and it's refunded — a manual, founder-processed action on every payment
+rail, the same review discipline as approving a payment in the first
+place. No self-serve automated refund endpoint exists — deliberately:
+this app's whole identity is that consequential actions need a human,
+not inferred approval, and an automated outbound-money action would be
+the same thing in reverse.
 
 ## What this doesn't do
 
 - Auto-publish anything — always a deliberate, named human action.
 - Estimate cost, revenue, or customer-impact figures the evidence didn't
   state — the system prompt explicitly forbids it.
-- Vendor-specific webhook parsing for any named monitoring tool.
+- Vendor-specific webhook parsing beyond PagerDuty (real adapter) and
+  Datadog (documented payload template) — any other monitoring tool
+  still works via the generic, un-adapted webhook endpoint.
 - Support multiple people, teams, or roles on one account.
 - Claim any measured quality score, uptime percentage, or customer count
   that hasn't actually been measured — this file states architecture and
