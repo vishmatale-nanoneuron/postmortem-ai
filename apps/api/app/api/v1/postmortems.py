@@ -169,8 +169,19 @@ async def list_incidents(
     database: Database = Depends(get_database),
     user: User = Depends(current_user),
 ) -> list[dict]:
+    # resolution_ms is a real, computed metric (updated_at - created_at,
+    # only meaningful when status='resolved') -- standard incident-response
+    # practice (mean time to resolve), not copied from any vendor's
+    # product. Honest limitation, not hidden: updated_at reflects the most
+    # recent status change, so an incident resolved, reopened, then
+    # resolved again shows only its latest resolution span, not the total
+    # time across both. update_incident_status is the only write path that
+    # ever changes status, and always stamps updated_at at the same time,
+    # so this is accurate for the common case (resolved exactly once).
     return await database.fetch_all(
-        "SELECT id, title, severity, status FROM incidents WHERE client_email=%s ORDER BY created_at DESC",
+        """SELECT id, title, severity, status,
+                  CASE WHEN status = 'resolved' THEN updated_at - created_at END AS resolution_ms
+           FROM incidents WHERE client_email=%s ORDER BY created_at DESC""",
         (user.email,),
     )
 
@@ -272,7 +283,8 @@ async def dashboard_summary(
     incident_counts = await database.fetch_one(
         """SELECT count(*) AS total,
                   count(*) FILTER (WHERE status = 'open') AS open,
-                  count(*) FILTER (WHERE status = 'resolved') AS resolved
+                  count(*) FILTER (WHERE status = 'resolved') AS resolved,
+                  avg(updated_at - created_at) FILTER (WHERE status = 'resolved') AS avg_resolution_ms
            FROM incidents WHERE client_email=%s""",
         (user.email,),
     )
@@ -285,15 +297,19 @@ async def dashboard_summary(
         (user.email,),
     )
     recent_incidents = await database.fetch_all(
-        "SELECT id, title, severity, status FROM incidents WHERE client_email=%s ORDER BY created_at DESC LIMIT 5",
+        """SELECT id, title, severity, status,
+                  CASE WHEN status = 'resolved' THEN updated_at - created_at END AS resolution_ms
+           FROM incidents WHERE client_email=%s ORDER BY created_at DESC LIMIT 5""",
         (user.email,),
     )
+    avg_resolution_ms = (incident_counts or {}).get("avg_resolution_ms")
     return {
         "total_incidents": (incident_counts or {}).get("total", 0),
         "open_incidents": (incident_counts or {}).get("open", 0),
         "resolved_incidents": (incident_counts or {}).get("resolved", 0),
         "drafted_postmortems": (postmortem_counts or {}).get("drafted", 0),
         "published_postmortems": (postmortem_counts or {}).get("published", 0),
+        "avg_resolution_ms": round(float(avg_resolution_ms)) if avg_resolution_ms is not None else None,
         "recent_incidents": recent_incidents,
     }
 

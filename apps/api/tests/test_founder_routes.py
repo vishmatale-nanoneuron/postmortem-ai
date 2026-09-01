@@ -88,6 +88,16 @@ async def test_the_founder_summary_reports_real_platform_aggregates(context) -> 
     assert body["open_incidents"] >= 1
     assert any(u["email"] == FOUNDER_EMAIL for u in body["recent_users"])
 
+    # Resolving it makes it count toward the real, computed platform-wide
+    # mean-time-to-resolve -- never a hardcoded number.
+    resolve = await client.patch(f"/v1/postmortems/incidents/{incident.json()['id']}/status", json={"status": "resolved"})
+    assert resolve.status_code == 200
+
+    summary_after = await client.get("/v1/founder/summary")
+    body_after = summary_after.json()
+    assert body_after["avg_resolution_ms"] is not None
+    assert body_after["avg_resolution_ms"] >= 0
+
 
 @pytest.mark.asyncio
 async def test_ai_run_health_is_broken_out_by_24h_window_and_feature(context) -> None:

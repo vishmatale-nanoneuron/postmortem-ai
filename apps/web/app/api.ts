@@ -35,7 +35,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export type Incident = { id: string; title: string; severity: string; status: string; impact?: string | null };
+export type Incident = {
+  id: string;
+  title: string;
+  severity: string;
+  status: string;
+  impact?: string | null;
+  resolution_ms?: number | null;
+};
 
 export type Evidence = {
   id: string;
@@ -80,6 +87,7 @@ export type DashboardSummary = {
   resolved_incidents: number;
   drafted_postmortems: number;
   published_postmortems: number;
+  avg_resolution_ms: number | null;
   recent_incidents: Incident[];
 };
 
@@ -88,6 +96,7 @@ export type FounderSummary = {
   total_incidents: number;
   open_incidents: number;
   resolved_incidents: number;
+  avg_resolution_ms: number | null;
   drafted_postmortems: number;
   published_postmortems: number;
   ai_runs_total: number;

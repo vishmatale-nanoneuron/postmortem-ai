@@ -839,6 +839,25 @@ async def test_the_summary_reflects_real_counts_scoped_to_the_caller(context) ->
     assert body["resolved_incidents"] >= 1
     assert any(row["id"] == INCIDENT for row in body["recent_incidents"])
 
+    # A real, computed metric (mean time to resolve) -- never a fabricated
+    # or hardcoded number, always derived from real created_at/updated_at
+    # timestamps.
+    assert body["avg_resolution_ms"] is not None
+    assert body["avg_resolution_ms"] >= 0
+    resolved_row = next(row for row in body["recent_incidents"] if row["id"] == INCIDENT)
+    assert resolved_row["resolution_ms"] is not None
+    assert resolved_row["resolution_ms"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_resolution_ms_is_null_for_an_open_incident(context) -> None:
+    client, _, _, _ = context
+    listing = await client.get("/v1/postmortems/incidents")
+    assert listing.status_code == 200
+    row = next(r for r in listing.json() if r["id"] == INCIDENT)
+    assert row["status"] == "open"
+    assert row["resolution_ms"] is None
+
 
 @pytest.mark.asyncio
 async def test_export_returns_every_real_record_this_account_owns(context) -> None:

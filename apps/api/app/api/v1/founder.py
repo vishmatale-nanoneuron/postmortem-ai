@@ -57,7 +57,8 @@ async def founder_summary(
     incident_counts = await database.fetch_one(
         """SELECT count(*) AS total,
                   count(*) FILTER (WHERE status = 'open') AS open,
-                  count(*) FILTER (WHERE status = 'resolved') AS resolved
+                  count(*) FILTER (WHERE status = 'resolved') AS resolved,
+                  avg(updated_at - created_at) FILTER (WHERE status = 'resolved') AS avg_resolution_ms
            FROM incidents"""
     )
     postmortem_counts = await database.fetch_one(
@@ -112,11 +113,13 @@ async def founder_summary(
         return round(float(value), 1) if value is not None else None
 
     avg_latency = (ai_run_counts or {}).get("avg_latency_ms")
+    avg_resolution_ms = (incident_counts or {}).get("avg_resolution_ms")
     return {
         "total_users": (user_counts or {}).get("total", 0),
         "total_incidents": (incident_counts or {}).get("total", 0),
         "open_incidents": (incident_counts or {}).get("open", 0),
         "resolved_incidents": (incident_counts or {}).get("resolved", 0),
+        "avg_resolution_ms": round(float(avg_resolution_ms)) if avg_resolution_ms is not None else None,
         "drafted_postmortems": (postmortem_counts or {}).get("drafted", 0),
         "published_postmortems": (postmortem_counts or {}).get("published", 0),
         "ai_runs_total": (ai_run_counts or {}).get("total", 0),

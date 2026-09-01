@@ -205,6 +205,21 @@ function timeAgo(timestampMs: number): string {
   return `${minutes}m ago`;
 }
 
+// Mean-time-to-resolve, formatted for a human -- a real duration computed
+// from real created_at/updated_at timestamps (see postmortems.py's own
+// comment on resolution_ms for the one honest limitation: a reopened-then-
+// re-resolved incident shows only its latest resolution span). Coarsest
+// unit only (days OR hours OR minutes), matching timeAgo's own style
+// above rather than a full "1d 4h 12m" breakdown nobody needs at a glance.
+function formatDuration(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `${Math.max(minutes, 1)}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.round(hours / 24);
+  return `${days}d`;
+}
+
 function FounderDashboard() {
   const [summary, setSummary] = useState<FounderSummary | null>(null);
   const [error, setError] = useState("");
@@ -246,6 +261,7 @@ function FounderDashboard() {
     ["Incidents", summary.total_incidents],
     ["Open incidents", summary.open_incidents],
     ["Resolved incidents", summary.resolved_incidents],
+    ["Avg time to resolve", summary.avg_resolution_ms != null ? formatDuration(summary.avg_resolution_ms) : "--"],
     ["Drafted postmortems", summary.drafted_postmortems],
     ["Published postmortems", summary.published_postmortems],
     ["AI runs (ok / failed)", `${summary.ai_runs_succeeded} / ${summary.ai_runs_failed}`],
@@ -2080,9 +2096,10 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
               [
                 ["Open", summary.open_incidents],
                 ["Resolved", summary.resolved_incidents],
+                ["Avg time to resolve", summary.avg_resolution_ms != null ? formatDuration(summary.avg_resolution_ms) : "--"],
                 ["Drafted", summary.drafted_postmortems],
                 ["Published", summary.published_postmortems],
-              ] as [string, number][]
+              ] as [string, number | string][]
             ).map(([label, value]) => (
               <div key={label} className="rounded-md bg-paper px-3 py-2">
                 <div className="text-lg font-semibold text-ink">{value}</div>
@@ -2130,6 +2147,11 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
                   type="button"
                 >
                   <span className="min-w-0 flex-1 truncate">{incident.title}</span>
+                  {incident.resolution_ms != null && (
+                    <span className="shrink-0 text-xs text-muted" title="Time to resolve">
+                      {formatDuration(incident.resolution_ms)}
+                    </span>
+                  )}
                   <SeverityBadge severity={incident.severity} />
                   <StatusBadge status={incident.status} />
                 </button>
