@@ -95,12 +95,32 @@ immediately invalidates every URL built with the old token). Posting to
 (if `incident_id` is given and belongs to the caller) or creates a new one —
 the same write path and paywall as the authenticated app, just authenticated
 by token instead of session cookie. Rate-limited to 100 events/hour per
-account. Deliberately generic (no named parsing for Datadog, PagerDuty, etc.)
-— put the sending tool's name in `summary`/`detail`. An optional `resolved:
-true` on an event appending to an existing incident auto-transitions it to
-resolved, matching the resolved-event most real monitoring tools already
-send — one-directional only (never reopens a resolved incident) and only
-takes effect when appending to an existing incident, never on creation.
+account. Generic, source-agnostic — put the sending tool's name in
+`summary`/`detail`. An optional `resolved: true` on an event appending to
+an existing incident auto-transitions it to resolved, matching the
+resolved-event most real monitoring tools already send — one-directional
+only (never reopens a resolved incident) and only takes effect when
+appending to an existing incident, never on creation.
+
+`POST /v1/webhooks/pagerduty/{token}` is a second, PagerDuty-specific
+adapter over the same underlying write path (both routes share one
+`_ingest_event()` — the paywall check, rate limit, and evidence insert are
+never duplicated). It parses PagerDuty's real v3 webhook envelope
+(`event.event_type`, `event.data.id/title/urgency/html_url`) directly:
+`incident.triggered` creates an incident and stores PagerDuty's own
+incident id as `incidents.external_id` (migration 0025); a later
+`incident.resolved` for the same PagerDuty incident id finds that same
+row by `external_id` and resolves it, since PagerDuty has no way to be
+told this app's own incident id back. Urgency (`high`/`low`, PagerDuty's
+only two levels) maps conservatively to `sev2`/`sev4`. Any other event
+type gets a 200 with `{"status": "ignored"}` rather than an error —
+PagerDuty disables a subscription after enough non-2xx responses, and
+there's no per-event-type filter in its own subscription config.
+Datadog has no adapter route: its webhook payload is entirely
+user-templated on Datadog's side, so its "integration" is a documented
+JSON template (account settings) for Datadog's own webhook payload field,
+pointed at the generic endpoint above — there is no fixed Datadog schema
+to parse.
 
 ## Similar-incident retrieval, evidence quality, and draft comparison
 

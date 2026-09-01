@@ -63,14 +63,24 @@ rotatable webhook URL (its own account settings) that any external tool
 new incident, or appends evidence to an existing open one the caller
 already has the id for -- the same write path and paywall as the
 authenticated app, just authenticated by a per-account token instead of a
-session cookie. There is no source-specific parsing for any named
-monitoring vendor (Datadog, PagerDuty, etc.) -- the accepted shape is
-deliberately generic: `summary`, `detail`, an optional `incident_id` to
-group related events, and `source`, which is a fixed evidence-*type*
-category (`alert`, `log`, `deploy`, `metric`, `human_note`, or
-`customer_report`) rather than the sending tool's name -- put the tool's
-name in `summary`/`detail` instead (e.g. `"summary": "Datadog: checkout
-error rate spiked to 40%"`).
+session cookie. The accepted shape is deliberately generic: `summary`,
+`detail`, an optional `incident_id` to group related events, and
+`source`, which is a fixed evidence-*type* category (`alert`, `log`,
+`deploy`, `metric`, `human_note`, or `customer_report`) rather than the
+sending tool's name -- put the tool's name in `summary`/`detail` instead
+(e.g. `"summary": "Datadog: checkout error rate spiked to 40%"`).
+
+Two monitoring vendors have real, documented setup paths beyond "any tool
+that can POST JSON": PagerDuty has a dedicated adapter endpoint
+(`/v1/webhooks/pagerduty/{token}`) that parses PagerDuty's own v3 webhook
+payload directly -- point a PagerDuty v3 webhook subscription at it and
+`incident.triggered`/`incident.acknowledged`/`incident.resolved` events
+create, and later resolve, the matching incident automatically, tracked
+by PagerDuty's own incident id. Datadog's webhook payload is entirely
+user-templated on Datadog's side (it has no fixed schema to adapt to), so
+its integration is a documented JSON template for Datadog's own webhook
+payload field, pointed at the generic endpoint above -- see account
+settings for both.
 
 ## Reliability and anti-abuse
 
@@ -109,11 +119,9 @@ never a fabricated urgency claim (no countdown, no "X spots left").
 - Does not estimate cost, revenue, or customer-impact figures the evidence
   didn't state, and the system prompt explicitly instructs the drafting
   model not to.
-- Does not have named, source-specific parsing for any monitoring vendor
-  (PagerDuty, Datadog, etc.) -- webhook ingestion (above) accepts a
-  generic event shape any tool can be configured to send, not a
-  vendor-specific integration built and tested against that vendor's real
-  payload format.
+- Has real, documented setup paths for PagerDuty and Datadog (see Webhook
+  ingestion above) but not for other monitoring vendors -- any other tool
+  can still be pointed at the generic webhook endpoint, un-adapted.
 - Does not support multiple people on one account or organizations --
   each account is a single user's own incidents.
 

@@ -127,9 +127,16 @@ export default function DocsPage() {
           <p className={p}>
             Every account has its own real, rotatable webhook URL -- posting JSON to it from any monitoring tool,
             alert, script, or CI job creates a new incident or appends evidence to an existing open one, the same
-            write path and paywall as the authenticated app itself. Deliberately generic rather than
-            vendor-specific: there&apos;s no named field-mapping for any particular monitoring tool, so this works
-            with whatever your stack already sends, not just a pre-approved integration list.
+            write path and paywall as the authenticated app itself. The generic shape works with whatever your
+            stack already sends, not just a pre-approved integration list.
+          </p>
+          <p className={p}>
+            PagerDuty has a dedicated adapter (account settings has the exact URL) that parses PagerDuty&apos;s own
+            v3 webhook payload directly -- point a PagerDuty webhook subscription at it and triggered/acknowledged/
+            resolved events create, and later resolve, the matching incident automatically. Datadog&apos;s webhook
+            payload is entirely user-templated on Datadog&apos;s side (it has no fixed schema to adapt to), so its
+            integration is a documented JSON template for Datadog&apos;s own payload field, pointed at the generic
+            webhook above -- also in account settings.
           </p>
         </>,
       )}
@@ -183,9 +190,8 @@ export default function DocsPage() {
             <li>Doesn&apos;t auto-publish anything -- publishing is always a deliberate human action.</li>
             <li>Doesn&apos;t estimate cost, revenue, or customer-impact figures the evidence didn&apos;t state.</li>
             <li>
-              Doesn&apos;t have named, vendor-specific parsing for PagerDuty, Datadog, or any particular monitoring
-              tool -- the webhook above accepts a generic event shape any tool can send, not a pre-built integration
-              tested against that vendor&apos;s real payload format.
+              Has real, documented setup paths for PagerDuty and Datadog (above) but not for other monitoring
+              vendors -- any other tool can still be pointed at the generic webhook, un-adapted.
             </li>
             <li>Doesn&apos;t support teams or organizations yet -- each account is a single person&apos;s own incidents.</li>
           </ul>

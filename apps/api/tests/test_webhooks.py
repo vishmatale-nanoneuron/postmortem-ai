@@ -276,6 +276,183 @@ async def test_an_unpaid_account_can_still_use_its_free_incident_via_webhook(con
     assert second.status_code == 402
 
 
+# Real PagerDuty v3 webhook payload shapes -- field names (event.event_type,
+# event.occurred_at, event.data.id/title/urgency/html_url) corroborated
+# across PagerDuty's own v3 webhook docs and an independent integration
+# guide (Sumo Logic's PagerDuty V3 doc), not a single unverified source --
+# see docs/PAGERDUTY_DATADOG_WEBHOOKS.md. Not captured from a live account,
+# so these are the best honest substitute available.
+def _pagerduty_triggered_payload(external_id: str) -> dict:
+    return {
+        "event": {
+            "id": "event_abc123",
+            "event_type": "incident.triggered",
+            "resource_type": "incident",
+            "occurred_at": "2026-01-24T03:15:42Z",
+            "data": {
+                "id": external_id,
+                "type": "incident",
+                "html_url": f"https://acme.pagerduty.com/incidents/{external_id}",
+                "status": "triggered",
+                "title": "Database server is down - prod-db-01",
+                "urgency": "high",
+            },
+        }
+    }
+
+
+def _pagerduty_resolved_payload(external_id: str) -> dict:
+    return {
+        "event": {
+            "id": "event_pqr456",
+            "event_type": "incident.resolved",
+            "resource_type": "incident",
+            "occurred_at": "2026-01-24T03:45:12Z",
+            "data": {
+                "id": external_id,
+                "type": "incident",
+                "html_url": f"https://acme.pagerduty.com/incidents/{external_id}",
+                "status": "resolved",
+                "title": "Database server is down - prod-db-01",
+                "resolve_reason": "Database failover completed, service restored",
+            },
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_pagerduty_triggered_event_creates_an_incident(context) -> None:
+    client, database, token = context
+    response = await client.post(
+        f"/v1/webhooks/pagerduty/{token}", json=_pagerduty_triggered_payload("PGDUTY123")
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["created_incident"] is True
+
+    incident = await database.fetch_one(
+        "SELECT title, severity, status, external_id FROM incidents WHERE id=%s", (body["incident_id"],)
+    )
+    assert incident is not None
+    assert incident["title"] == "Database server is down - prod-db-01"
+    # urgency "high" maps to sev2 -- see _PAGERDUTY_URGENCY_TO_SEVERITY.
+    assert incident["severity"] == "sev2"
+    assert incident["status"] == "open"
+    assert incident["external_id"] == "PGDUTY123"
+
+    evidence = await database.fetch_one(
+        "SELECT source, authorized_by, detail FROM incident_evidence WHERE id=%s", (body["evidence_id"],)
+    )
+    assert evidence is not None
+    assert evidence["source"] == "alert"
+    assert evidence["authorized_by"] == "webhook:pagerduty"
+    assert evidence["detail"] == "https://acme.pagerduty.com/incidents/PGDUTY123"
+
+
+@pytest.mark.asyncio
+async def test_pagerduty_resolved_event_finds_and_resolves_the_same_incident_by_external_id(context) -> None:
+    client, database, token = context
+    triggered = await client.post(
+        f"/v1/webhooks/pagerduty/{token}", json=_pagerduty_triggered_payload("PGDUTY456")
+    )
+    incident_id = triggered.json()["incident_id"]
+
+    resolved = await client.post(
+        f"/v1/webhooks/pagerduty/{token}", json=_pagerduty_resolved_payload("PGDUTY456")
+    )
+    assert resolved.status_code == 200, resolved.text
+    body = resolved.json()
+    # Same postmortem-ai incident found via external_id, not a duplicate --
+    # PagerDuty never learns this app's own incident id, so external_id is
+    # the only thing linking the two events together.
+    assert body["created_incident"] is False
+    assert body["incident_id"] == incident_id
+    assert body["resolved"] is True
+
+    row = await database.fetch_one("SELECT status FROM incidents WHERE id=%s", (incident_id,))
+    assert row is not None
+    assert row["status"] == "resolved"
+
+    count = await database.fetch_one("SELECT count(*) AS n FROM incident_evidence WHERE incident_id=%s", (incident_id,))
+    assert count is not None
+    assert count["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_pagerduty_unhandled_event_type_is_ignored_not_acted_on(context) -> None:
+    client, database, token = context
+    response = await client.post(
+        f"/v1/webhooks/pagerduty/{token}",
+        json={"event": {"event_type": "incident.escalated", "data": {"id": "PGDUTY789"}}},
+    )
+    # 200, not 4xx/5xx -- PagerDuty disables a subscription after enough
+    # non-2xx responses, and there's no per-event-type filter in its config.
+    assert response.status_code == 200
+    assert response.json()["status"] == "ignored"
+
+    count = await database.fetch_one("SELECT count(*) AS n FROM incidents WHERE client_email=%s", (CLIENT_EMAIL,))
+    assert count is not None
+    assert count["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_pagerduty_malformed_payload_is_ignored_not_a_server_error(context) -> None:
+    client, _, token = context
+    response = await client.post(f"/v1/webhooks/pagerduty/{token}", json={"not": "a pagerduty payload"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "ignored"
+
+
+@pytest.mark.asyncio
+async def test_pagerduty_unknown_webhook_token_is_rejected(context) -> None:
+    client, _, _ = context
+    response = await client.post(
+        "/v1/webhooks/pagerduty/not-a-real-token", json=_pagerduty_triggered_payload("PGDUTY999")
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_pagerduty_creation_respects_the_free_tier_paywall(context) -> None:
+    """Same shared _ingest_event() as the generic webhook path -- this is
+    the exact bug class (free-tier paywall silently wrong on a new entry
+    path) found three times already this session. Proving it here for real
+    rather than assuming the shared function makes it automatically true."""
+    client, database, token = context
+    await database.execute(
+        """INSERT INTO incidents (id, client_email, title, severity, status, created_at, updated_at)
+           VALUES ('already-used-elsewhere-pd', %s, 'Used elsewhere', 'sev3', 'open', 0, 0)""",
+        (CLIENT_EMAIL,),
+    )
+    await database.execute(
+        "UPDATE users SET subscription_status='none', free_incident_id='already-used-elsewhere-pd' WHERE email=%s",
+        (CLIENT_EMAIL,),
+    )
+
+    response = await client.post(
+        f"/v1/webhooks/pagerduty/{token}", json=_pagerduty_triggered_payload("PGDUTY-PAYWALL")
+    )
+    assert response.status_code == 402
+
+
+@pytest.mark.asyncio
+async def test_pagerduty_events_are_recorded_in_the_account_activity_log(context) -> None:
+    client, database, token = context
+    triggered = await client.post(
+        f"/v1/webhooks/pagerduty/{token}", json=_pagerduty_triggered_payload("PGDUTY-AUDIT")
+    )
+    incident_id = triggered.json()["incident_id"]
+    await client.post(f"/v1/webhooks/pagerduty/{token}", json=_pagerduty_resolved_payload("PGDUTY-AUDIT"))
+
+    rows = await database.fetch_all(
+        "SELECT action, detail FROM account_activity_log WHERE client_email=%s AND incident_id=%s ORDER BY created_at",
+        (CLIENT_EMAIL, incident_id),
+    )
+    actions = [(r["action"], r["detail"]) for r in rows]
+    assert ("incident_created", "via pagerduty: Database server is down - prod-db-01") in actions
+    assert ("status_changed", "resolved via pagerduty") in actions
+
+
 @pytest.mark.asyncio
 async def test_rotating_the_webhook_token_invalidates_the_old_one(context) -> None:
     client, _, token = context

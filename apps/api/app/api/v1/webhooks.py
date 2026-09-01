@@ -7,20 +7,29 @@ postmortem in evidence recorded as an incident actually unfolds -- which,
 for most real incidents, means alerts firing automatically, not someone
 copy-pasting them in after the fact.
 
-Deliberately generic, not source-specific (no Datadog/PagerDuty/etc. field
-mapping): this app has no real example payload from any of those services
-to build and test against honestly, and a fabricated field-mapping guess
-would be worse than a plain format any tool's "custom webhook" option can
-already send. The generic shape here is exactly what create_incident /
-record_evidence already accept -- this endpoint is the same write path,
-authenticated differently.
+The generic endpoint below is deliberately not source-specific -- it's
+exactly what create_incident / record_evidence already accept, the same
+write path authenticated differently, and it's what Datadog's webhook
+integration should be pointed at directly: Datadog's own webhook payload
+is entirely user-templated (no fixed schema Datadog imposes -- see
+docs/PAGERDUTY_DATADOG_WEBHOOKS.md), so there's nothing to adapt on this
+end. PagerDuty is different: its v3 webhook subscriptions send one fixed,
+non-customizable JSON envelope, so `receive_pagerduty_webhook` below
+parses that specific shape. Its field names (event.event_type,
+event.data.id/title/status/urgency/created_at) are corroborated across
+PagerDuty's own v3 webhook docs and independent integration guides
+(Sumo Logic's PagerDuty V3 integration doc), not a single unverified
+guess -- see docs/PAGERDUTY_DATADOG_WEBHOOKS.md for the sources. Still
+defensive throughout (missing/renamed fields degrade gracefully) since
+this wasn't tested against a live PagerDuty account.
 """
 
 import logging
 import secrets
 import time
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from ...auth import User, current_user, user_by_webhook_token
@@ -28,6 +37,7 @@ from ...database import Database
 from ...dependencies import get_database
 from ...security.rate_limit import try_record_action
 from ...settings import Settings, get_settings
+from .postmortems import log_activity
 
 logger = logging.getLogger("postmortem_ai")
 
@@ -117,40 +127,49 @@ class WebhookEventOut(BaseModel):
     resolved: bool
 
 
-@router.post("/incidents/{token}", status_code=status.HTTP_201_CREATED, response_model=WebhookEventOut)
-async def receive_webhook_event(
-    token: str,
-    payload: WebhookEventIn,
-    database: Database = Depends(get_database),
-    settings: Settings = Depends(get_settings),
+async def _ingest_event(
+    database: Database,
+    user: User,
+    *,
+    source: str,
+    summary: str,
+    detail: str | None,
+    occurred_at: int | None,
+    title: str | None,
+    severity: str,
+    resolved_flag: bool,
+    incident_id_hint: str | None = None,
+    external_id: str | None = None,
+    authorized_by: str = "webhook",
+    channel: str = "webhook",
 ) -> WebhookEventOut:
-    user = await user_by_webhook_token(database, settings, token)
-    if user is None:
-        # Deliberately the same 404 shape for "no such token" as for any
-        # other not-found resource -- doesn't reveal whether a guessed
-        # token is malformed vs. simply doesn't belong to any account.
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown webhook token")
-
+    """The one real write path both webhook routes below share -- the
+    generic endpoint (looks up an existing incident by this app's own id,
+    which the caller is expected to remember and pass back) and the
+    PagerDuty adapter (looks up by `external_id`, PagerDuty's own incident
+    id, since PagerDuty has no way to be told this app's id in return).
+    Everything downstream of "which incident, if any, already matches" --
+    the paywall check, the rate limit, the insert, the resolve -- is
+    identical, and stays that way by living in exactly one place. This is
+    the same free-tier paywall bug class found three times already this
+    session (webhook layer, MCP layer, and MCPBearerAuthMiddleware's own
+    root cause) -- a second webhook route reimplementing this check by hand
+    would have been a fourth chance to get it subtly wrong."""
     now = int(time.time() * 1000)
-    occurred_at = payload.occurred_at or now
+    occurred_at = occurred_at or now
 
-    # Resolve which incident this event targets BEFORE the paywall check --
-    # the free-tier allowance genuinely differs between the two cases
-    # (require_active_subscription_or_free_incident vs.
-    # _or_free_slot in auth.py), so which one applies depends on whether
-    # this is an append or a create, not a single flat check. The previous
-    # version here used a single `has_active_subscription` check for both
-    # cases -- despite this file's own module docstring and public
-    # documentation both claiming this is "the same paywall" as the
-    # authenticated REST endpoints, it silently was not: a brand-new
-    # unpaid account got a 402 on its very first webhook call, even for
-    # what would have been its one free incident through the normal app.
-    # Confirmed live against production before this fix, not assumed.
     incident_id: str | None = None
-    if payload.incident_id:
+    if incident_id_hint:
         existing = await database.fetch_one(
             "SELECT id FROM incidents WHERE id=%s AND client_email=%s AND status='open'",
-            (payload.incident_id, user.email),
+            (incident_id_hint, user.email),
+        )
+        if existing:
+            incident_id = existing["id"]
+    elif external_id:
+        existing = await database.fetch_one(
+            "SELECT id FROM incidents WHERE external_id=%s AND client_email=%s AND status='open'",
+            (external_id, user.email),
         )
         if existing:
             incident_id = existing["id"]
@@ -170,11 +189,11 @@ async def receive_webhook_event(
 
     if created_incident:
         incident_id = f"inc-{now}-{secrets.token_hex(4)}"
-        title = payload.title or payload.summary[:200]
+        incident_title = title or summary[:200]
         await database.execute(
-            """INSERT INTO incidents (id, client_email, title, severity, status, impact, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, 'open', NULL, %s, %s)""",
-            (incident_id, user.email, title, payload.severity, now, now),
+            """INSERT INTO incidents (id, client_email, title, severity, status, impact, external_id, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, 'open', NULL, %s, %s, %s)""",
+            (incident_id, user.email, incident_title, severity, external_id, now, now),
         )
         # Mirrors create_incident's own ordering exactly (postmortems.py):
         # only spend the free slot once the insert above actually
@@ -182,6 +201,7 @@ async def receive_webhook_event(
         # subscriber.
         if not user.has_active_subscription:
             await database.execute("UPDATE users SET free_incident_id=%s WHERE id=%s", (incident_id, user.id))
+        await log_activity(database, user.email, "incident_created", incident_id, f"via {channel}: {incident_title}")
 
     evidence_row = await database.fetch_one(
         """INSERT INTO incident_evidence
@@ -189,25 +209,146 @@ async def receive_webhook_event(
               authorized_by,recorded_at)
            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
            RETURNING id::text""",
-        (incident_id, user.email, occurred_at, payload.source, payload.summary, payload.detail, "webhook", now),
+        (incident_id, user.email, occurred_at, source, summary, detail, authorized_by, now),
     )
     assert evidence_row is not None
 
     resolved = False
-    if payload.resolved and not created_incident:
+    if resolved_flag and not created_incident:
         updated = await database.execute(
             "UPDATE incidents SET status='resolved', updated_at=%s WHERE id=%s AND client_email=%s AND status='open'",
             (now, incident_id, user.email),
         )
         resolved = bool(updated)
+        if resolved:
+            await log_activity(database, user.email, "status_changed", incident_id, f"resolved via {channel}")
 
     logger.info(
-        "webhook_event_received incident_id=%s created_incident=%s source=%s resolved=%s",
+        "webhook_event_received incident_id=%s created_incident=%s source=%s resolved=%s channel=%s",
         incident_id,
         created_incident,
-        payload.source,
+        source,
         resolved,
+        channel,
     )
     return WebhookEventOut(
         incident_id=incident_id, evidence_id=evidence_row["id"], created_incident=created_incident, resolved=resolved
     )
+
+
+@router.post("/incidents/{token}", status_code=status.HTTP_201_CREATED, response_model=WebhookEventOut)
+async def receive_webhook_event(
+    token: str,
+    payload: WebhookEventIn,
+    database: Database = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+) -> WebhookEventOut:
+    user = await user_by_webhook_token(database, settings, token)
+    if user is None:
+        # Deliberately the same 404 shape for "no such token" as for any
+        # other not-found resource -- doesn't reveal whether a guessed
+        # token is malformed vs. simply doesn't belong to any account.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown webhook token")
+
+    return await _ingest_event(
+        database,
+        user,
+        source=payload.source,
+        summary=payload.summary,
+        detail=payload.detail,
+        occurred_at=payload.occurred_at,
+        title=payload.title,
+        severity=payload.severity,
+        resolved_flag=payload.resolved,
+        incident_id_hint=payload.incident_id,
+    )
+
+
+# PagerDuty v3 webhook event types this adapter acts on. Anything else
+# (priority.updated, incident.escalated, incident.reassigned, ...) is
+# acknowledged with 200 and ignored -- PagerDuty disables a subscription
+# after enough non-2xx responses, and there's no way to ask it to only send
+# these three, so filtering has to happen here rather than in its config.
+_PAGERDUTY_HANDLED_EVENT_TYPES = {"incident.triggered", "incident.acknowledged", "incident.resolved"}
+
+# PagerDuty incidents only ever carry two urgency levels -- mapped
+# conservatively onto this app's four severities rather than guessing a
+# finer split urgency doesn't actually encode.
+_PAGERDUTY_URGENCY_TO_SEVERITY = {"high": "sev2", "low": "sev4"}
+
+
+def _parse_pagerduty_timestamp(value: object) -> int | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        # PagerDuty sends RFC3339 with a trailing "Z" -- Python's
+        # fromisoformat wants an explicit offset before 3.11's relaxed
+        # parsing. This repo pins 3.13 (see CLAUDE.md) but the replace stays
+        # correct either way and costs nothing.
+        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+@router.post("/pagerduty/{token}")
+async def receive_pagerduty_webhook(
+    token: str,
+    request: Request,
+    database: Database = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """The URL to put in a PagerDuty v3 webhook subscription. Unlike the
+    generic endpoint above, PagerDuty controls the payload shape entirely --
+    every field is read defensively with .get(), never indexed, so an event
+    shape this hasn't seen before (a field PagerDuty renames, an event type
+    added after this was written) degrades to "ignore this one event"
+    rather than a 5xx that could get the whole subscription disabled.
+    """
+    user = await user_by_webhook_token(database, settings, token)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown webhook token")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON body")
+
+    event = body.get("event") if isinstance(body, dict) else None
+    if not isinstance(event, dict):
+        return {"status": "ignored", "reason": "unrecognized payload shape"}
+
+    event_type = event.get("event_type")
+    if event_type not in _PAGERDUTY_HANDLED_EVENT_TYPES:
+        return {"status": "ignored", "event_type": event_type}
+
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    external_id = data.get("id")
+    if not isinstance(external_id, str) or not external_id:
+        return {"status": "ignored", "reason": "missing event.data.id"}
+
+    title = data.get("title")
+    title = title if isinstance(title, str) and title else f"PagerDuty incident {external_id}"
+    severity = _PAGERDUTY_URGENCY_TO_SEVERITY.get(data.get("urgency"), "sev3")
+    occurred_at = _parse_pagerduty_timestamp(event.get("occurred_at"))
+    summary_by_event_type = {
+        "incident.triggered": f"PagerDuty triggered: {title}",
+        "incident.acknowledged": f"PagerDuty acknowledged: {title}",
+        "incident.resolved": f"PagerDuty resolved: {title}",
+    }
+    html_url = data.get("html_url")
+
+    result = await _ingest_event(
+        database,
+        user,
+        source="alert",
+        summary=summary_by_event_type[event_type][:500],
+        detail=html_url if isinstance(html_url, str) else None,
+        occurred_at=occurred_at,
+        title=title[:200],
+        severity=severity,
+        resolved_flag=event_type == "incident.resolved",
+        external_id=external_id,
+        authorized_by="webhook:pagerduty",
+        channel="pagerduty",
+    )
+    return result.model_dump()

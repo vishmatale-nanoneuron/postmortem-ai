@@ -220,7 +220,7 @@ export function IntegrationLogos() {
 const notes = [
   "Doesn't auto-publish anything — publishing is always a deliberate, named human action.",
   "Doesn't estimate cost, revenue, or customer-impact figures the evidence didn't state.",
-  "Doesn't integrate with PagerDuty, Datadog, or other monitoring tools yet — evidence is entered directly.",
+  "Has real, documented setup for PagerDuty and Datadog webhooks — not for other monitoring vendors yet, though any tool that can POST JSON can still use the generic webhook.",
   "Doesn't support teams or organizations yet — each account is a single user's own incidents.",
 ];
 

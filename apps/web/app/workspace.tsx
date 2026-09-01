@@ -1557,29 +1557,67 @@ function IntegrationsSettings() {
 // by this per-account token instead of a session cookie. See
 // apps/api/app/api/v1/webhooks.py for the full contract (incident_id
 // grouping, paywall, rate limiting).
+// One copy-to-clipboard row, reused for the generic URL, the PagerDuty URL,
+// and the Datadog payload template below -- three things that are all
+// "here's text, copy it into another tool's settings," not three different
+// widgets.
+function CopyField({ value, mono = true }: { value: string; mono?: boolean }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard access can be denied (permissions, non-HTTPS context) --
+      // the value is still selectable/visible below, so this isn't the
+      // only way to get it.
+    }
+  }
+  return (
+    <div className="flex gap-2">
+      <input
+        className={`${fieldInput} mb-0 ${mono ? "font-mono" : ""} text-xs`}
+        value={value}
+        readOnly
+        onFocus={(e) => e.currentTarget.select()}
+      />
+      <button className={secondaryButton} type="button" onClick={() => void copy()}>
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </div>
+  );
+}
+
+// The exact JSON to paste into Datadog's own webhook integration "Payload"
+// field -- Datadog has no fixed webhook schema of its own to adapt to (the
+// payload is entirely user-templated on Datadog's side), so the real
+// integration here is this template, not backend parsing code. $LAST_UPDATED
+// is already epoch milliseconds (Datadog's own docs), matching occurred_at
+// exactly -- no conversion needed. There's no resolved-incident linkage:
+// Datadog's webhook payload field can't hold this app's dynamically
+// assigned incident id, so each alert creates its own incident rather than
+// grouping into one -- stated plainly in the UI below, not glossed over.
+const DATADOG_PAYLOAD_TEMPLATE = `{
+  "source": "alert",
+  "summary": "$EVENT_TITLE",
+  "detail": "$EVENT_MSG",
+  "occurred_at": $LAST_UPDATED,
+  "title": "$EVENT_TITLE"
+}`;
+
 function WebhookSettings() {
   const [token, setToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     webhooks.token().then((t) => setToken(t.token)).catch(() => setToken(null));
   }, []);
 
-  const url = token ? `${process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000"}/v1/webhooks/incidents/${token}` : "";
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard access can be denied (permissions, non-HTTPS context) --
-      // the URL is still selectable/visible in the input below, so this
-      // isn't the only way to get it.
-    }
-  }
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
+  const genericUrl = token ? `${apiBase}/v1/webhooks/incidents/${token}` : "";
+  const pagerdutyUrl = token ? `${apiBase}/v1/webhooks/pagerduty/${token}` : "";
 
   async function rotate() {
     setBusy(true);
@@ -1600,36 +1638,81 @@ function WebhookSettings() {
     <Card className={card}>
       <h2 className="mb-1 text-base font-semibold">Webhook</h2>
       <p className="mb-3 text-xs text-muted">
-        POST JSON to this URL from any monitoring tool or script to create an incident or add evidence
-        automatically -- no manual typing required. Body: <code className="font-mono">{"{source, summary, detail?, incident_id?}"}</code>.
-        Omit <code className="font-mono">incident_id</code> to start a new incident; include the one returned by a
-        previous call to group related events together.
+        Let evidence arrive automatically instead of typing it in by hand. Rotating below invalidates every URL
+        built with the old token immediately, across all three tabs -- they all share one token.
       </p>
-      <div className="flex gap-2">
-        <input className={`${fieldInput} mb-0 font-mono text-xs`} value={url} readOnly />
-        <button className={secondaryButton} type="button" onClick={() => void copy()}>
-          {copied ? "Copied" : "Copy"}
-        </button>
-      </div>
+      <Tabs defaultValue="generic">
+        <TabsList>
+          <TabsTrigger value="generic">Generic</TabsTrigger>
+          <TabsTrigger value="pagerduty">PagerDuty</TabsTrigger>
+          <TabsTrigger value="datadog">Datadog</TabsTrigger>
+        </TabsList>
+        <TabsContent value="generic" className="mt-3">
+          <p className="mb-2 text-xs text-muted">
+            POST JSON from any monitoring tool or script. Body:{" "}
+            <code className="font-mono">{"{source, summary, detail?, incident_id?}"}</code>. Omit{" "}
+            <code className="font-mono">incident_id</code> to start a new incident; include the one returned by a
+            previous call to group related events together.
+          </p>
+          <CopyField value={genericUrl} />
+        </TabsContent>
+        <TabsContent value="pagerduty" className="mt-3">
+          <p className="mb-2 text-xs text-muted">
+            Add this as a{" "}
+            <a
+              className="underline underline-offset-2 hover:text-ink"
+              href="https://developer.pagerduty.com/docs/db0fa8c8984fc-overview"
+              target="_blank"
+              rel="noreferrer"
+            >
+              PagerDuty v3 webhook subscription
+            </a>{" "}
+            URL. Parses PagerDuty&apos;s own payload directly -- triggered creates an incident, acknowledged/resolved
+            find it again by PagerDuty&apos;s incident id and resolved closes it. No template to write.
+          </p>
+          <CopyField value={pagerdutyUrl} />
+        </TabsContent>
+        <TabsContent value="datadog" className="mt-3">
+          <p className="mb-2 text-xs text-muted">
+            Datadog&apos;s webhook payload is written by you, not fixed by Datadog -- paste this into a Datadog{" "}
+            <a
+              className="underline underline-offset-2 hover:text-ink"
+              href="https://docs.datadoghq.com/integrations/webhooks/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              webhook integration&apos;s
+            </a>{" "}
+            Payload field, pointed at the Generic URL above. Each alert creates its own incident here -- there&apos;s
+            no way for Datadog&apos;s static template to carry this app&apos;s incident id back for grouping or
+            auto-resolve.
+          </p>
+          <div className="mb-2">
+            <CopyField value={DATADOG_PAYLOAD_TEMPLATE} />
+          </div>
+          <CopyField value={genericUrl} />
+        </TabsContent>
+      </Tabs>
       <AlertDialog>
         <AlertDialogTrigger
           className="mt-3 text-xs text-red-600 underline underline-offset-2"
           disabled={busy}
           render={<button type="button" />}
         >
-          Rotate URL
+          Rotate token
         </AlertDialogTrigger>
         <AlertDialogContent className="border-line bg-white text-ink">
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-ink">Rotate your webhook URL?</AlertDialogTitle>
+            <AlertDialogTitle className="text-ink">Rotate your webhook token?</AlertDialogTitle>
             <AlertDialogDescription className="text-muted">
-              Any tool still configured with the old URL will stop working immediately. This can&apos;t be undone.
+              Any tool still configured with any of the URLs above (generic or PagerDuty) will stop working
+              immediately. This can&apos;t be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="border-line text-ink hover:bg-paper">Cancel</AlertDialogCancel>
             <AlertDialogAction className="bg-red-600 text-white hover:bg-red-700" onClick={() => void rotate()}>
-              Rotate URL
+              Rotate token
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
