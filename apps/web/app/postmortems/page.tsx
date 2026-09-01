@@ -30,18 +30,28 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 
 type PublicPostmortem = { slug: string; incident_title: string; severity: string; summary: string; approved_at: number | null };
 
-async function fetchPublicPostmortems(): Promise<PublicPostmortem[]> {
+// Same failure-mode distinction as pricing.tsx and [slug]/page.tsx: an
+// empty array meant "genuinely zero published postmortems" and "the
+// backend was briefly unreachable" were indistinguishable, on a page
+// that's publicly indexed (robots: index: true above) and directly
+// undercuts what this section exists to demonstrate -- a transient blip
+// telling a visitor or a crawler "there are no public postmortems" is a
+// false claim about a real, permanent, citable record.
+type FetchResult = { status: "ok"; data: PublicPostmortem[] } | { status: "unreachable" };
+
+async function fetchPublicPostmortems(): Promise<FetchResult> {
   try {
     const response = await fetch(`${API_BASE}/v1/postmortems/public`, { next: { revalidate: 300 } });
-    if (!response.ok) return [];
-    return (await response.json()) as PublicPostmortem[];
+    if (!response.ok) return { status: "unreachable" };
+    return { status: "ok", data: (await response.json()) as PublicPostmortem[] };
   } catch {
-    return [];
+    return { status: "unreachable" };
   }
 }
 
 export default async function PublicPostmortemsIndex() {
-  const postmortems = await fetchPublicPostmortems();
+  const result = await fetchPublicPostmortems();
+  const postmortems = result.status === "ok" ? result.data : [];
 
   return (
     <>
@@ -61,7 +71,9 @@ export default async function PublicPostmortemsIndex() {
 
       <CtaBanner />
 
-      {postmortems.length === 0 ? (
+      {result.status === "unreachable" ? (
+        <p className="text-sm text-muted">Couldn&apos;t load postmortems just now -- try refreshing.</p>
+      ) : postmortems.length === 0 ? (
         <p className="text-sm text-muted">No public postmortems yet.</p>
       ) : (
         <ul className="space-y-3">

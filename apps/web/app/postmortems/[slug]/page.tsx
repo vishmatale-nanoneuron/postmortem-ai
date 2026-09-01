@@ -21,22 +21,45 @@ type PublicPostmortem = {
   published_at: number | null;
 };
 
-async function fetchPostmortem(slug: string): Promise<PublicPostmortem | null> {
+// A real, published postmortem is a permanent, citable record -- the
+// product's whole premise -- and this page is publicly indexed
+// (robots: index: true below). Collapsing "the API said 404, this slug
+// genuinely doesn't exist" and "the API was briefly unreachable" into the
+// same outcome used to mean a transient backend hiccup called notFound()
+// on a real page: a hard 404 on content that actually exists, served to
+// whichever visitor or crawler happened to hit it during that window --
+// the wrong failure mode for a page whose entire selling point is being a
+// permanent record. Only a genuine 404 from the API calls Next's
+// notFound(); anything else (network failure, a 5xx) renders an honest
+// "temporarily unavailable, try again" page instead, with nothing that
+// looks like a real 404 to a crawler.
+type FetchResult<T> = { status: "found"; data: T } | { status: "not_found" } | { status: "unreachable" };
+
+async function fetchPostmortem(slug: string): Promise<FetchResult<PublicPostmortem>> {
   try {
     const response = await fetch(`${API_BASE}/v1/postmortems/public/${encodeURIComponent(slug)}`, {
       next: { revalidate: 300 },
     });
-    if (!response.ok) return null;
-    return (await response.json()) as PublicPostmortem;
+    if (response.status === 404) return { status: "not_found" };
+    if (!response.ok) return { status: "unreachable" };
+    return { status: "found", data: (await response.json()) as PublicPostmortem };
   } catch {
-    return null;
+    return { status: "unreachable" };
   }
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
-  const postmortem = await fetchPostmortem(slug);
-  if (!postmortem) return { title: "Postmortem not found", robots: { index: false, follow: false } };
+  const result = await fetchPostmortem(slug);
+  if (result.status === "not_found") return { title: "Postmortem not found", robots: { index: false, follow: false } };
+  if (result.status === "unreachable") {
+    // Deliberately no robots override here -- this is a transient state,
+    // not a real judgment about whether the page should be indexed, and
+    // the next successful crawl (or the next 5-minute revalidation) will
+    // regenerate real metadata from real data.
+    return { title: "Postmortem" };
+  }
+  const postmortem = result.data;
 
   const title = `${postmortem.incident_title} — Postmortem`;
   const url = `https://www.nanoneuron.ai/postmortems/${slug}`;
@@ -76,8 +99,25 @@ function section(index: number, children: React.ReactNode) {
 
 export default async function PublicPostmortemPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const postmortem = await fetchPostmortem(slug);
-  if (!postmortem) notFound();
+  const result = await fetchPostmortem(slug);
+  if (result.status === "not_found") notFound();
+  if (result.status === "unreachable") {
+    return (
+      <>
+        <SiteHeader />
+        <main className="mx-auto max-w-2xl px-4 py-10">
+          <Link href="/postmortems" className="mb-4 inline-block text-xs text-muted underline underline-offset-2 hover:text-ink">
+            ← All postmortems
+          </Link>
+          <div className="mt-6 rounded-lg border border-line bg-white p-6 text-center shadow-sm">
+            <p className="text-sm text-ink">Couldn&apos;t load this postmortem just now -- try refreshing.</p>
+          </div>
+        </main>
+        <SiteFooter />
+      </>
+    );
+  }
+  const postmortem = result.data;
 
   const url = `https://www.nanoneuron.ai/postmortems/${slug}`;
   // TechArticle, not Article -- this is a technical incident report, and
