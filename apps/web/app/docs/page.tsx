@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { SiteFooter, SiteHeader } from "../landing";
 
 export const metadata: Metadata = {
   title: "Docs",
@@ -34,7 +35,9 @@ function section(index: number, children: React.ReactNode) {
 
 export default function DocsPage() {
   return (
-    <main className="mx-auto max-w-2xl px-4 py-10">
+    <>
+      <SiteHeader />
+      <main className="mx-auto max-w-2xl px-4 py-10">
       <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 duration-700">
         <div className="text-xs font-medium tracking-widest text-muted uppercase">Docs</div>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">How PostMortem AI works</h1>
@@ -194,6 +197,8 @@ export default function DocsPage() {
           Back to PostMortem AI
         </Link>
       </p>
-    </main>
+      </main>
+      <SiteFooter />
+    </>
   );
 }

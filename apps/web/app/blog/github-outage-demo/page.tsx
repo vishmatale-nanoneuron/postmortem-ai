@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { SiteFooter, SiteHeader } from "../../landing";
 
 export const metadata: Metadata = {
   title: "What our tool drafted from a real public outage",
@@ -51,7 +52,9 @@ const evidence = [
 
 export default function GithubOutageDemoPost() {
   return (
-    <main className="mx-auto max-w-2xl px-4 py-10">
+    <>
+      <SiteHeader />
+      <main className="mx-auto max-w-2xl px-4 py-10">
       <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 duration-700">
         <div className="text-xs font-medium tracking-widest text-muted uppercase">Demo</div>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">
@@ -201,6 +204,8 @@ export default function GithubOutageDemoPost() {
           How it works
         </Link>
       </p>
-    </main>
+      </main>
+      <SiteFooter />
+    </>
   );
 }

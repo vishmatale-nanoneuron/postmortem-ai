@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { CtaBanner } from "../cta-banner";
 import { ShareLinks } from "../share-links";
+import { SiteFooter, SiteHeader } from "../../landing";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 
@@ -96,7 +97,9 @@ export default async function PublicPostmortemPage({ params }: { params: Promise
   };
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-10">
+    <>
+      <SiteHeader />
+      <main className="mx-auto max-w-2xl px-4 py-10">
       <script
         type="application/ld+json"
         // Static JSON built entirely from this page's own already-rendered
@@ -173,6 +176,8 @@ export default async function PublicPostmortemPage({ params }: { params: Promise
         </Link>
         .
       </p>
-    </main>
+      </main>
+      <SiteFooter />
+    </>
   );
 }

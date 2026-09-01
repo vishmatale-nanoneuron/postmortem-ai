@@ -205,6 +205,40 @@ export function WhatThisIsnt() {
   );
 }
 
+// A real gap, not cosmetic: every public page except the homepage
+// (docs, pricing, postmortems, status, privacy, terms, blog posts,
+// individual published postmortems) started directly with page content --
+// zero logo, zero brand name, anywhere above a muted footer link at the
+// very bottom. A visitor arriving cold via search or a shared link saw no
+// brand identity at all until scrolling past everything. One small,
+// consistent header fixes that everywhere at once.
+export function SiteHeader() {
+  return (
+    <header className="border-b border-line px-4 py-4">
+      <div className="mx-auto flex max-w-3xl items-center justify-between">
+        <Link href="/" className="flex items-center gap-2 text-sm font-semibold text-ink">
+          <LogoMark size={22} />
+          PostMortem AI
+        </Link>
+        <nav className="flex items-center gap-4 text-sm text-muted">
+          <Link className="hover:text-ink hover:underline underline-offset-2" href="/docs">
+            Docs
+          </Link>
+          <Link className="hover:text-ink hover:underline underline-offset-2" href="/pricing">
+            Pricing
+          </Link>
+          <Link
+            href="/#get-started"
+            className={cn(buttonVariants({ size: "sm" }), "h-auto px-3 py-1.5 text-xs")}
+          >
+            Get started
+          </Link>
+        </nav>
+      </div>
+    </header>
+  );
+}
+
 export function SiteFooter() {
   const links: [string, string][] = [
     ["Docs", "/docs"],

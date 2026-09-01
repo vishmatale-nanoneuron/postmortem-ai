@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { SiteFooter, SiteHeader } from "../landing";
 
 export const metadata: Metadata = {
   title: "Pricing",
@@ -43,7 +44,9 @@ export default async function PricingPage() {
   ]);
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-10">
+    <>
+      <SiteHeader />
+      <main className="mx-auto max-w-2xl px-4 py-10">
       <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 text-center duration-700">
         <div className="text-xs font-medium tracking-widest text-muted uppercase">Pricing</div>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">One plan, billed monthly</h1>
@@ -102,6 +105,8 @@ export default async function PricingPage() {
           Get started
         </Link>
       </p>
-    </main>
+      </main>
+      <SiteFooter />
+    </>
   );
 }

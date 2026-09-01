@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CtaBanner } from "./cta-banner";
+import { SiteFooter, SiteHeader } from "../landing";
 
 const TITLE = "Published postmortems";
 const DESCRIPTION = "Publicly shared, evidence-grounded incident postmortems.";
@@ -43,7 +44,9 @@ export default async function PublicPostmortemsIndex() {
   const postmortems = await fetchPublicPostmortems();
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-10">
+    <>
+      <SiteHeader />
+      <main className="mx-auto max-w-2xl px-4 py-10">
       <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 duration-700">
         <div className="text-xs font-medium tracking-widest text-muted uppercase">Published postmortems</div>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">Incidents, transparently.</h1>
@@ -81,6 +84,8 @@ export default async function PublicPostmortemsIndex() {
           ))}
         </ul>
       )}
-    </main>
+      </main>
+      <SiteFooter />
+    </>
   );
 }
