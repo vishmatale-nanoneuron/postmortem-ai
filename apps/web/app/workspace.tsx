@@ -18,6 +18,7 @@ import {
   type Postmortem,
   type PreviousDraft,
   type SimilarIncident,
+  type StatusPageUpdate,
   type UpiPricing,
   webhooks,
   type WirePricing,
@@ -1773,6 +1774,114 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+// A live "is it down right now" page for the currently-selected incident --
+// distinct from the postmortem's own public-visibility toggle further
+// below, which only ever applies to a PUBLISHED postmortem after the
+// incident is over. This works on any incident, open or resolved, with or
+// without a draft yet.
+function StatusPageSettings({
+  incidentId,
+  incident,
+  onChanged,
+}: {
+  incidentId: string;
+  incident: Incident | null;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [updates, setUpdates] = useState<StatusPageUpdate[]>([]);
+  const [formKey, setFormKey] = useState(0);
+
+  useEffect(() => {
+    setUpdates([]);
+    api.statusPageUpdates(incidentId).then(setUpdates).catch(() => setUpdates([]));
+  }, [incidentId]);
+
+  async function toggle() {
+    if (!incident) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api.updateStatusPageVisibility(incidentId, !incident.is_public);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update the status page.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function postUpdate(form: FormData) {
+    const text = String(form.get("message") || "").trim();
+    if (!text) return;
+    setBusy(true);
+    setError("");
+    try {
+      const posted = await api.postStatusPageUpdate(incidentId, text);
+      setUpdates((prev) => [posted, ...prev]);
+      setFormKey((k) => k + 1); // remounts the form below with a fresh, empty textarea
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not post the update.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!incident) return null;
+
+  return (
+    <Card className={card}>
+      <h2 className="mb-1 text-base font-semibold">Status page</h2>
+      <p className="mb-3 text-xs text-muted">
+        A live public page for this incident -- separate from the postmortem, and usable while the incident is
+        still open. Only what you write below is ever shown; raw evidence stays private.
+      </p>
+      <button className={secondaryButton} disabled={busy} onClick={() => void toggle()} type="button">
+        {incident.is_public ? "Make private" : "Make public"}
+      </button>
+      {incident.is_public && incident.public_slug && (
+        <p className="mt-1.5 text-xs text-muted">
+          Public at{" "}
+          <a
+            className="underline underline-offset-2"
+            href={`/status-page/${incident.public_slug}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            /status-page/{incident.public_slug}
+          </a>
+        </p>
+      )}
+      <form key={formKey} action={postUpdate} className="mt-3">
+        <label className={fieldLabel} htmlFor="status-page-message">
+          Post an update
+        </label>
+        <textarea
+          id="status-page-message"
+          name="message"
+          className={cn(fieldInput, "min-h-16")}
+          placeholder="We're investigating elevated error rates."
+        />
+        <button className={cn(secondaryButton, "mt-1")} disabled={busy} type="submit">
+          Post
+        </button>
+      </form>
+      {updates.length > 0 && (
+        <ul className="mt-3 space-y-1.5 text-sm">
+          {updates.map((update) => (
+            <li key={update.created_at} className="rounded-md bg-paper px-3 py-2">
+              <div>{update.message}</div>
+              <div className="text-xs text-muted">{new Date(update.created_at).toLocaleString()}</div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    </Card>
+  );
+}
+
 function EvidenceQualitySummary({ evidence }: { evidence: Evidence[] }) {
   const automated = evidence.filter((e) => AUTOMATED_SOURCES.has(e.source)).length;
   const human = evidence.length - automated;
@@ -2195,6 +2304,11 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
 
       {selectedId && (
         <>
+          <StatusPageSettings
+            incidentId={selectedId}
+            incident={incidents.find((i) => i.id === selectedId) ?? null}
+            onChanged={() => void refreshIncidents()}
+          />
           <Card className={card}>
             <h2 className="mb-3 text-base font-semibold">Evidence</h2>
             {evidence.length > 0 && <EvidenceQualitySummary evidence={evidence} />}

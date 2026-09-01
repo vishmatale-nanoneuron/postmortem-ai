@@ -179,7 +179,7 @@ async def list_incidents(
     # ever changes status, and always stamps updated_at at the same time,
     # so this is accurate for the common case (resolved exactly once).
     return await database.fetch_all(
-        """SELECT id, title, severity, status,
+        """SELECT id, title, severity, status, is_public, public_slug,
                   CASE WHEN status = 'resolved' THEN updated_at - created_at END AS resolution_ms
            FROM incidents WHERE client_email=%s ORDER BY created_at DESC""",
         (user.email,),
@@ -962,6 +962,134 @@ async def update_public_visibility(
         (payload.is_public, slug, incident_id),
     )
     return await _load_postmortem(database, incident_id)
+
+
+MAX_STATUS_PAGE_UPDATES_PER_HOUR = 20
+
+
+@router.patch("/incidents/{incident_id}/status-page")
+async def update_status_page_visibility(
+    incident_id: str,
+    payload: PublicVisibilityUpdate,
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> dict[str, object]:
+    """Turn an incident's own live public status page on or off --
+    independent of update_public_visibility above, which only ever applies
+    to a PUBLISHED postmortem after the incident is over. This is for
+    while the incident is still happening: 'is it down right now,' often
+    before any postmortem exists at all. Same not-gated-behind-
+    subscription reasoning as the postmortem one -- toggling visibility of
+    your own already-created content isn't the paywalled action."""
+    incident = await require_incident(database, incident_id, user.email)
+    # require_incident's own SELECT doesn't carry public_slug (used by many
+    # other call sites that don't need it) -- same reasoning
+    # update_public_visibility above already applies to incident_postmortems'
+    # own slug: a small, targeted extra fetch rather than widening a
+    # shared helper's column list for one caller.
+    existing = await database.fetch_one("SELECT public_slug FROM incidents WHERE id=%s", (incident_id,))
+    public_slug = (existing or {}).get("public_slug")
+    if payload.is_public and not public_slug:
+        public_slug = slugify(str(incident["title"]), incident_id)
+
+    row = await database.fetch_one(
+        """UPDATE incidents SET is_public=%s, public_slug=%s WHERE id=%s
+           RETURNING id, title, severity, status, is_public, public_slug""",
+        (payload.is_public, public_slug, incident_id),
+    )
+    return dict(row or {})
+
+
+class StatusPageUpdateIn(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+
+
+class StatusPageUpdateOut(BaseModel):
+    message: str
+    created_at: int
+
+
+@router.post(
+    "/incidents/{incident_id}/status-page/updates",
+    status_code=status.HTTP_201_CREATED,
+    response_model=StatusPageUpdateOut,
+)
+async def post_status_page_update(
+    incident_id: str,
+    payload: StatusPageUpdateIn,
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> StatusPageUpdateOut:
+    """A curated message for the public page -- deliberately separate from
+    incident_evidence (which can carry internal debugging detail, customer
+    PII, or raw log content never meant for a public audience). Posting an
+    update doesn't require the page to be public yet -- lets a client
+    write the first update, then flip is_public on, without a forced
+    ordering."""
+    await require_incident(database, incident_id, user.email)
+    if not await try_record_action(
+        database, user.id, "status_page_update", MAX_STATUS_PAGE_UPDATES_PER_HOUR, 60 * 60 * 1000
+    ):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
+
+    now = int(time.time() * 1000)
+    await database.execute(
+        "INSERT INTO incident_public_updates (incident_id, message, posted_by, created_at) VALUES (%s, %s, %s, %s)",
+        (incident_id, payload.message, user.email, now),
+    )
+    return StatusPageUpdateOut(message=payload.message, created_at=now)
+
+
+@router.get("/incidents/{incident_id}/status-page/updates", response_model=list[StatusPageUpdateOut])
+async def list_status_page_updates(
+    incident_id: str,
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> list[StatusPageUpdateOut]:
+    """The owner's own view of updates they've posted -- for managing the
+    page, not the public-facing read (see get_public_status_page below,
+    which is unauthenticated and scoped by public_slug instead)."""
+    await require_incident(database, incident_id, user.email)
+    rows = await database.fetch_all(
+        "SELECT message, created_at FROM incident_public_updates WHERE incident_id=%s ORDER BY created_at DESC",
+        (incident_id,),
+    )
+    return [StatusPageUpdateOut(**row) for row in rows]
+
+
+class PublicStatusPageOut(BaseModel):
+    incident_title: str
+    severity: str
+    status: str
+    updates: list[StatusPageUpdateOut]
+
+
+@router.get("/status-page/{public_slug}", response_model=PublicStatusPageOut)
+async def get_public_status_page(public_slug: str, database: Database = Depends(get_database)) -> PublicStatusPageOut:
+    """Unauthenticated -- a live incident status page. 404s (not 403) for
+    a private or nonexistent slug, same reasoning as get_public_postmortem:
+    doesn't let this be used to distinguish 'exists but private' from
+    'never existed'. Deliberately returns no client_email, no internal
+    evidence, no incident id -- only the fields a public visitor should
+    ever see."""
+    incident = await database.fetch_one(
+        "SELECT title, severity, status FROM incidents WHERE public_slug=%s AND is_public=true",
+        (public_slug,),
+    )
+    if not incident:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    updates = await database.fetch_all(
+        """SELECT u.message, u.created_at FROM incident_public_updates u
+           JOIN incidents i ON i.id = u.incident_id
+           WHERE i.public_slug=%s ORDER BY u.created_at DESC""",
+        (public_slug,),
+    )
+    return PublicStatusPageOut(
+        incident_title=incident["title"],
+        severity=incident["severity"],
+        status=incident["status"],
+        updates=[StatusPageUpdateOut(**row) for row in updates],
+    )
 
 
 class PublicPostmortemOut(BaseModel):

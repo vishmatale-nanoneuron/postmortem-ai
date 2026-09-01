@@ -42,6 +42,8 @@ export type Incident = {
   status: string;
   impact?: string | null;
   resolution_ms?: number | null;
+  is_public?: boolean;
+  public_slug?: string | null;
 };
 
 export type Evidence = {
@@ -277,7 +279,21 @@ export const api = {
     request<PreviousDraft | null>(`/v1/postmortems/incidents/${incidentId}/previous-draft`),
   qualitySummary: () => request<EvidenceQualitySummary>("/v1/postmortems/quality-summary"),
   exportData: () => request<ExportedData>("/v1/postmortems/export"),
+  updateStatusPageVisibility: (incidentId: string, isPublic: boolean) =>
+    request<Incident>(`/v1/postmortems/incidents/${incidentId}/status-page`, {
+      method: "PATCH",
+      body: JSON.stringify({ is_public: isPublic }),
+    }),
+  postStatusPageUpdate: (incidentId: string, message: string) =>
+    request<StatusPageUpdate>(`/v1/postmortems/incidents/${incidentId}/status-page/updates`, {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    }),
+  statusPageUpdates: (incidentId: string) =>
+    request<StatusPageUpdate[]>(`/v1/postmortems/incidents/${incidentId}/status-page/updates`),
 };
+
+export type StatusPageUpdate = { message: string; created_at: number };
 
 export type ExportedData = {
   exported_at: number;

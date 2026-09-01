@@ -691,6 +691,69 @@ async def test_public_postmortem_is_readable_unauthenticated_private_is_not(cont
 
 
 @pytest.mark.asyncio
+async def test_live_status_page_works_while_the_incident_is_still_open_no_postmortem_needed(context) -> None:
+    """The whole point of the status page: 'is it down right now,' often
+    before any postmortem exists at all -- unlike the published-postmortem
+    public page above, this needs no draft, no publish, nothing but the
+    incident itself and the visibility toggle."""
+    client, _, _, application = context
+    made_public = await client.patch(
+        f"/v1/postmortems/incidents/{INCIDENT}/status-page", json={"is_public": True}
+    )
+    assert made_public.status_code == 200, made_public.text
+    body = made_public.json()
+    assert body["public_slug"]
+    assert body["status"] == "open"
+    public_slug = body["public_slug"]
+
+    posted = await client.post(
+        f"/v1/postmortems/incidents/{INCIDENT}/status-page/updates",
+        json={"message": "We're investigating elevated checkout errors."},
+    )
+    assert posted.status_code == 201, posted.text
+
+    async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as anon:
+        page = await anon.get(f"/v1/postmortems/status-page/{public_slug}")
+        assert page.status_code == 200
+        page_body = page.json()
+        assert page_body["incident_title"] == "Checkout outage"
+        assert page_body["status"] == "open"
+        assert any("investigating elevated checkout errors" in u["message"] for u in page_body["updates"])
+        # No internal identity leaked -- the update was posted by
+        # CLIENT_EMAIL internally, but that must never appear publicly.
+        assert CLIENT_EMAIL not in page.text
+        assert "incident_id" not in page_body
+        assert "id" not in page_body
+
+        await client.patch(f"/v1/postmortems/incidents/{INCIDENT}/status-page", json={"is_public": False})
+        now_private = await anon.get(f"/v1/postmortems/status-page/{public_slug}")
+        assert now_private.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_status_page_updates_are_scoped_to_the_owning_incident_and_account(context) -> None:
+    client, _, database, application = context
+    other_email = "postmortem-test-status-page-other@example.com"
+    await database.execute("DELETE FROM users WHERE email=%s", (other_email,))
+
+    async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as other:
+        register = await other.post("/v1/auth/register", json={"email": other_email, "password": TEST_PASSWORD})
+        assert register.status_code == 201
+
+        # A different account can't toggle or post to this incident's
+        # status page -- 404, the same tenant-isolation shape every other
+        # route on this incident already has.
+        assert (
+            await other.patch(f"/v1/postmortems/incidents/{INCIDENT}/status-page", json={"is_public": True})
+        ).status_code == 404
+        assert (
+            await other.post(
+                f"/v1/postmortems/incidents/{INCIDENT}/status-page/updates", json={"message": "Should be blocked"}
+            )
+        ).status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_publishing_notifies_slack_and_creates_a_linear_issue_per_action(
     context, monkeypatch: pytest.MonkeyPatch
 ) -> None:
