@@ -216,7 +216,18 @@ def build_title_suggestion_request(raw_text: str, model: str | None = None) -> M
         messages=[ModelMessage(role="user", content=raw_text)],
         system=TITLE_SUGGESTION_SYSTEM_PROMPT,
         model=model,
-        max_tokens=256,
+        # NOT sized to the tiny {title, severity} output -- confirmed live
+        # against the real Gemini API that 256 produced "Gemini returned no
+        # text content" (GeminiProvider.complete's own ValueError) on every
+        # real call, not just occasionally: Gemini 2.5's thinking-token
+        # budget is drawn from max_output_tokens before any visible output
+        # is emitted, with no separate thinking-budget config set anywhere
+        # in gemini_provider.py, so a small max_tokens can consume the
+        # entire budget on invisible reasoning and leave nothing for the
+        # actual JSON. Matches build_extraction_request/build_draft_request's
+        # own 2048 exactly -- not a coincidence; same model, same behavior,
+        # so the same margin.
+        max_tokens=2_048,
         temperature=0.1,
     )
 
