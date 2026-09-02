@@ -1,0 +1,14 @@
+-- ai_runs.incident_id was NOT NULL (0004_ai_runs.sql) because every AI call
+-- that existed at the time (drafting) always ran against an already-created
+-- incident. The new incident-title/severity suggestion call (postmortems.py,
+-- suggest_incident) runs BEFORE an incident exists -- suggesting a title is
+-- the whole point of helping someone who hasn't created one yet -- so it has
+-- no real incident_id to log against. Dropping NOT NULL rather than
+-- inventing a placeholder incident row keeps ai_runs' own meaning intact:
+-- a NULL here honestly means "this run wasn't about any particular
+-- incident," not a fake foreign key pointing at something that doesn't
+-- represent the run.
+--
+-- DROP NOT NULL is a no-op if already nullable, satisfying this repo's
+-- idempotent-migration requirement (bun run migrate applied twice in CI).
+ALTER TABLE public.ai_runs ALTER COLUMN incident_id DROP NOT NULL;

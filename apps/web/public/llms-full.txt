@@ -152,7 +152,9 @@ Auth (`/v1/auth`): `POST /register`, `POST /login`, `POST /logout`,
 self-delete), `POST /password-reset/request`, `POST /password-reset/confirm`,
 `GET /captcha-config`, `GET /session-token`.
 
-Incidents & postmortems (`/v1/postmortems`): `POST /incidents`,
+Incidents & postmortems (`/v1/postmortems`): `POST /incidents/suggest`
+(AI-suggested title + severity from pasted raw text, for the create form to
+pre-fill -- suggestion only, creates nothing), `POST /incidents`,
 `GET /incidents`, `GET /incidents/{id}`, `PATCH /incidents/{id}/status`,
 `GET /summary`, `POST /incidents/{id}/evidence`,
 `GET /incidents/{id}/evidence`, `POST /incidents/{id}/evidence/extract`

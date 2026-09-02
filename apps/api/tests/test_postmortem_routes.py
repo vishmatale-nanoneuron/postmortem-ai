@@ -13,7 +13,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from app.api.v1.postmortems import slugify
-from app.services.postmortem import EXTRACTION_PROMPT_VERSION, PROMPT_VERSION
+from app.services.postmortem import EXTRACTION_PROMPT_VERSION, PROMPT_VERSION, TITLE_SUGGESTION_PROMPT_VERSION
 from httpx import ASGITransport, AsyncClient
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
@@ -288,6 +288,90 @@ async def test_an_unpaid_account_cannot_extract_evidence(context) -> None:
     client, _, database, _ = context
     await database.execute("UPDATE users SET subscription_status='none' WHERE email=%s", (CLIENT_EMAIL,))
     response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/evidence/extract", json={"text": "x"})
+    assert response.status_code == 402
+
+
+@pytest.mark.asyncio
+async def test_suggest_incident_returns_a_title_and_severity(context) -> None:
+    client, provider, _, _ = context
+    provider.response = {"title": "Checkout latency spike after release 1.2", "severity": "sev2"}
+    response = await client.post(
+        "/v1/postmortems/incidents/suggest", json={"text": "ALERT: checkout p99 latency > 4s since 14:04 UTC"}
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body == {"title": "Checkout latency spike after release 1.2", "severity": "sev2"}
+
+
+@pytest.mark.asyncio
+async def test_suggest_incident_never_creates_anything(context) -> None:
+    client, provider, database, _ = context
+    before = await database.fetch_one("SELECT count(*) AS n FROM incidents WHERE client_email=%s", (CLIENT_EMAIL,))
+    provider.response = {"title": "Some suggested title", "severity": "sev3"}
+    response = await client.post("/v1/postmortems/incidents/suggest", json={"text": "some raw text"})
+    assert response.status_code == 200, response.text
+
+    # Assistive, not autonomous -- same invariant as extract_evidence:
+    # this only ever proposes, the client still calls POST /incidents
+    # itself with whatever it chooses to keep or edit. Comparing the count
+    # before/after, not asserting zero -- this fixture only ever cleans up
+    # the one fixed INCIDENT id at setup, and CLIENT_EMAIL is reused across
+    # other test files' fixtures too, so other incidents can legitimately
+    # already exist for this account.
+    after = await database.fetch_one("SELECT count(*) AS n FROM incidents WHERE client_email=%s", (CLIENT_EMAIL,))
+    assert after["n"] == before["n"]
+
+
+@pytest.mark.asyncio
+async def test_suggest_incident_rejects_an_invalid_severity_from_the_model(context) -> None:
+    client, provider, _, _ = context
+    provider.response = {"title": "A real-looking title", "severity": "sev9"}
+    response = await client.post("/v1/postmortems/incidents/suggest", json={"text": "x"})
+    assert response.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_suggest_incident_rejects_a_missing_title(context) -> None:
+    client, provider, _, _ = context
+    provider.response = {"title": "", "severity": "sev2"}
+    response = await client.post("/v1/postmortems/incidents/suggest", json={"text": "x"})
+    assert response.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_suggest_incident_records_an_ai_run_with_no_incident_id(context) -> None:
+    client, provider, database, _ = context
+    provider.response = {"title": "Some title", "severity": "sev3"}
+    response = await client.post("/v1/postmortems/incidents/suggest", json={"text": "x"})
+    assert response.status_code == 200, response.text
+
+    run = await database.fetch_one(
+        "SELECT status, prompt_version, incident_id FROM ai_runs WHERE prompt_version=%s ORDER BY created_at DESC LIMIT 1",
+        (TITLE_SUGGESTION_PROMPT_VERSION,),
+    )
+    assert run is not None
+    assert run["status"] == "succeeded"
+    assert run["incident_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_an_account_that_already_spent_its_free_slot_cannot_get_a_suggestion(context) -> None:
+    """Same gate create_incident itself uses (require_active_subscription_or_free_slot)
+    -- this is the same "starting work on a new incident" moment, one step
+    earlier, so an account with nothing left to spend shouldn't get
+    unlimited free AI calls here just because no incident actually gets
+    created by this endpoint."""
+    client, _, database, _ = context
+    await database.execute(
+        """INSERT INTO incidents (id, client_email, title, severity, status, created_at, updated_at)
+           VALUES ('already-used-elsewhere-suggest', %s, 'Used elsewhere', 'sev3', 'open', 0, 0)""",
+        (CLIENT_EMAIL,),
+    )
+    await database.execute(
+        "UPDATE users SET subscription_status='none', free_incident_id='already-used-elsewhere-suggest' WHERE email=%s",
+        (CLIENT_EMAIL,),
+    )
+    response = await client.post("/v1/postmortems/incidents/suggest", json={"text": "x"})
     assert response.status_code == 402
 
 

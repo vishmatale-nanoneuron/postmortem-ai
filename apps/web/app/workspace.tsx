@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   api,
   billing,
@@ -1722,6 +1722,61 @@ function WebhookSettings() {
   );
 }
 
+// Same "assistive, not autonomous" shape as EvidenceExtractor below, one
+// step earlier: pre-fills the create-incident form's title/severity from
+// pasted raw text (an alert, a Slack message) but never submits anything
+// itself -- the fields stay fully editable, and the real POST /incidents
+// call only happens when the human clicks "Create incident" below. Sets
+// the existing uncontrolled inputs directly via ref rather than converting
+// the form to controlled state, so the plain form keeps working exactly as
+// before if this suggestion feature is never used.
+function IncidentSuggestionHelper({
+  titleRef,
+  severityRef,
+}: {
+  titleRef: React.RefObject<HTMLInputElement | null>;
+  severityRef: React.RefObject<HTMLSelectElement | null>;
+}) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function suggest() {
+    if (!text.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      const suggestion = await api.suggestIncident(text);
+      if (titleRef.current) titleRef.current.value = suggestion.title;
+      if (severityRef.current) severityRef.current.value = suggestion.severity;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not suggest a title.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mb-4 rounded-md border border-line bg-paper p-3">
+      <label className={fieldLabel} htmlFor="incident-suggest-text">
+        Paste an alert or message to suggest a title and severity
+      </label>
+      <textarea
+        id="incident-suggest-text"
+        className={cn(fieldInput, "min-h-16 font-mono text-xs")}
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        placeholder="PagerDuty: checkout p99 latency > 4s since 14:04 UTC"
+      />
+      <button className={secondaryButton} disabled={busy || !text.trim()} type="button" onClick={() => void suggest()}>
+        {busy ? "Suggesting..." : "Suggest title & severity with AI"}
+      </button>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      <p className="mt-1.5 text-xs text-muted">Fills in the fields below -- review and edit before creating.</p>
+    </div>
+  );
+}
+
 // AI-assisted, not autonomous: proposes evidence entries from pasted text
 // (a Slack thread, a log excerpt) but never saves anything on its own --
 // each suggestion is reviewed, optionally edited, and added individually
@@ -2162,6 +2217,8 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
   // zero incidents" -- incidents/summary both start empty/null either way,
   // so without this the loading and empty states were visually identical.
   const [loaded, setLoaded] = useState(false);
+  const incidentTitleRef = useRef<HTMLInputElement>(null);
+  const incidentSeverityRef = useRef<HTMLSelectElement>(null);
 
   async function refreshIncidents() {
     // Independent GETs -- run in parallel rather than serially, halving
@@ -2413,15 +2470,16 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
             ))}
           </ul>
         )}
+        <IncidentSuggestionHelper titleRef={incidentTitleRef} severityRef={incidentSeverityRef} />
         <form action={createIncident}>
           <label className={fieldLabel} htmlFor="incident-title">
             Title
           </label>
-          <input id="incident-title" className={fieldInput} name="title" required />
+          <input id="incident-title" ref={incidentTitleRef} className={fieldInput} name="title" required />
           <label className={fieldLabel} htmlFor="incident-severity">
             Severity
           </label>
-          <select id="incident-severity" className={fieldInput} name="severity" defaultValue="sev2">
+          <select id="incident-severity" ref={incidentSeverityRef} className={fieldInput} name="severity" defaultValue="sev2">
             <option value="sev1">sev1</option>
             <option value="sev2">sev2</option>
             <option value="sev3">sev3</option>

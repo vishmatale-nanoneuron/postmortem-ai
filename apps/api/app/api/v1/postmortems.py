@@ -35,14 +35,17 @@ from ...security.rate_limit import try_record_action
 from ...services.postmortem import (
     EXTRACTION_PROMPT_VERSION,
     PROMPT_VERSION,
+    TITLE_SUGGESTION_PROMPT_VERSION,
     UNSUPPORTED,
     EvidenceEntry,
     bound_evidence_by_chars,
     build_draft_request,
     build_extraction_request,
+    build_title_suggestion_request,
     ground_draft,
     parse_extracted_evidence,
     parse_model_json,
+    parse_suggested_incident,
     render_evidence,
 )
 from ...settings import Settings, get_settings
@@ -68,6 +71,9 @@ MAX_EVIDENCE_PER_HOUR = 100
 MAX_STATUS_CHANGES_PER_HOUR = 60
 MAX_DRAFTS_PER_HOUR = 20
 MAX_EXTRACTIONS_PER_HOUR = 20
+# Same shape/cost as extraction's own limit -- one model call, same budget
+# reasoning, distinct action name so the two don't share one bucket.
+MAX_TITLE_SUGGESTIONS_PER_HOUR = 20
 # A full account export is a real, if infrequent, thing a real client does
 # (backing up their own data, or before cancelling) -- generous enough to
 # never interfere with that, still bounded against a scripted hammering of
@@ -146,6 +152,95 @@ async def load_evidence(database: Database, incident_id: str) -> list[EvidenceEn
         )
         for row in rows
     ]
+
+
+class SuggestIncidentIn(BaseModel):
+    text: str = Field(min_length=1, max_length=40_000)
+
+
+class SuggestedIncidentOut(BaseModel):
+    title: str
+    severity: str
+
+
+@router.post("/incidents/suggest", response_model=SuggestedIncidentOut)
+async def suggest_incident(
+    payload: SuggestIncidentIn,
+    database: Database = Depends(get_database),
+    provider: ModelProvider = Depends(get_model_provider),
+    user: User = Depends(require_active_subscription_or_free_slot),
+) -> SuggestedIncidentOut:
+    """Assistive, not autonomous -- same shape as extract_evidence: proposes
+    a title and severity from pasted raw text (an alert, a Slack message)
+    for the create-incident form to pre-fill, but never creates anything
+    itself. The gate is the same one create_incident itself uses (this is
+    the same "starting work on a new incident" moment, just one step
+    earlier) -- an account with no free slot left and no subscription
+    shouldn't get unlimited free AI calls here just because no incident
+    gets created."""
+    if not await try_record_action(
+        database, user.id, "suggest_incident", MAX_TITLE_SUGGESTIONS_PER_HOUR, 60 * 60 * 1000
+    ):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
+
+    started_at = time.monotonic()
+
+    async def record_ai_run(status_value: str, output_tokens: int | None, error_type: str | None) -> None:
+        latency_ms = int((time.monotonic() - started_at) * 1000)
+        await database.execute(
+            """INSERT INTO ai_runs
+                 (id,incident_id,provider,model,prompt_version,input_chars,
+                  output_tokens,latency_ms,status,error_type,created_at)
+               VALUES (gen_random_uuid(),NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (
+                provider.name,
+                provider.model_name,
+                TITLE_SUGGESTION_PROMPT_VERSION,
+                len(payload.text),
+                output_tokens,
+                latency_ms,
+                status_value,
+                error_type,
+                int(time.time() * 1000),
+            ),
+        )
+
+    try:
+        result = await provider.complete(build_title_suggestion_request(payload.text))
+        response = parse_model_json(result.text)
+    except CircuitOpenError as error:
+        logger.warning("incident_suggestion_failed", extra={"error_type": "circuit_open"})
+        await record_ai_run("failed", None, "circuit_open")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The suggestion model has failed repeatedly and is being avoided for a short cooldown -- try again shortly",
+        ) from error
+    except (ValueError, TypeError) as error:
+        logger.warning("incident_suggestion_failed", extra={"error_type": "unreadable_response"})
+        await record_ai_run("failed", None, "unreadable_response")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The suggestion model returned an unreadable response",
+        ) from error
+    except (httpx.HTTPError, genai_errors.APIError, anthropic.APIError, anthropic.APIConnectionError) as error:
+        logger.warning("incident_suggestion_failed", extra={"error_type": type(error).__name__})
+        await record_ai_run("failed", None, type(error).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The suggestion model is temporarily unavailable",
+        ) from error
+
+    suggested = parse_suggested_incident(response)
+    if suggested is None:
+        await record_ai_run("failed", result.output_tokens, "no_usable_suggestion")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not produce a usable suggestion from that text",
+        )
+
+    await record_ai_run("succeeded", result.output_tokens, None)
+    logger.info("incident_suggestion_succeeded", extra={"severity": suggested.severity})
+    return SuggestedIncidentOut(title=suggested.title, severity=suggested.severity)
 
 
 @router.post("/incidents", status_code=status.HTTP_201_CREATED)

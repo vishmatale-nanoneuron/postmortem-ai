@@ -56,6 +56,7 @@ export type Evidence = {
 };
 
 export type ExtractedEvidence = { source: string; summary: string; detail: string | null };
+export type SuggestedIncident = { title: string; severity: string };
 
 export type PostmortemAction = {
   id: string;
@@ -254,6 +255,8 @@ export const api = {
   founderSummary: () => request<FounderSummary>("/v1/founder/summary"),
   createIncident: (input: { title: string; severity: string; impact?: string }) =>
     request<Incident>("/v1/postmortems/incidents", { method: "POST", body: JSON.stringify(input) }),
+  suggestIncident: (text: string) =>
+    request<SuggestedIncident>("/v1/postmortems/incidents/suggest", { method: "POST", body: JSON.stringify({ text }) }),
   listEvidence: (incidentId: string) => request<Evidence[]>(`/v1/postmortems/incidents/${incidentId}/evidence`),
   addEvidence: (
     incidentId: string,
