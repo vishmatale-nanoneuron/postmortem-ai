@@ -26,7 +26,7 @@ import {
 } from "./api";
 import { auth, type AuthUser } from "./auth";
 import { cn } from "@/lib/utils";
-import { GroundingExample, Hero, HowItWorks, IntegrationLogos, SiteFooter, WhatThisIsnt } from "./landing";
+import { GroundingExample, Hero, HowItWorks, IntegrationLogos, SiteFooter, SiteHeader, WhatThisIsnt } from "./landing";
 import { usePolling } from "./use-polling";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -671,7 +671,9 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
         : "Enter your email and we'll send you a link to choose a new password.";
 
   return (
-    <main>
+    <>
+      <SiteHeader />
+      <main>
       <Hero />
       <GroundingExample />
       <HowItWorks />
@@ -785,8 +787,9 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
         </Card>
       </div>
       <WhatThisIsnt />
+      </main>
       <SiteFooter />
-    </main>
+    </>
   );
 }
 

@@ -251,9 +251,18 @@ export function WhatThisIsnt() {
 // very bottom. A visitor arriving cold via search or a shared link saw no
 // brand identity at all until scrolling past everything. One small,
 // consistent header fixes that everywhere at once.
+// Sticky, not just present -- every page using this already scrolls long
+// enough (docs, pricing, the postmortem detail pages, and now the
+// homepage itself) that the header disappearing on scroll meant "Get
+// started" and the nav links were only ever reachable by scrolling all
+// the way back up. z-20 to sit above the in-app dashboard's own sticky
+// quick-nav bars (workspace.tsx, z-10) in case a future page ever nests
+// one under this -- doesn't happen today, but matching the wrong side of
+// a z-index comparison later is a worse bug to chase than picking the
+// right side now.
 export function SiteHeader() {
   return (
-    <header className="border-b border-line px-4 py-4">
+    <header className="sticky top-0 z-20 border-b border-line bg-paper/90 px-4 py-4 backdrop-blur-sm">
       <div className="mx-auto flex max-w-3xl items-center justify-between">
         <Link href="/" className="flex items-center gap-2 text-sm font-semibold text-ink">
           <LogoMark size={22} />
