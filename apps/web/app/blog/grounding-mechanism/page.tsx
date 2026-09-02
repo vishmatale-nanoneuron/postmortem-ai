@@ -16,6 +16,25 @@ const h2 = "mb-2 text-lg font-semibold text-ink";
 const p = "text-sm text-muted leading-relaxed mb-2";
 const code = "rounded bg-paper px-1.5 py-0.5 font-mono text-xs";
 
+// A real, verifiable date -- this file's own first-commit date (git log
+// --follow --diff-filter=A), not an invented "published" stamp. Shown
+// both here (structured data) and visibly on the page below, so a crawler
+// and a human reader see the same fact -- the same rule this app applies
+// to its own postmortem output applies to its own marketing content.
+const PUBLISHED_DATE = "2026-08-27";
+
+const ARTICLE_STRUCTURED_DATA = {
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  headline: "How postmortem drafting is grounded, mechanically",
+  description:
+    "The two-layer mechanism behind every AI-drafted postmortem: cited generation, then independent code-level verification of every citation before anything is stored.",
+  datePublished: PUBLISHED_DATE,
+  author: { "@type": "Organization", name: "PostMortem AI", url: "https://www.nanoneuron.ai" },
+  publisher: { "@type": "Organization", name: "PostMortem AI", url: "https://www.nanoneuron.ai" },
+  mainEntityOfPage: "https://www.nanoneuron.ai/blog/grounding-mechanism",
+};
+
 function section(index: number, children: React.ReactNode) {
   return (
     <div
@@ -32,10 +51,17 @@ function section(index: number, children: React.ReactNode) {
 export default function GroundingMechanismPost() {
   return (
     <>
+      <script
+        type="application/ld+json"
+        // Static, hardcoded JSON, no user input -- safe despite dangerouslySetInnerHTML.
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(ARTICLE_STRUCTURED_DATA) }}
+      />
       <SiteHeader />
       <main className="mx-auto max-w-2xl px-4 py-10">
       <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 duration-700">
-        <div className="text-xs font-medium tracking-widest text-muted uppercase">Engineering</div>
+        <div className="text-xs font-medium tracking-widest text-muted uppercase">
+          Engineering · <time dateTime={PUBLISHED_DATE}>{PUBLISHED_DATE}</time>
+        </div>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">
           How postmortem drafting is grounded, mechanically
         </h1>

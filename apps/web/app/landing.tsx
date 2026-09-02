@@ -20,6 +20,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { LogoMark } from "./logo-mark";
 import { GeminiLogo, LinearLogo, StripeLogo } from "./brand-icons";
+import { ScrollReveal } from "./scroll-reveal";
 
 export function Hero() {
   return (
@@ -30,6 +31,19 @@ export function Hero() {
       <div
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[32rem] bg-[radial-gradient(60%_50%_at_50%_0%,color-mix(in_oklab,var(--color-accent)_14%,transparent),transparent)]"
+      />
+      {/* Two soft, slow-drifting blobs behind the static wash above --
+          same accent tint, just in motion. transform/opacity-only
+          animation (see globals.css), no layout impact, and clipped by
+          this wrapper's overflow-hidden so drifting can't cause
+          horizontal scroll on a narrow viewport. */}
+      <div
+        aria-hidden
+        className="hero-blob-a pointer-events-none absolute top-[-4rem] left-[10%] -z-10 size-72 rounded-full bg-[radial-gradient(circle,color-mix(in_oklab,var(--color-accent)_18%,transparent),transparent_70%)] blur-2xl"
+      />
+      <div
+        aria-hidden
+        className="hero-blob-b pointer-events-none absolute top-[2rem] right-[8%] -z-10 size-64 rounded-full bg-[radial-gradient(circle,color-mix(in_oklab,var(--color-accent)_14%,transparent),transparent_70%)] blur-2xl"
       />
       <div className="mx-auto max-w-3xl px-4 pt-20 pb-12 text-center sm:pt-28">
         <LogoMark size={40} className="mx-auto mb-5 animate-in fade-in zoom-in-95 duration-700" />
@@ -42,7 +56,7 @@ export function Hero() {
         </Badge>
         <h1 className="mt-5 animate-in fade-in slide-in-from-bottom-3 text-4xl leading-[1.1] font-semibold tracking-tight text-ink duration-700 sm:text-6xl delay-100 fill-mode-backwards">
           Postmortems that{" "}
-          <span className="bg-gradient-to-r from-accent to-accent/60 bg-clip-text text-transparent">
+          <span className="hero-gradient-text bg-gradient-to-r from-accent via-accent/70 to-accent/60 bg-clip-text text-transparent">
             cite their evidence.
           </span>
         </h1>
@@ -56,7 +70,7 @@ export function Hero() {
             href="#get-started"
             className={cn(
               buttonVariants({ size: "lg" }),
-              "h-auto px-7 py-3 text-sm shadow-lg shadow-accent/10 transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-accent/20",
+              "h-auto px-7 py-3 text-sm shadow-lg shadow-accent/10 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-accent/35",
             )}
           >
             Get started — first postmortem free
@@ -84,50 +98,77 @@ export function Hero() {
 // /postmortems are for).
 export function GroundingExample() {
   return (
-    <div className="tilt-card-wrap mx-auto max-w-3xl animate-in fade-in slide-in-from-bottom-2 px-4 pb-8 duration-700">
-      <Card className="tilt-card overflow-hidden border-line py-0 shadow-sm">
-        <div className="border-b border-line bg-paper/60 px-6 py-3.5">
-          <div className="text-xs font-medium tracking-widest text-muted uppercase">
-            What &ldquo;grounded&rdquo; actually means
+    <ScrollReveal className="tilt-card-wrap mx-auto max-w-3xl px-4 pb-8">
+      {(revealed) => (
+        <Card
+          className={cn(
+            "tilt-card overflow-hidden border-line py-0 shadow-sm transition-all duration-700 ease-out",
+            revealed ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0",
+          )}
+        >
+          <div className="border-b border-line bg-paper/60 px-6 py-3.5">
+            <div className="text-xs font-medium tracking-widest text-muted uppercase">
+              What &ldquo;grounded&rdquo; actually means
+            </div>
           </div>
-        </div>
-        <CardContent className="grid gap-px overflow-hidden sm:grid-cols-2 sm:gap-0 sm:divide-x sm:divide-line">
-          <div className="px-6 py-5">
-            <p className="flex items-center gap-1.5 text-xs font-medium text-accent">
-              <CheckCircle2 className="size-3.5" />
-              Kept — cites real evidence
-            </p>
-            <p className="mt-2.5 rounded-md bg-paper px-3.5 py-3 font-mono text-[13px] leading-relaxed text-ink">
-              &ldquo;Latency rose from 180ms to 4200ms starting 14:04 UTC, correlated with deploy #482.
-              {/* The citation "stamps in" after the sentence has already
-                  landed -- visualizing that the check happens to a claim
-                  the model already made, not before it, matching how
-                  ground_draft() actually works (verify, then keep/replace). */}
-              <span className="ml-1 inline-block animate-in zoom-in-50 rounded bg-accent/10 px-1 py-0.5 text-accent duration-500 delay-600 fill-mode-backwards">
-                [2]
-              </span>
-              &rdquo;
-            </p>
-          </div>
-          <div className="px-6 py-5">
-            <p className="flex items-center gap-1.5 text-xs font-medium text-red-600">
-              <XCircle className="size-3.5 animate-in zoom-in-50 spin-in-45 duration-500 delay-600 fill-mode-backwards" />
-              Dropped — no citation exists
-            </p>
-            {/* Same beat as the kept side: the fixed marker only appears
-                after the same ~600ms "checking" delay, not instantly --
-                the one thing that should NOT feel instant here, since the
-                whole point is that a real check happened first. */}
-            <p className="mt-2.5 animate-in fade-in rounded-md bg-paper px-3.5 py-3 font-mono text-[13px] leading-relaxed text-muted italic duration-500 delay-600 fill-mode-backwards">
-              &ldquo;Not established by the recorded evidence.&rdquo;
-            </p>
-            <p className="mt-2 text-xs text-muted">
-              (what a claim like &ldquo;this cost the company $40,000&rdquo; becomes, if no evidence entry says so)
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+          <CardContent className="grid gap-px overflow-hidden sm:grid-cols-2 sm:gap-0 sm:divide-x sm:divide-line">
+            <div className="px-6 py-5">
+              <p className="flex items-center gap-1.5 text-xs font-medium text-accent">
+                <CheckCircle2 className="size-3.5" />
+                Kept — cites real evidence
+              </p>
+              <p className="mt-2.5 rounded-md bg-paper px-3.5 py-3 font-mono text-[13px] leading-relaxed text-ink">
+                &ldquo;Latency rose from 180ms to 4200ms starting 14:04 UTC, correlated with deploy #482.
+                {/* The citation "stamps in" after the sentence has already
+                    landed, and only once the card itself has actually
+                    scrolled into view (revealed) -- visualizing that the
+                    check happens to a claim the model already made, not
+                    before it, matching how ground_draft() actually works
+                    (verify, then keep/replace), and matching what the
+                    visitor is actually looking at, not what happened at
+                    page load. */}
+                <span
+                  className={cn(
+                    "ml-1 inline-block rounded bg-accent/10 px-1 py-0.5 text-accent transition-all duration-500 ease-out",
+                    revealed ? "scale-100 opacity-100 delay-700" : "scale-50 opacity-0",
+                  )}
+                >
+                  [2]
+                </span>
+                &rdquo;
+              </p>
+            </div>
+            <div className="px-6 py-5">
+              <p className="flex items-center gap-1.5 text-xs font-medium text-red-600">
+                <XCircle
+                  className={cn(
+                    "size-3.5 transition-all duration-500 ease-out",
+                    revealed ? "rotate-0 scale-100 opacity-100 delay-700" : "-rotate-45 scale-50 opacity-0",
+                  )}
+                />
+                Dropped — no citation exists
+              </p>
+              {/* Same beat as the kept side: the fixed marker only appears
+                  after the same ~700ms "checking" delay from the moment
+                  this section is actually visible, not instantly -- the
+                  one thing that should NOT feel instant here, since the
+                  whole point is that a real check happened first. */}
+              <p
+                className={cn(
+                  "mt-2.5 rounded-md bg-paper px-3.5 py-3 font-mono text-[13px] leading-relaxed text-muted italic transition-opacity duration-500 ease-out",
+                  revealed ? "opacity-100 delay-700" : "opacity-0",
+                )}
+              >
+                &ldquo;Not established by the recorded evidence.&rdquo;
+              </p>
+              <p className="mt-2 text-xs text-muted">
+                (what a claim like &ldquo;this cost the company $40,000&rdquo; becomes, if no evidence entry says so)
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </ScrollReveal>
   );
 }
 
@@ -155,24 +196,33 @@ export function HowItWorks() {
       <h2 className="mb-4 text-center text-xs font-semibold tracking-wide text-muted uppercase">How it works</h2>
       <div className="grid gap-4 sm:grid-cols-3">
         {steps.map((step, i) => (
-          <div
-            key={step.title}
-            style={{ animationDelay: `${i * 120}ms` }}
-            className="tilt-card-wrap animate-in fade-in slide-in-from-bottom-3 fill-mode-backwards"
-          >
-            <Card tabIndex={0} className="tilt-card border-line shadow-sm hover:shadow-md focus-visible:shadow-md">
-              <CardContent>
-                <div className="flex items-center gap-2.5">
-                  <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent/10 text-xs font-semibold text-accent">
-                    {i + 1}
-                  </span>
-                  <step.icon className="size-4 text-muted" />
-                </div>
-                <h3 className="mt-3 text-sm font-semibold text-ink">{step.title}</h3>
-                <p className="mt-1.5 text-sm text-muted">{step.body}</p>
-              </CardContent>
-            </Card>
-          </div>
+          <ScrollReveal key={step.title} className="tilt-card-wrap">
+            {(revealed) => (
+              <div
+                style={{ transitionDelay: revealed ? `${i * 120}ms` : "0ms" }}
+                className={cn(
+                  "transition-all duration-700 ease-out",
+                  revealed ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0",
+                )}
+              >
+                <Card
+                  tabIndex={0}
+                  className="tilt-card border-line shadow-sm hover:shadow-md focus-visible:shadow-md"
+                >
+                  <CardContent>
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent/10 text-xs font-semibold text-accent">
+                        {i + 1}
+                      </span>
+                      <step.icon className="size-4 text-muted" />
+                    </div>
+                    <h3 className="mt-3 text-sm font-semibold text-ink">{step.title}</h3>
+                    <p className="mt-1.5 text-sm text-muted">{step.body}</p>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+          </ScrollReveal>
         ))}
       </div>
     </div>
@@ -197,23 +247,34 @@ const integrations = [
 
 export function IntegrationLogos() {
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8">
-      <h2 className="mb-6 text-center text-xs font-semibold tracking-wide text-muted uppercase">Integrates with</h2>
-      <div className="overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_10%,black_90%,transparent)]">
-        <div className="logo-marquee-track flex w-max items-center gap-16">
-          {[integrations, integrations].map((group, groupIndex) => (
-            <div key={groupIndex} className="flex shrink-0 items-center gap-16" aria-hidden={groupIndex === 1}>
-              {group.map(({ name, Icon }) => (
-                <div key={name} className="flex items-center gap-2.5 text-muted transition-colors hover:text-ink">
-                  <Icon className="size-5 shrink-0" />
-                  <span className="text-sm font-medium whitespace-nowrap">{name}</span>
+    <ScrollReveal className="mx-auto max-w-3xl px-4 py-8">
+      {(revealed) => (
+        <div
+          className={cn(
+            "transition-all duration-700 ease-out",
+            revealed ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0",
+          )}
+        >
+          <h2 className="mb-6 text-center text-xs font-semibold tracking-wide text-muted uppercase">
+            Integrates with
+          </h2>
+          <div className="overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_10%,black_90%,transparent)]">
+            <div className="logo-marquee-track flex w-max items-center gap-16">
+              {[integrations, integrations].map((group, groupIndex) => (
+                <div key={groupIndex} className="flex shrink-0 items-center gap-16" aria-hidden={groupIndex === 1}>
+                  {group.map(({ name, Icon }) => (
+                    <div key={name} className="flex items-center gap-2.5 text-muted transition-colors hover:text-ink">
+                      <Icon className="size-5 shrink-0" />
+                      <span className="text-sm font-medium whitespace-nowrap">{name}</span>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
-          ))}
+          </div>
         </div>
-      </div>
-    </div>
+      )}
+    </ScrollReveal>
   );
 }
 
@@ -226,21 +287,28 @@ const notes = [
 
 export function WhatThisIsnt() {
   return (
-    <div className="mx-auto max-w-3xl px-4 pt-4 pb-20">
-      <div className="text-xs font-medium tracking-widest text-muted uppercase">What this isn&apos;t</div>
-      <ul className="mt-3 space-y-2.5">
-        {notes.map((item, i) => (
-          <li
-            key={item}
-            style={{ animationDelay: `${i * 80}ms` }}
-            className="flex animate-in fade-in slide-in-from-bottom-1 items-start gap-2.5 text-sm text-muted fill-mode-backwards duration-500"
-          >
-            <XCircle className="mt-0.5 size-3.5 shrink-0 text-line" />
-            {item}
-          </li>
-        ))}
-      </ul>
-    </div>
+    <ScrollReveal className="mx-auto max-w-3xl px-4 pt-4 pb-20">
+      {(revealed) => (
+        <div>
+          <div className="text-xs font-medium tracking-widest text-muted uppercase">What this isn&apos;t</div>
+          <ul className="mt-3 space-y-2.5">
+            {notes.map((item, i) => (
+              <li
+                key={item}
+                style={{ transitionDelay: revealed ? `${i * 80}ms` : "0ms" }}
+                className={cn(
+                  "flex items-start gap-2.5 text-sm text-muted transition-all duration-500 ease-out",
+                  revealed ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0",
+                )}
+              >
+                <XCircle className="mt-0.5 size-3.5 shrink-0 text-line" />
+                {item}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </ScrollReveal>
   );
 }
 
@@ -288,11 +356,19 @@ export function SiteHeader() {
 }
 
 export function SiteFooter() {
+  // Both blog posts were previously reachable only via a link buried in
+  // /docs -- unreachable from the footer that appears on every page,
+  // meaning the site's only real long-form content had no path in from
+  // the nav most crawlers and visitors actually use. Real content, real
+  // links: not adding a "/blog" index page for two posts, just surfacing
+  // the two that exist.
   const links: [string, string][] = [
     ["Docs", "/docs"],
     ["Pricing", "/pricing"],
     ["Postmortems", "/postmortems"],
     ["Status", "/status"],
+    ["How grounding works", "/blog/grounding-mechanism"],
+    ["Real outage demo", "/blog/github-outage-demo"],
     ["Privacy", "/privacy"],
     ["Terms", "/terms"],
   ];

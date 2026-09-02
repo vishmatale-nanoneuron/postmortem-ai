@@ -16,6 +16,23 @@ const h2 = "mb-2 text-lg font-semibold text-ink";
 const p = "text-sm text-muted leading-relaxed mb-2";
 const mono = "font-mono text-[13px] leading-relaxed text-ink";
 
+// This file's own real first-commit date (git log --follow
+// --diff-filter=A), not an invented "published" stamp -- see
+// grounding-mechanism/page.tsx for the same pattern and reasoning.
+const PUBLISHED_DATE = "2026-08-29";
+
+const ARTICLE_STRUCTURED_DATA = {
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  headline: "What our tool drafted from a real public outage",
+  description:
+    "We fed the public facts of GitHub's August 17, 2026 outage into PostMortem AI and published the real, unedited output -- a concrete demonstration of the grounding mechanism, not a claim of being better than anyone's official writeup.",
+  datePublished: PUBLISHED_DATE,
+  author: { "@type": "Organization", name: "PostMortem AI", url: "https://www.nanoneuron.ai" },
+  publisher: { "@type": "Organization", name: "PostMortem AI", url: "https://www.nanoneuron.ai" },
+  mainEntityOfPage: "https://www.nanoneuron.ai/blog/github-outage-demo",
+};
+
 function section(index: number, children: React.ReactNode) {
   return (
     <div
@@ -53,10 +70,17 @@ const evidence = [
 export default function GithubOutageDemoPost() {
   return (
     <>
+      <script
+        type="application/ld+json"
+        // Static, hardcoded JSON, no user input -- safe despite dangerouslySetInnerHTML.
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(ARTICLE_STRUCTURED_DATA) }}
+      />
       <SiteHeader />
       <main className="mx-auto max-w-2xl px-4 py-10">
       <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 duration-700">
-        <div className="text-xs font-medium tracking-widest text-muted uppercase">Demo</div>
+        <div className="text-xs font-medium tracking-widest text-muted uppercase">
+          Demo · <time dateTime={PUBLISHED_DATE}>{PUBLISHED_DATE}</time>
+        </div>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">
           What our tool drafted from a real public outage
         </h1>

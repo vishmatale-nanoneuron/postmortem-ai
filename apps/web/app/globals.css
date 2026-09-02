@@ -194,6 +194,66 @@
 .tilt-card-wrap:hover .tilt-card,
 .tilt-card-wrap:focus-within .tilt-card {
   transform: rotateX(4deg) rotateY(-6deg) translateY(-4px) translateZ(0);
+  /* A faint accent-tinted ring on top of the existing border, on the same
+     hover/focus trigger as the tilt -- the tilt alone reads as "this is
+     clickable/interactive"; the tint reads as "and it's part of this
+     product's accent system," which the plain border tilt didn't convey. */
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-accent) 35%, transparent);
+}
+
+/* Hero gradient text (landing.tsx's "cite their evidence." span): the
+   gradient itself already existed (from-accent to-accent/60); this just
+   lets it drift slowly rather than sit static, the cheapest and most
+   immediately-recognizable "AI product site" cue there is. Wide
+   background-size so the shift is a slow pan, not a visible hard loop;
+   background-clip:text (via Tailwind's bg-clip-text, already applied in
+   landing.tsx) is what makes animating background-position move the text
+   fill instead of a rectangle behind it. */
+@keyframes hero-gradient-pan {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+.hero-gradient-text {
+  background-size: 200% 100%;
+  animation: hero-gradient-pan 6s ease-in-out infinite;
+}
+
+/* Two slow-drifting accent blobs behind the hero only -- landing.tsx's
+   Hero already has a static radial wash; these sit behind it as the same
+   accent tint, just in motion. Kept to the hero deliberately (the file's
+   own comment above the static wash says every other section stays on
+   plain paper) and to transform/opacity only, so nothing here triggers
+   layout or affects document flow -- the parent hero wrapper already
+   clips overflow-hidden, so a translating blob can't cause horizontal
+   scroll on a narrow viewport the way an unclipped one could. */
+@keyframes hero-blob-drift-a {
+  0%,
+  100% {
+    transform: translate(-8%, -6%) scale(1);
+  }
+  50% {
+    transform: translate(6%, 8%) scale(1.15);
+  }
+}
+@keyframes hero-blob-drift-b {
+  0%,
+  100% {
+    transform: translate(10%, 6%) scale(1.05);
+  }
+  50% {
+    transform: translate(-6%, -8%) scale(0.95);
+  }
+}
+.hero-blob-a {
+  animation: hero-blob-drift-a 24s ease-in-out infinite;
+}
+.hero-blob-b {
+  animation: hero-blob-drift-b 28s ease-in-out infinite;
 }
 
 /* tw-animate-css was imported (line 2) but nothing in the app actually used
