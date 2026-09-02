@@ -84,3 +84,42 @@ def send_free_incident_nudge_email(settings: Settings, to_email: str, incident_t
         {"idempotency_key": f"free-incident-nudge/{user_id}"},
     )
     logger.info("free_incident_nudge_email_sent")
+
+
+def send_founder_claim_notification(
+    settings: Settings, claim_id: str, method: str, currency: str, amount: int, reference: str, payer_email: str
+) -> None:
+    """The gap this closes: before this existed, a real customer could pay
+    real money, submit a claim (POST /v1/billing/upi/claim or /wire/claim),
+    and it would land as a 'pending' row in payment_claims with nothing
+    telling the founder it exists -- discoverable only by opening the
+    founder dashboard and noticing the pending_payment_claims count went
+    up. Best-effort and non-blocking by design: raised inside a try/except
+    at the call site (see billing.py's _insert_claim) so a Resend outage
+    never turns a real, valid payment claim into a failed submission for
+    the customer -- the claim itself is the record of truth; this email is
+    only a faster way to notice it, not a required step in creating it."""
+    if not settings.resend_api_key or not settings.resend_email_domain:
+        raise EmailNotConfiguredError("RESEND_API_KEY/RESEND_EMAIL_DOMAIN are not configured")
+
+    resend.api_key = settings.resend_api_key
+    dashboard_url = f"{settings.frontend_url}/founder"
+    resend.Emails.send(
+        {
+            "from": f"PostMortem AI <noreply@{settings.resend_email_domain}>",
+            "to": [settings.founder_email],
+            "subject": f"New {method.upper()} payment claim -- {currency} {amount}",
+            "html": (
+                f"<p>A new payment claim was just submitted: <strong>{currency} {amount}</strong> via "
+                f"<strong>{method.upper()}</strong>, from <strong>{payer_email}</strong>.</p>"
+                f"<p>Reference: <code>{reference}</code></p>"
+                f'<p><a href="{dashboard_url}">Review and approve or reject it in the founder dashboard</a>. '
+                "Nothing is granted automatically -- this claim stays pending until you act on it.</p>"
+            ),
+        },
+        # Idempotent per claim, not per send -- a retry of the same claim
+        # submission (if the route were ever retried) should never produce
+        # a second notification for one real claim.
+        {"idempotency_key": f"claim-notification/{claim_id}"},
+    )
+    logger.info("founder_claim_notification_sent", extra={"claim_id": claim_id, "method": method})

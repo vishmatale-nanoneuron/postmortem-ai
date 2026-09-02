@@ -17,6 +17,7 @@ from ...auth import User, current_founder, current_user
 from ...database import Database
 from ...dependencies import get_database
 from ...services.billing import record_claim_event
+from ...services.email import EmailNotConfiguredError, send_founder_claim_notification
 from ...settings import Settings, get_settings
 
 logger = logging.getLogger("postmortem_ai")
@@ -275,7 +276,7 @@ class ClaimOut(BaseModel):
 
 
 async def _insert_claim(
-    database: Database, user: User, method: str, currency: str, amount: int, reference: str
+    database: Database, settings: Settings, user: User, method: str, currency: str, amount: int, reference: str
 ) -> ClaimOut:
     # A real UPI/wire transaction reference is unique per transaction --
     # amount and currency are already server-derived (never client input,
@@ -303,6 +304,19 @@ async def _insert_claim(
     )
     assert row is not None
     await record_claim_event(database, row["id"], "created", user.email, f"{currency} {amount} via {method}")
+
+    # Best-effort, never blocks the claim: the claim row above is already
+    # committed and is the real record a founder can act on from the
+    # dashboard regardless of whether this email goes out. Resend being
+    # unconfigured (fresh dev environment, an outage, a bad key) must never
+    # turn a real customer's payment claim into a 500.
+    try:
+        send_founder_claim_notification(settings, row["id"], method, currency, amount, reference, user.email)
+    except EmailNotConfiguredError:
+        logger.info("founder_claim_notification_skipped", extra={"reason": "email_not_configured"})
+    except Exception:
+        logger.warning("founder_claim_notification_failed", extra={"claim_id": row["id"]}, exc_info=True)
+
     return ClaimOut(**row)
 
 
@@ -419,7 +433,9 @@ async def submit_upi_claim(
 ) -> ClaimOut:
     if not settings.founder_upi_id:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="UPI payment is not configured")
-    return await _insert_claim(database, user, "upi", "INR", settings.subscription_price_inr, payload.reference)
+    return await _insert_claim(
+        database, settings, user, "upi", "INR", settings.subscription_price_inr, payload.reference
+    )
 
 
 @router.get("/upi/claims", response_model=list[ClaimOut])
@@ -552,7 +568,9 @@ async def submit_wire_claim(
     if not settings.founder_bank_account_number:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Wire payment is not configured")
     amounts = {d.currency: d.amount for d in _wire_currency_details(settings)}
-    return await _insert_claim(database, user, "wire", payload.currency, amounts[payload.currency], payload.reference)
+    return await _insert_claim(
+        database, settings, user, "wire", payload.currency, amounts[payload.currency], payload.reference
+    )
 
 
 @router.get("/wire/claims", response_model=list[ClaimOut])
