@@ -211,6 +211,8 @@ export const billing = {
   },
 };
 
+export type PaymentClaimEvent = { event_type: string; actor: string; detail: string | null; created_at: number };
+
 export const founderBilling = {
   paymentClaims: () => request<PaymentClaim[]>("/v1/founder/payment-claims"),
   approveClaim: (claimId: string) =>
@@ -218,10 +220,16 @@ export const founderBilling = {
   rejectClaim: (claimId: string) =>
     request<PaymentClaim>(`/v1/founder/payment-claims/${claimId}/reject`, { method: "POST" }),
   annotateClaim: (claimId: string, detail: string) =>
-    request<{ event_type: string; actor: string; detail: string | null; created_at: number }>(
-      `/v1/founder/payment-claims/${claimId}/annotate`,
-      { method: "POST", body: JSON.stringify({ detail }) },
-    ),
+    request<PaymentClaimEvent>(`/v1/founder/payment-claims/${claimId}/annotate`, {
+      method: "POST",
+      body: JSON.stringify({ detail }),
+    }),
+  // The backend's append-only claim ledger (migration 0016) has held a
+  // full history -- created, bank-verified, approved/rejected, annotated
+  // -- since it was built, but nothing in the dashboard ever fetched it;
+  // a founder could annotate a claim but never see the claim's own
+  // history. GET only, never mutates anything.
+  claimEvents: (claimId: string) => request<PaymentClaimEvent[]>(`/v1/founder/payment-claims/${claimId}/events`),
 };
 
 export type Integrations = { slack_connected: boolean; linear_connected: boolean; linear_team_id: string | null };

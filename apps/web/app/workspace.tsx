@@ -16,6 +16,7 @@ import {
   type Incident,
   type Integrations,
   type PaymentClaim,
+  type PaymentClaimEvent,
   type Postmortem,
   type PreviousDraft,
   type SimilarIncident,
@@ -465,6 +466,31 @@ function PaymentClaimsReview() {
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  // Which claim's full history is currently expanded, and what it holds
+  // once fetched -- lazy per-claim, not preloaded for every claim on every
+  // poll, since the ledger is only actually needed when a founder wants to
+  // check one specific claim's history before deciding something.
+  const [openHistoryId, setOpenHistoryId] = useState<string | null>(null);
+  const [historyById, setHistoryById] = useState<Record<string, PaymentClaimEvent[]>>({});
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  async function toggleHistory(claimId: string) {
+    if (openHistoryId === claimId) {
+      setOpenHistoryId(null);
+      return;
+    }
+    setOpenHistoryId(claimId);
+    if (historyById[claimId]) return;
+    setHistoryLoading(true);
+    try {
+      const events = await founderBilling.claimEvents(claimId);
+      setHistoryById((prev) => ({ ...prev, [claimId]: events }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load claim history.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
 
   async function refresh() {
     setClaims(await founderBilling.paymentClaims());
@@ -497,6 +523,12 @@ function PaymentClaimsReview() {
     setError("");
     try {
       await founderBilling.annotateClaim(claimId, detail.trim());
+      setHistoryById((prev) => {
+        if (!(claimId in prev)) return prev;
+        const rest = { ...prev };
+        delete rest[claimId];
+        return rest;
+      });
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not add note.");
@@ -527,6 +559,12 @@ function PaymentClaimsReview() {
     try {
       if (action === "approve") await founderBilling.approveClaim(claimId);
       else await founderBilling.rejectClaim(claimId);
+      setHistoryById((prev) => {
+        if (!(claimId in prev)) return prev;
+        const rest = { ...prev };
+        delete rest[claimId];
+        return rest;
+      });
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not update claim.");
@@ -566,7 +604,8 @@ function PaymentClaimsReview() {
           <li className="text-muted">None yet.</li>
         ) : (
           claims.map((claim) => (
-            <li key={claim.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-paper px-3 py-2">
+            <li key={claim.id} className="rounded-md bg-paper px-3 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="min-w-0 flex-1">
                 <span className="font-medium">{claim.email}</span> --{" "}
                 {currencySymbol(claim.currency)}
@@ -607,6 +646,39 @@ function PaymentClaimsReview() {
               >
                 Note
               </button>
+              <button
+                className="shrink-0 rounded-md border border-line px-2 py-1 text-xs text-muted disabled:opacity-50"
+                onClick={() => void toggleHistory(claim.id)}
+                type="button"
+                aria-expanded={openHistoryId === claim.id}
+              >
+                {openHistoryId === claim.id ? "Hide history" : "History"}
+              </button>
+            </div>
+            {/* The append-only ledger's actual payoff (created,
+                bank-verified, approved/rejected, annotated) -- previously
+                fetchable from the backend but never rendered anywhere,
+                even though the founder could add a note to a history they
+                could never see. Lazy-fetched per claim on first expand. */}
+            {openHistoryId === claim.id && (
+              <ul className="mt-2 space-y-1 border-t border-line pt-2 text-xs">
+                {historyLoading && !historyById[claim.id] ? (
+                  <li className="text-muted">Loading history…</li>
+                ) : (historyById[claim.id]?.length ?? 0) === 0 ? (
+                  <li className="text-muted">No history recorded.</li>
+                ) : (
+                  historyById[claim.id]!.map((event, i) => (
+                    <li key={i} className="flex flex-wrap justify-between gap-2 rounded bg-white px-2 py-1">
+                      <span>
+                        <span className="font-medium">{event.event_type}</span> -- {event.actor}
+                        {event.detail && <span className="text-muted"> -- {event.detail}</span>}
+                      </span>
+                      <span className="text-muted">{new Date(event.created_at).toLocaleString()}</span>
+                    </li>
+                  ))
+                )}
+              </ul>
+            )}
             </li>
           ))
         )}
