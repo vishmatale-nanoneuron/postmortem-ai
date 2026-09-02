@@ -185,6 +185,20 @@ export default function DocsPage() {
       )}
 
       {section(
+        6.5,
+        <>
+          <h2 className={h2}>What kind of tool this is</h2>
+          <p className={p}>
+            PostMortem AI is a focused drafting tool, not a general incident-management platform. It doesn&apos;t
+            page anyone, run on-call schedules, or host a public status-page suite for you -- there&apos;s a single,
+            shareable status page per incident, not a standing product for that. What it does is narrower and
+            checkable: turn recorded evidence into a draft where every claim traces back to something real, verified
+            by code before it&apos;s stored, not left to the model&apos;s word.
+          </p>
+        </>,
+      )}
+
+      {section(
         7,
         <>
           <h2 className={h2}>What this isn&apos;t</h2>
