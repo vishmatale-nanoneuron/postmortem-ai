@@ -362,17 +362,28 @@ async def test_an_account_that_already_spent_its_free_slot_cannot_get_a_suggesti
     unlimited free AI calls here just because no incident actually gets
     created by this endpoint."""
     client, _, database, _ = context
+    other_incident = "already-used-elsewhere-suggest"
+    # Defensive delete before insert -- same idiom as this file's other
+    # tests that create their own extra incident row (e.g. the RAG test
+    # above): guards against a stale row left behind by a prior run of
+    # this same test against a not-freshly-reset database, which is
+    # exactly what a fixed literal ID with no cleanup at the end of THIS
+    # test previously allowed (found via a full local suite run repeated
+    # against one ephemeral DB -- CI's fresh-container-per-run never hit
+    # this, but a local re-run without resetting the DB did).
+    await database.execute("DELETE FROM incidents WHERE id=%s", (other_incident,))
     await database.execute(
         """INSERT INTO incidents (id, client_email, title, severity, status, created_at, updated_at)
-           VALUES ('already-used-elsewhere-suggest', %s, 'Used elsewhere', 'sev3', 'open', 0, 0)""",
-        (CLIENT_EMAIL,),
+           VALUES (%s, %s, 'Used elsewhere', 'sev3', 'open', 0, 0)""",
+        (other_incident, CLIENT_EMAIL),
     )
     await database.execute(
-        "UPDATE users SET subscription_status='none', free_incident_id='already-used-elsewhere-suggest' WHERE email=%s",
-        (CLIENT_EMAIL,),
+        "UPDATE users SET subscription_status='none', free_incident_id=%s WHERE email=%s",
+        (other_incident, CLIENT_EMAIL),
     )
     response = await client.post("/v1/postmortems/incidents/suggest", json={"text": "x"})
     assert response.status_code == 402
+    await database.execute("DELETE FROM incidents WHERE id=%s", (other_incident,))
 
 
 @pytest.mark.asyncio
