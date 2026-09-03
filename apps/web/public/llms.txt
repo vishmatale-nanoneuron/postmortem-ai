@@ -1,8 +1,10 @@
 # PostMortem AI
 
-Canonical product: https://www.nanoneuron.ai/
-Docs: https://www.nanoneuron.ai/docs
-Full reference (API surface, architecture, verified behavior): https://www.nanoneuron.ai/llms-full.txt
+Canonical product: [https://www.nanoneuron.ai/](https://www.nanoneuron.ai/)
+[Docs](https://www.nanoneuron.ai/docs)
+[Full reference](https://www.nanoneuron.ai/llms-full.txt) (API surface, architecture, verified behavior)
+[Published postmortems](https://www.nanoneuron.ai/postmortems)
+[Pricing](https://www.nanoneuron.ai/pricing)
 Contact: vish.matale@gmail.com
 Last factual review: 2026-08-30
 

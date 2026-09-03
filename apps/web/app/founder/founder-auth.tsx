@@ -86,11 +86,18 @@ export default function FounderAuth() {
         </p>
         <form action={submit}>
           <label className={fieldLabel}>Email</label>
-          <input className={fieldInput} name="email" type="email" required />
+          <input className={fieldInput} name="email" type="email" autoComplete="email" required />
           {mode !== "forgot" && (
             <>
               <label className={fieldLabel}>Password</label>
-              <input className={fieldInput} name="password" type="password" minLength={8} required />
+              <input
+                className={fieldInput}
+                name="password"
+                type="password"
+                autoComplete={mode === "login" ? "current-password" : "new-password"}
+                minLength={8}
+                required
+              />
             </>
           )}
           <button className={`${primaryButton} w-full`} disabled={busy} type="submit">

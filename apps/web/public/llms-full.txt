@@ -1,9 +1,11 @@
 # PostMortem AI — full reference
 
-Canonical product: https://www.nanoneuron.ai/
-Short index: https://www.nanoneuron.ai/llms.txt
-Docs: https://www.nanoneuron.ai/docs
-Grounding mechanism (long form): https://www.nanoneuron.ai/blog/grounding-mechanism
+Canonical product: [https://www.nanoneuron.ai/](https://www.nanoneuron.ai/)
+[Short index](https://www.nanoneuron.ai/llms.txt)
+[Docs](https://www.nanoneuron.ai/docs)
+[Grounding mechanism](https://www.nanoneuron.ai/blog/grounding-mechanism) (long form)
+[Published postmortems](https://www.nanoneuron.ai/postmortems)
+[Pricing](https://www.nanoneuron.ai/pricing)
 Contact: vish.matale@gmail.com
 Last factual review: 2026-08-30
 

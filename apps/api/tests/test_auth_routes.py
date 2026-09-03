@@ -171,14 +171,73 @@ async def test_me_without_a_session_cookie_is_unauthorized(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_session_without_a_cookie_is_200_not_401(context) -> None:
+    """The whole reason GET /v1/auth/session exists: an anonymous caller
+    (every first-time visitor) gets a normal 200 saying so, not a failed
+    request -- found via a real Lighthouse audit flagging the GET /me
+    401 as a logged console error on every anonymous page load."""
+    client, _ = context
+    response = await client.get("/v1/auth/session")
+    assert response.status_code == 200
+    assert response.json() == {"authenticated": False, "user": None}
+
+
+@pytest.mark.asyncio
+async def test_session_with_a_valid_cookie_reports_authenticated(context) -> None:
+    client, _ = context
+    email = "auth-test-session-authenticated@example.com"
+    await client.post("/v1/auth/register", json={"email": email, "password": "correct-horse-battery-staple"})
+    response = await client.get("/v1/auth/session")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["authenticated"] is True
+    assert body["user"]["email"] == email
+
+
+@pytest.mark.asyncio
 async def test_logout_clears_the_session(context) -> None:
+    """Deliberately does NOT call client.cookies.clear() between logout
+    and the follow-up /me check -- doing that would make this test pass
+    regardless of whether logout's own Set-Cookie actually cleared
+    anything server-side, which is exactly how a real bug here went
+    uncaught: the clearing Set-Cookie's samesite/secure attributes didn't
+    match the cookie's original samesite="none"/secure=True, so real
+    Chrome didn't recognize it as the same cookie and kept sending the
+    stale one. httpx's own cookie jar is lenient enough to expire a cookie
+    correctly either way, so the second assertion (matching attributes)
+    is what actually pins the fix -- the 401 alone would have passed
+    against the buggy version too, since httpx isn't as strict as Chrome
+    about matching SameSite here."""
     client, _ = context
     await client.post(
         "/v1/auth/register", json={"email": "auth-test-5@example.com", "password": "correct-horse-battery"}
     )
     logout_response = await client.post("/v1/auth/logout")
     assert logout_response.status_code == 200
-    client.cookies.clear()
+
+    set_cookie_headers = logout_response.headers.get_list("set-cookie")
+    assert any("session_token=" in h for h in set_cookie_headers)
+    cleared = next(h for h in set_cookie_headers if "session_token=" in h)
+    assert "samesite=none" in cleared.lower()
+
+    me = await client.get("/v1/auth/me")
+    assert me.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_deleting_account_clears_the_session_with_matching_cookie_attributes(context) -> None:
+    client, _ = context
+    await client.post(
+        "/v1/auth/register",
+        json={"email": "auth-test-delete-clears-session@example.com", "password": "correct-horse-battery"},
+    )
+    delete_response = await client.delete("/v1/auth/me")
+    assert delete_response.status_code == 204
+
+    set_cookie_headers = delete_response.headers.get_list("set-cookie")
+    cleared = next(h for h in set_cookie_headers if "session_token=" in h)
+    assert "samesite=none" in cleared.lower()
+
     me = await client.get("/v1/auth/me")
     assert me.status_code == 401
 

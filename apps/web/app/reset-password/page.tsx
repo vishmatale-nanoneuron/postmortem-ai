@@ -59,7 +59,15 @@ function ResetPasswordForm() {
         ) : (
           <form action={submit}>
             <label className={fieldLabel}>New password</label>
-            <input className={fieldInput} name="new_password" type="password" minLength={8} required autoFocus />
+            <input
+              className={fieldInput}
+              name="new_password"
+              type="password"
+              autoComplete="new-password"
+              minLength={8}
+              required
+              autoFocus
+            />
             <button className={`${primaryButton} w-full`} disabled={busy} type="submit">
               Reset password
             </button>

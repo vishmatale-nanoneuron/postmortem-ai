@@ -106,8 +106,12 @@ export default function Workspace() {
   const [showAccount, setShowAccount] = useState(false);
 
   useEffect(() => {
+    // checkSession(), not me() -- me() 401s for every signed-out visitor,
+    // which is most first-time visitors on this exact mount-time check.
+    // See auth.ts's checkSession for why (a real Lighthouse Best
+    // Practices finding, not a style preference).
     auth
-      .me()
+      .checkSession()
       .then(setUser)
       .catch(() => setUser(null));
   }, []);
@@ -763,6 +767,7 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
               className="mb-3 rounded-md border-line text-ink focus-visible:ring-accent/30"
               name="email"
               type="email"
+              autoComplete="email"
               required
             />
             {mode !== "forgot" && (
@@ -775,6 +780,7 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
                   className="mb-3 rounded-md border-line text-ink focus-visible:ring-accent/30"
                   name="password"
                   type="password"
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
                   minLength={8}
                   required
                 />
@@ -1406,6 +1412,7 @@ export function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser
           className={fieldInput}
           name="email"
           type="email"
+          autoComplete="email"
           defaultValue={user.email}
           disabled={user.is_founder}
         />
@@ -1417,6 +1424,7 @@ export function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser
           className={fieldInput}
           name="password"
           type="password"
+          autoComplete="new-password"
           placeholder="••••••••"
           minLength={8}
         />
@@ -1636,7 +1644,17 @@ function IntegrationsSettings() {
 // and the Datadog payload template below -- three things that are all
 // "here's text, copy it into another tool's settings," not three different
 // widgets.
-function CopyField({ value, mono = true }: { value: string; mono?: boolean }) {
+function CopyField({
+  value,
+  mono = true,
+  ariaLabel,
+  id,
+}: {
+  value: string;
+  mono?: boolean;
+  ariaLabel: string;
+  id: string;
+}) {
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {
@@ -1652,9 +1670,11 @@ function CopyField({ value, mono = true }: { value: string; mono?: boolean }) {
   return (
     <div className="flex gap-2">
       <input
+        id={id}
         className={`${fieldInput} mb-0 ${mono ? "font-mono" : ""} text-xs`}
         value={value}
         readOnly
+        aria-label={ariaLabel}
         onFocus={(e) => e.currentTarget.select()}
       />
       <button className={secondaryButton} type="button" onClick={() => void copy()}>
@@ -1729,7 +1749,7 @@ function WebhookSettings() {
             <code className="font-mono">incident_id</code> to start a new incident; include the one returned by a
             previous call to group related events together.
           </p>
-          <CopyField value={genericUrl} />
+          <CopyField id="webhook-generic-url" value={genericUrl} ariaLabel="Generic webhook URL" />
         </TabsContent>
         <TabsContent value="pagerduty" className="mt-3">
           <p className="mb-2 text-xs text-muted">
@@ -1745,7 +1765,7 @@ function WebhookSettings() {
             URL. Parses PagerDuty&apos;s own payload directly -- triggered creates an incident, acknowledged/resolved
             find it again by PagerDuty&apos;s incident id and resolved closes it. No template to write.
           </p>
-          <CopyField value={pagerdutyUrl} />
+          <CopyField id="webhook-pagerduty-url" value={pagerdutyUrl} ariaLabel="PagerDuty webhook URL" />
         </TabsContent>
         <TabsContent value="datadog" className="mt-3">
           <p className="mb-2 text-xs text-muted">
@@ -1763,9 +1783,13 @@ function WebhookSettings() {
             auto-resolve.
           </p>
           <div className="mb-2">
-            <CopyField value={DATADOG_PAYLOAD_TEMPLATE} />
+            <CopyField
+              id="webhook-datadog-payload"
+              value={DATADOG_PAYLOAD_TEMPLATE}
+              ariaLabel="Datadog webhook payload template"
+            />
           </div>
-          <CopyField value={genericUrl} />
+          <CopyField id="webhook-generic-url-datadog-tab" value={genericUrl} ariaLabel="Generic webhook URL" />
         </TabsContent>
       </Tabs>
       <AlertDialog>

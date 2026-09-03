@@ -50,8 +50,23 @@ async function withMintedMcpSession(user: AuthUser): Promise<AuthUser> {
   return user;
 }
 
+// GET /v1/auth/me always 401s for a signed-out caller -- correct for an
+// actual protected action, but Workspace()'s mount-time "is anyone signed
+// in" check hits it on every single page load, meaning every anonymous
+// visitor (most of them) got a failed network request logged as a
+// console error purely for checking a fact that's usually false. Found
+// via a real Lighthouse audit (Best Practices dinged for exactly this),
+// not guessed. GET /v1/auth/session is always 200 and carries the same
+// information as `{authenticated, user}` instead.
+async function checkSession(): Promise<AuthUser | null> {
+  const result = await authRequest<{ authenticated: boolean; user: AuthUser | null }>("/v1/auth/session");
+  if (!result.authenticated || !result.user) return null;
+  return withMintedMcpSession(result.user);
+}
+
 export const auth = {
   me: () => authRequest<AuthUser>("/v1/auth/me").then(withMintedMcpSession),
+  checkSession,
   register: (email: string, password: string) =>
     authRequest<AuthUser>("/v1/auth/register", { method: "POST", body: JSON.stringify({ email, password }) }).then(
       withMintedMcpSession,

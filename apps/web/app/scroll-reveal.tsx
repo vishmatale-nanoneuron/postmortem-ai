@@ -43,17 +43,48 @@ export function ScrollReveal({
       setRevealed(true);
       return;
     }
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setRevealed(true);
-          observer.disconnect();
-        }
-      },
-      { threshold: 0.15, rootMargin: "0px 0px -10% 0px" },
-    );
-    observer.observe(node);
-    return () => observer.disconnect();
+
+    let observer: IntersectionObserver | null = null;
+    let cancelled = false;
+
+    function start() {
+      if (cancelled || !node) return;
+      observer = new IntersectionObserver(
+        ([entry]) => {
+          if (entry.isIntersecting) {
+            setRevealed(true);
+            observer?.disconnect();
+          }
+        },
+        { threshold: 0.15, rootMargin: "0px 0px -10% 0px" },
+      );
+      observer.observe(node);
+    }
+
+    // Real bug, found by actually loading the page in a browser rather
+    // than just reading its HTML: self-hosted Geist loads asynchronously
+    // (next/font/google), and the fallback-to-Geist font swap shifts page
+    // height right after first paint. Observing immediately on mount
+    // could catch the element mid-shift -- for the section closest to the
+    // fold specifically, this was reproduced landing the observer's very
+    // first callback while the page was transiently short enough that an
+    // element hundreds of pixels below the actual fold read as
+    // "intersecting," permanently marking it revealed (then disconnecting)
+    // before real layout ever settled. Waiting for the font-loading API
+    // (broadly supported; the rare browser without it just starts
+    // immediately, same as before this fix) means the observer's first
+    // real read happens against final layout.
+    const fontsReady = typeof document !== "undefined" && "fonts" in document ? document.fonts.ready : null;
+    if (fontsReady) {
+      fontsReady.then(start).catch(start);
+    } else {
+      start();
+    }
+
+    return () => {
+      cancelled = true;
+      observer?.disconnect();
+    };
   }, []);
 
   return (

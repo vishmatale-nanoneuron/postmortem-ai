@@ -96,25 +96,26 @@ class User:
         )
 
 
-async def current_user(
-    request: Request,
-    database: Database = Depends(get_database),
-    settings: Settings = Depends(get_settings),
-) -> User:
+async def _resolve_user_from_cookie(request: Request, database: Database, settings: Settings) -> User | None:
+    """The actual session-cookie-to-User lookup, shared by current_user
+    (raises 401 for any real protected action -- that behavior stays
+    exactly as-is everywhere it's already used) and current_user_optional
+    (returns None instead -- for a caller that's only asking "is anyone
+    signed in," not gating access to anything)."""
     raw = request.cookies.get(SESSION_COOKIE_NAME)
     if not raw:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
+        return None
 
     payload = verify_token(settings.session_secret, raw)
     if payload is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired or invalid")
+        return None
 
     row = await database.fetch_one(
         "SELECT id::text, email, subscription_status, current_period_end, free_incident_id FROM users WHERE id=%s",
         (payload.user_id,),
     )
     if not row:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account no longer exists")
+        return None
 
     return User(
         id=row["id"],
@@ -124,6 +125,30 @@ async def current_user(
         current_period_end=row["current_period_end"],
         free_incident_id=row["free_incident_id"],
     )
+
+
+async def current_user(
+    request: Request,
+    database: Database = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+) -> User:
+    user = await _resolve_user_from_cookie(request, database, settings)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
+    return user
+
+
+async def current_user_optional(
+    request: Request,
+    database: Database = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+) -> User | None:
+    """For the one real case where a 401 is the wrong signal: a page load
+    checking "is anyone signed in" for a visitor who, most of the time,
+    genuinely isn't -- see GET /v1/auth/session. Every actual protected
+    route keeps using current_user unchanged; this exists purely so that
+    check doesn't have to be a failed request."""
+    return await _resolve_user_from_cookie(request, database, settings)
 
 
 async def user_by_webhook_token(database: Database, settings: Settings, token: str) -> User | None:

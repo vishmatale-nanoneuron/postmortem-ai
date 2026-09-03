@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
-from ...auth import SESSION_COOKIE_NAME, User, _is_founder, current_user
+from ...auth import SESSION_COOKIE_NAME, User, _is_founder, current_user, current_user_optional
 from ...database import Database
 from ...dependencies import get_database
 from ...security.captcha import verify_turnstile
@@ -129,6 +129,29 @@ def _set_session_cookie(response: Response, settings: Settings, token: str) -> N
     )
 
 
+def _clear_session_cookie(response: Response, settings: Settings) -> None:
+    # A real, confirmed bug (found via a live Chrome cookie inspection --
+    # Lighthouse still reported session_token present after calling
+    # logout/delete_account): Starlette's Response.delete_cookie(key, path)
+    # alone sends a clearing Set-Cookie with samesite defaulting to "lax"
+    # and secure defaulting to False, which does not match the samesite=
+    # "none", secure=True the cookie was actually set with above. Real
+    # Chrome did not treat that as clearing the same cookie -- it stayed
+    # in the browser after both logout() and delete_account() (verified:
+    # deleting the account correctly removed the user row and any further
+    # authenticated request 401s, but the stale cookie itself lingered
+    # client-side and gets flagged as an unresolved third-party cookie by
+    # Lighthouse). Mirroring every attribute of the original set_cookie
+    # call is what actually clears it.
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        path="/",
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="none",
+    )
+
+
 @router.post("/register", status_code=status.HTTP_201_CREATED, response_model=UserOut)
 async def register(
     payload: RegisterRequest,
@@ -223,8 +246,8 @@ async def login(
 
 
 @router.post("/logout")
-async def logout(response: Response) -> dict[str, bool]:
-    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
+async def logout(response: Response, settings: Settings = Depends(get_settings)) -> dict[str, bool]:
+    _clear_session_cookie(response, settings)
     return {"ok": True}
 
 
@@ -237,6 +260,37 @@ async def me(user: User = Depends(current_user)) -> UserOut:
         subscription_status=user.effective_status,
         has_active_subscription=user.has_active_subscription,
         has_free_incident_available=user.has_free_incident_available,
+    )
+
+
+class SessionOut(BaseModel):
+    authenticated: bool
+    user: UserOut | None = None
+
+
+@router.get("/session", response_model=SessionOut)
+async def session(user: User | None = Depends(current_user_optional)) -> SessionOut:
+    """Same lookup as GET /me, but for the one caller that isn't actually
+    gating access to anything: the frontend's own "is anyone signed in"
+    check on every page load (Workspace()'s mount effect). That check is
+    genuinely negative most of the time -- most visitors are anonymous --
+    and GET /me's 401 for that case is a real, correct signal for a
+    protected route, but it meant literally every anonymous page load
+    logged a console error and dinged this site's own Lighthouse
+    Best Practices score for what isn't actually a problem. Always 200;
+    the frontend branches on `authenticated`, not on HTTP status."""
+    if user is None:
+        return SessionOut(authenticated=False)
+    return SessionOut(
+        authenticated=True,
+        user=UserOut(
+            id=user.id,
+            email=user.email,
+            is_founder=user.is_founder,
+            subscription_status=user.effective_status,
+            has_active_subscription=user.has_active_subscription,
+            has_free_incident_available=user.has_free_incident_available,
+        ),
     )
 
 
@@ -358,6 +412,7 @@ async def update_account(
 async def delete_account(
     response: Response,
     database: Database = Depends(get_database),
+    settings: Settings = Depends(get_settings),
     user: User = Depends(current_user),
 ) -> None:
     # The founder account is the one account this product cannot function
@@ -372,7 +427,7 @@ async def delete_account(
     # after the account that created them is gone, consistent with this
     # app's append-only-history stance elsewhere (payment_claim_events).
     await database.execute("DELETE FROM users WHERE id=%s", (user.id,))
-    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
+    _clear_session_cookie(response, settings)
 
 
 class PasswordResetRequestIn(BaseModel):
