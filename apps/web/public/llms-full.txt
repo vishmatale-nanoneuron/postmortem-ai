@@ -203,9 +203,9 @@ whether the account exists — deliberately, to prevent account enumeration.
 
 ## Payments
 
-One incident is fully usable for free — evidence, AI extraction, drafting —
-with no card. Publishing and creating a second incident require an active
-subscription. For clients in any country, two real paths work today: (1)
+Creating an incident, evidence, AI extraction, drafting, publishing, and
+creating a second incident all require an active subscription. For
+clients in any country, two real paths work today: (1)
 manual UPI (India), founder-reviewed; (2) manual international SWIFT wire
 (USD/GBP/EUR), founder-reviewed. A third path — Stripe Checkout,
 self-serve, instant activation on webhook receipt, cancel/manage via the
@@ -220,10 +220,13 @@ automatically (verification only — a founder's explicit approval is the only
 thing that ever activates access, regardless of automated verification).
 Every real payment endpoint verifies against the provider's own record
 (amount, currency, signature, captured status), never against
-frontend-supplied state. An account that drafted a real postmortem on its
-free incident and never subscribed receives exactly one automated
-reminder email, at least 24 hours after that draft — a plain link to
-pricing, never a repeat send and never a fabricated urgency claim.
+frontend-supplied state. A one-incident free trial existed before this
+document's current revision and has been retired for new accounts; a
+legacy account that still has a free incident on record from before that
+change, drafted a real postmortem on it, and never subscribed still
+receives exactly one automated reminder email, at least 24 hours after
+that draft — a plain link to pricing, never a repeat send and never a
+fabricated urgency claim.
 Refunds: email vish.matale@gmail.com within 14 days of the first charge
 and it's refunded — a manual, founder-processed action on every payment
 rail, the same review discipline as approving a payment in the first

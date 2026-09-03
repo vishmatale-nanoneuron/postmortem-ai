@@ -184,14 +184,20 @@ export default function Workspace() {
           </a>
         ))}
       </nav>
-      {/* Unlike before, an unsubscribed account still sees the real
-          workspace underneath -- the free-tier account's one incident
-          (once created) needs to stay reachable for adding evidence and
-          drafting, not just its creation. SubscribeGate is now an upsell
-          shown alongside it, not an exclusive alternative to it; the
-          actual free-tier boundary (one incident, no publishing) is
-          enforced server-side regardless of what renders here. */}
-      {!user.has_active_subscription && <SubscribeGate hasFreeIncidentAvailable={user.has_free_incident_available} />}
+      {/* An unsubscribed account still sees the real workspace underneath --
+          a legacy account with a free incident from before the trial's
+          retirement needs it to stay reachable for adding evidence and
+          drafting, not just to view it. SubscribeGate is an upsell shown
+          alongside it, not an exclusive alternative to it; the actual
+          boundary (which incidents this account may touch, and that
+          publishing always requires a subscription) is enforced
+          server-side regardless of what renders here. */}
+      {!user.has_active_subscription && (
+        <SubscribeGate
+          hasFreeIncidentAvailable={user.has_free_incident_available}
+          hasUsedFreeIncident={user.has_used_free_incident}
+        />
+      )}
       <IncidentWorkspace isFounder={user.is_founder} />
       <SiteFooter />
     </main>
@@ -738,13 +744,12 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
     }
   }
 
-  const heading =
-    mode === "login" ? "Welcome back" : mode === "register" ? "Get started free" : "Reset your password";
+  const heading = mode === "login" ? "Welcome back" : mode === "register" ? "Get started" : "Reset your password";
   const subheading =
     mode === "login"
       ? "Log in to your account."
       : mode === "register"
-        ? "Create your account — your first postmortem is free."
+        ? "Create your account to get started."
         : "Enter your email and we'll send you a link to choose a new password.";
 
   return (
@@ -872,7 +877,13 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
   );
 }
 
-function SubscribeGate({ hasFreeIncidentAvailable }: { hasFreeIncidentAvailable: boolean }) {
+function SubscribeGate({
+  hasFreeIncidentAvailable,
+  hasUsedFreeIncident,
+}: {
+  hasFreeIncidentAvailable: boolean;
+  hasUsedFreeIncident: boolean;
+}) {
   const [tab, setTab] = useState<"card" | "upi" | "wire">("upi");
   const [status, setStatus] = useState<BillingStatus | null>(null);
   const [cardConfigured, setCardConfigured] = useState(false);
@@ -910,14 +921,18 @@ function SubscribeGate({ hasFreeIncidentAvailable }: { hasFreeIncidentAvailable:
           ? "Your subscription has expired"
           : hasFreeIncidentAvailable
             ? "Your first postmortem is free"
-            : "Subscribe to publish and create another postmortem"}
+            : hasUsedFreeIncident
+              ? "Subscribe to publish and create another postmortem"
+              : "Subscribe to create your first incident"}
       </h2>
       <p className="mb-3 text-sm text-muted">
         {expired && status?.current_period_end
           ? `Your access expired on ${new Date(status.current_period_end * 1000).toLocaleDateString()}. Make a new payment below to reactivate -- creating incidents, recording evidence, drafting, and publishing all require an active subscription; viewing your existing history stays available either way.`
           : hasFreeIncidentAvailable
             ? "Create one incident, record evidence, and draft a grounded postmortem with no payment -- see the real output before you decide. Publishing it (making it a permanent, citable record) and creating a second incident both require a subscription."
-            : "You've used your free postmortem. Subscribe below to publish it, or to create another incident -- your existing history stays available either way."}
+            : hasUsedFreeIncident
+              ? "You've used your free postmortem. Subscribe below to publish it, or to create another incident -- your existing history stays available either way."
+              : "Creating incidents, recording evidence, drafting, and publishing all require an active subscription -- subscribe below to get started."}
       </p>
       <Tabs value={tab} onValueChange={(value) => setTab(value as "card" | "upi" | "wire")} className="gap-3">
         <TabsList className="h-auto justify-start gap-1.5 rounded-none bg-transparent p-0">

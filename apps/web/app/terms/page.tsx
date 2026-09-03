@@ -63,10 +63,9 @@ export default function TermsPage() {
         <>
           <h2 className={h2}>The service</h2>
           <p className={p}>
-            One incident is fully usable for free -- recording evidence, AI drafting, everything but publishing.
-            Publishing a postmortem, or creating a second incident, requires an active subscription. Content is
-            AI-assisted, never autonomous: a draft is never published without a named human clicking approve, and
-            the database itself enforces that, not just this page&apos;s promise.
+            Recording evidence, AI drafting, publishing, and creating incidents all require an active subscription.
+            Content is AI-assisted, never autonomous: a draft is never published without a named human clicking
+            approve, and the database itself enforces that, not just this page&apos;s promise.
           </p>
         </>,
       )}

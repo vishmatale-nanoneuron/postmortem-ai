@@ -6,6 +6,7 @@ real RESEND_API_KEY and send no real email.
 
 import json
 import os
+import secrets
 import time
 
 import pytest
@@ -74,6 +75,11 @@ async def context(monkeypatch: pytest.MonkeyPatch):
     get_settings.cache_clear()
     database = Database(get_settings())
     await database.open()
+    # free_incident_id's FK is ON DELETE SET NULL, not CASCADE -- deleting
+    # the user row wouldn't clean up the incidents rows these tests insert
+    # directly, and the fixed incident ids below would collide with
+    # themselves on the next run.
+    await database.execute("DELETE FROM incidents WHERE client_email LIKE %s", ("cron-test-%",))
     await database.execute("DELETE FROM users WHERE email LIKE %s", ("cron-test-%",))
 
     application = create_app()
@@ -88,20 +94,29 @@ async def context(monkeypatch: pytest.MonkeyPatch):
 
 
 async def _register_with_free_incident(client: AsyncClient, database, email: str, incident_age_ms: int) -> str:
-    """Registers, creates the account's one free incident, backdates it to
-    look `incident_age_ms` old, and drafts a real postmortem for it so the
-    account has actually gotten value -- returns the incident id."""
+    """Registers, gives the account a free incident, backdates it to look
+    `incident_age_ms` old, and drafts a real postmortem for it so the
+    account has actually gotten value -- returns the incident id.
+
+    The free-incident trial is retired for new grants (see
+    test_free_incident.py) -- POST /incidents can no longer produce this
+    state, so the incident and free_incident_id are inserted directly, the
+    same shape create_incident used to write before that change. This cron
+    only ever fires for accounts with a free_incident_id already on record
+    (see api/v1/internal.py), so that's the real state it needs to test
+    against regardless of how it's produced."""
     register = await client.post("/v1/auth/register", json={"email": email, "password": "correct-horse-battery"})
     assert register.status_code == 201, register.text
-    incident = await client.post(
-        "/v1/postmortems/incidents", json={"title": f"Free incident for {email}", "severity": "sev3"}
-    )
-    assert incident.status_code == 201, incident.text
-    incident_id = incident.json()["id"]
+    user_id = register.json()["id"]
+
+    incident_id = f"inc-cron-test-{secrets.token_hex(6)}"
+    created_at = int(time.time() * 1000) - incident_age_ms
     await database.execute(
-        "UPDATE incidents SET created_at = %s WHERE id = %s",
-        (int(time.time() * 1000) - incident_age_ms, incident_id),
+        """INSERT INTO incidents (id, client_email, title, severity, status, impact, created_at, updated_at)
+           VALUES (%s, %s, %s, 'sev3', 'open', NULL, %s, %s)""",
+        (incident_id, email, f"Free incident for {email}", created_at, created_at),
     )
+    await database.execute("UPDATE users SET free_incident_id=%s WHERE id=%s", (incident_id, user_id))
     await client.post(
         "/v1/postmortems/incidents/{}/evidence".format(incident_id),
         json={"occurred_at": int(time.time() * 1000), "source": "human_note", "summary": "Something happened."},
@@ -159,13 +174,15 @@ async def test_does_not_nudge_a_too_recent_incident_or_one_with_no_draft(context
         "/v1/auth/register", json={"email": "cron-test-no-draft@example.com", "password": "correct-horse-battery"}
     )
     assert register.status_code == 201
-    incident = await client.post(
-        "/v1/postmortems/incidents", json={"title": "Never drafted", "severity": "sev3"}
-    )
+    user_id = register.json()["id"]
+    incident_id = "inc-cron-test-no-draft"
+    created_at = int(time.time() * 1000) - 2 * 24 * 60 * 60 * 1000
     await database.execute(
-        "UPDATE incidents SET created_at = %s WHERE id = %s",
-        (int(time.time() * 1000) - 2 * 24 * 60 * 60 * 1000, incident.json()["id"]),
+        """INSERT INTO incidents (id, client_email, title, severity, status, impact, created_at, updated_at)
+           VALUES (%s, %s, 'Never drafted', 'sev3', 'open', NULL, %s, %s)""",
+        (incident_id, "cron-test-no-draft@example.com", created_at, created_at),
     )
+    await database.execute("UPDATE users SET free_incident_id=%s WHERE id=%s", (incident_id, user_id))
     await client.post("/v1/auth/logout")
 
     headers = {"Authorization": f"Bearer {CRON_SECRET}"}

@@ -12,11 +12,9 @@ import { buttonVariants } from "@/components/ui/button";
 export function CtaBanner() {
   return (
     <div className="mb-8 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-accent/20 bg-accent/5 px-4 py-3">
-      <p className="text-sm text-ink">
-        Had an incident like this? Get an evidence-grounded postmortem for your own -- first one&apos;s free.
-      </p>
+      <p className="text-sm text-ink">Had an incident like this? Get an evidence-grounded postmortem for your own.</p>
       <Link href="/#get-started" className={cn(buttonVariants({ size: "sm" }), "shrink-0")}>
-        Try it free
+        Get started
       </Link>
     </div>
   );

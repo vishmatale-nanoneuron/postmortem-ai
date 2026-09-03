@@ -171,10 +171,9 @@ export default function DocsPage() {
         <>
           <h2 className={h2}>Payments</h2>
           <p className={p}>
-            Every account gets one incident fully free -- record evidence, run AI extraction, and draft a real
-            grounded postmortem with no card required, so you can see the actual output before deciding anything.
-            Publishing it, or creating a second incident, requires an active subscription. For clients anywhere in
-            the world, an international SWIFT wire (USD/GBP/EUR) or UPI (India) works today -- submit the
+            Recording evidence, AI extraction, drafting, publishing, and creating incidents all require an active
+            subscription. For clients anywhere in the world, an international SWIFT wire (USD/GBP/EUR) or UPI (India)
+            works today -- submit the
             transaction reference and the founder reviews and approves it personally, usually quickly. Self-serve
             card checkout via Stripe is built but not switched on for real payments yet; when it is, it&apos;ll
             appear as an option automatically, without anything else here needing to change. Not happy after

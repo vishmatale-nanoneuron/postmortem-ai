@@ -78,11 +78,16 @@ class UserOut(BaseModel):
     is_founder: bool = False
     subscription_status: str = "none"
     has_active_subscription: bool = False
-    # Whether this account can still create its one free incident before
-    # paying -- lets the frontend offer the real product instead of a hard
-    # paywall on a brand new, not-yet-paying account. See auth.py's
-    # User.has_free_incident_available for the full rule.
+    # Permanently False now -- the free-incident trial is retired for new
+    # grants. Kept on the response (rather than removed) so older frontend
+    # bundles/API consumers reading this field don't break; see auth.py's
+    # User.has_free_incident_available for why it's always False now.
     has_free_incident_available: bool = False
+    # Whether this account already has a free incident on record from
+    # before the trial was retired -- lets the frontend distinguish "used
+    # it already" from "never offered one" now that the field above no
+    # longer can. See auth.py's User.has_used_free_incident.
+    has_used_free_incident: bool = False
 
 
 def _user_out(row: dict, settings: Settings) -> UserOut:
@@ -106,6 +111,7 @@ def _user_out(row: dict, settings: Settings) -> UserOut:
         subscription_status=user.effective_status,
         has_active_subscription=user.has_active_subscription,
         has_free_incident_available=user.has_free_incident_available,
+        has_used_free_incident=user.has_used_free_incident,
     )
 
 
@@ -260,6 +266,7 @@ async def me(user: User = Depends(current_user)) -> UserOut:
         subscription_status=user.effective_status,
         has_active_subscription=user.has_active_subscription,
         has_free_incident_available=user.has_free_incident_available,
+        has_used_free_incident=user.has_used_free_incident,
     )
 
 
@@ -290,6 +297,7 @@ async def session(user: User | None = Depends(current_user_optional)) -> Session
             subscription_status=user.effective_status,
             has_active_subscription=user.has_active_subscription,
             has_free_incident_available=user.has_free_incident_available,
+            has_used_free_incident=user.has_used_free_incident,
         ),
     )
 

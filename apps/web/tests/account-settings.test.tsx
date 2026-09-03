@@ -35,6 +35,7 @@ const baseUser: AuthUser = {
   subscription_status: "active",
   has_active_subscription: true,
   has_free_incident_available: false,
+  has_used_free_incident: false,
 };
 
 describe("AccountSettings delete button visibility", () => {

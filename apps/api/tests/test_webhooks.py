@@ -356,40 +356,59 @@ async def test_an_unpaid_account_with_no_free_slot_left_is_blocked_from_the_webh
 
 
 @pytest.mark.asyncio
-async def test_an_unpaid_account_can_still_use_its_free_incident_via_webhook(context) -> None:
-    """The webhook path's own docstring, and the public docs, both claim
-    this is 'the same write path and paywall' as the authenticated REST
-    endpoints -- create_incident/record_evidence both let an unpaid account
-    through exactly once, via require_active_subscription_or_free_slot /
-    _or_free_incident (auth.py). A brand-new signup (subscription_status
-    'none', free_incident_id never set) must get the same allowance here,
-    not a flat paywall -- this was a real bug, caught by testing this
-    exact scenario live against production before this test existed."""
+async def test_an_unpaid_account_cannot_create_an_incident_via_webhook(context) -> None:
+    """The webhook path's own paywall mirrors the authenticated REST
+    endpoints exactly -- both gate incident *creation* on
+    has_active_subscription or has_free_incident_available (auth.py). The
+    free-incident trial is retired for new grants (see
+    test_free_incident.py), so a brand-new signup (subscription_status
+    'none', free_incident_id never set) is blocked here too, the same as
+    POST /v1/postmortems/incidents."""
     client, database, token = context
     await database.execute("UPDATE users SET subscription_status='none' WHERE email=%s", (CLIENT_EMAIL,))
 
     create = await client.post(
         f"/v1/webhooks/incidents/{token}",
-        json={"source": "alert", "summary": "First incident, on the house"},
+        json={"source": "alert", "summary": "Should be blocked"},
     )
-    assert create.status_code == 201, create.text
-    incident_id = create.json()["incident_id"]
+    assert create.status_code == 402
 
-    user_row = await database.fetch_one("SELECT free_incident_id FROM users WHERE email=%s", (CLIENT_EMAIL,))
+
+@pytest.mark.asyncio
+async def test_a_legacy_free_incident_can_still_receive_evidence_via_webhook(context) -> None:
+    """What's preserved despite the trial's retirement: an account that
+    already has free_incident_id set from before the change can still
+    append more evidence to that specific incident via webhook, exactly as
+    before -- require_active_subscription_or_free_incident's
+    free_incident_id == incident_id check doesn't consult
+    has_free_incident_available at all. Simulated by writing the row
+    directly, the same way test_free_incident.py's legacy fixture does,
+    since POST /incidents can no longer produce this state."""
+    client, database, token = context
+    await database.execute("UPDATE users SET subscription_status='none' WHERE email=%s", (CLIENT_EMAIL,))
+    user_row = await database.fetch_one("SELECT id FROM users WHERE email=%s", (CLIENT_EMAIL,))
     assert user_row is not None
-    assert user_row["free_incident_id"] == incident_id
 
-    # Appending more evidence to that same free incident is also allowed --
-    # require_active_subscription_or_free_incident's exact condition.
+    import time as _time
+
+    incident_id = "inc-webhook-legacy-free-test"
+    now = int(_time.time() * 1000)
+    await database.execute(
+        """INSERT INTO incidents (id, client_email, title, severity, status, impact, created_at, updated_at)
+           VALUES (%s, %s, 'Legacy free incident', 'sev3', 'open', NULL, %s, %s)""",
+        (incident_id, CLIENT_EMAIL, now, now),
+    )
+    await database.execute("UPDATE users SET free_incident_id=%s WHERE id=%s", (incident_id, user_row["id"]))
+
     append = await client.post(
         f"/v1/webhooks/incidents/{token}",
-        json={"source": "alert", "summary": "More evidence, same free incident", "incident_id": incident_id},
+        json={"source": "alert", "summary": "More evidence, same legacy free incident", "incident_id": incident_id},
     )
     assert append.status_code == 201, append.text
     assert append.json()["created_incident"] is False
 
     # A second, *different* incident is still correctly blocked -- the free
-    # slot is spent.
+    # slot is scoped to exactly this one incident_id.
     second = await client.post(
         f"/v1/webhooks/incidents/{token}",
         json={"source": "alert", "summary": "A second, different incident"},

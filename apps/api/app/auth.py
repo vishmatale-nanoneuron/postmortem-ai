@@ -76,24 +76,29 @@ class User:
 
     @property
     def has_free_incident_available(self) -> bool:
-        """Whether this account can still create its one free incident --
-        false once it's used (free_incident_id set), and false for any
-        account that has ever actually paid, even if that subscription has
-        since lapsed. subscription_status == 'none' is the real test for
-        that, not just "not currently active": a Stripe subscription that
-        lapsed reports a real terminal status (past_due/canceled/unpaid/...),
-        and a manually approved UPI/wire subscription whose period ended
-        stays stored as 'active' forever (see effective_status) -- neither
-        should read as "never subscribed" just because access happens to be
-        inactive right now. Without this check, a real customer whose
-        payment lapsed would get a second, unpaid free incident instead of
-        being asked to renew."""
-        return (
-            not self.is_founder
-            and not self.has_active_subscription
-            and self.subscription_status == "none"
-            and self.free_incident_id is None
-        )
+        """The free-incident trial is retired for new grants -- always
+        False now, for every account, regardless of subscription history.
+        This only ever gated *starting* a new free incident (see
+        require_active_subscription_or_free_slot); an account that already
+        has free_incident_id set from before this change keeps working on
+        that specific incident exactly as before, since
+        require_active_subscription_or_free_incident checks free_incident_id
+        directly and never consults this property. Kept as a real method
+        (not inlined at call sites) so REST, MCP, and the webhook path's
+        eligibility checks all stay driven by one place if this is ever
+        revisited, the same reason it existed before this change."""
+        return False
+
+    @property
+    def has_used_free_incident(self) -> bool:
+        """Whether this account already has a free incident on record from
+        before the trial was retired -- distinct from
+        has_free_incident_available (which no longer distinguishes "used
+        it" from "never offered"). Exists purely so the frontend can tell
+        those two states apart in its own copy (see UserOut) rather than
+        showing a legacy "you've used your free postmortem" message to an
+        account that was never offered one."""
+        return self.free_incident_id is not None
 
 
 async def _resolve_user_from_cookie(request: Request, database: Database, settings: Settings) -> User | None:
@@ -206,13 +211,15 @@ async def require_active_subscription(user: User = Depends(current_user)) -> Use
 
 
 async def require_active_subscription_or_free_slot(user: User = Depends(current_user)) -> User:
-    """Gates incident *creation* specifically: allows a non-subscribed
-    account through exactly once (while has_free_incident_available is
-    true), so a prospect can try the real core loop -- evidence, a grounded
-    draft -- before paying anything. create_incident itself is what
-    actually records free_incident_id once this lets a free create
-    through; this dependency only decides whether to let the request
-    proceed, not which incident it becomes."""
+    """Gates incident *creation*. Named for what it used to also allow -- a
+    non-subscribed account through once, via has_free_incident_available --
+    which is now permanently False (the trial is retired for new grants;
+    see that property's own docstring). In effect this now requires an
+    active subscription unconditionally, same as require_active_subscription
+    below, but kept as its own function/name rather than collapsed into it
+    so a future change here has exactly one place to touch if the trial is
+    ever reopened, and so its call sites (create_incident, suggest_incident)
+    don't need touching either way."""
     if user.has_active_subscription or user.has_free_incident_available:
         return user
     raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="An active subscription is required")

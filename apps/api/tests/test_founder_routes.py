@@ -4,6 +4,7 @@ Skipped unless TEST_DATABASE_URL is set, matching the rest of this suite.
 """
 
 import os
+import time
 
 import pytest
 import pytest_asyncio
@@ -31,6 +32,11 @@ async def context(monkeypatch: pytest.MonkeyPatch):
     get_settings.cache_clear()
     database = Database(get_settings())
     await database.open()
+    # free_incident_id's FK is ON DELETE SET NULL, not CASCADE -- deleting
+    # the user row above wouldn't clean up the incidents row the
+    # conversion-funnel test inserts directly, and a fixed incident id
+    # would collide with itself on the next run.
+    await database.execute("DELETE FROM incidents WHERE client_email LIKE %s", ("founder-test-%",))
     await database.execute("DELETE FROM users WHERE email LIKE %s", ("founder-test-%",))
     await database.execute("DELETE FROM users WHERE email=%s", (FOUNDER_EMAIL,))
 
@@ -184,12 +190,24 @@ async def test_conversion_funnel_excludes_the_founder_and_tracks_real_signups(co
     await client.post(
         "/v1/auth/register", json={"email": "founder-test-cold@example.com", "password": "correct-horse-battery"}
     )
-    # A signup that uses its free incident but never pays.
+    # A signup with a free incident on record but never paid -- the trial
+    # is retired for new grants (see test_free_incident.py), so this can no
+    # longer be produced by actually calling POST /incidents; insert the
+    # incident and set the column directly, the same way the legacy-account
+    # fixture there does (free_incident_id has a real FK into incidents).
     warm_client_cookies = await client.post(
         "/v1/auth/register", json={"email": "founder-test-warm@example.com", "password": "correct-horse-battery"}
     )
     assert warm_client_cookies.status_code == 201
-    await client.post("/v1/postmortems/incidents", json={"title": "Free incident", "severity": "sev3"})
+    now = int(time.time() * 1000)
+    await database.execute(
+        """INSERT INTO incidents (id, client_email, title, severity, status, impact, created_at, updated_at)
+           VALUES ('inc-funnel-test-warm', %s, 'Legacy free incident', 'sev3', 'open', NULL, %s, %s)""",
+        ("founder-test-warm@example.com", now, now),
+    )
+    await database.execute(
+        "UPDATE users SET free_incident_id='inc-funnel-test-warm' WHERE email=%s", ("founder-test-warm@example.com",)
+    )
     await client.post("/v1/auth/logout")
 
     # A signup with a real, currently-active manual (UPI/wire) subscription --

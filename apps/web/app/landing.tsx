@@ -73,7 +73,7 @@ export function Hero() {
               "h-auto px-7 py-3 text-sm shadow-lg shadow-accent/10 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-accent/35",
             )}
           >
-            Get started — first postmortem free
+            Get started
           </a>
           <Link href="/postmortems" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
             See real examples

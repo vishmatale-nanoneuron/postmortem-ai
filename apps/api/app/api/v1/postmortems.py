@@ -268,11 +268,14 @@ async def create_incident(
            RETURNING id, title, severity, status, impact""",
         (incident_id, user.email, payload.title, payload.severity, payload.impact, now, now),
     )
-    # require_active_subscription_or_free_slot already confirmed this
-    # account is either a real subscriber or has its free slot still
-    # available -- only spend the slot in the latter case, and only once
-    # the insert above actually succeeded (never record a slot as used for
-    # an incident that doesn't exist).
+    # Dead in practice as of the free-incident trial's retirement --
+    # require_active_subscription_or_free_slot now always requires
+    # has_active_subscription (has_free_incident_available is permanently
+    # False), so this branch can no longer actually run. Left in place
+    # rather than removed: it's exactly what would need to fire again if
+    # the trial is ever reopened by reverting just that one property, and
+    # only spends the slot once the insert above actually succeeded (never
+    # records a slot as used for an incident that doesn't exist).
     if not user.has_active_subscription:
         await database.execute("UPDATE users SET free_incident_id=%s WHERE id=%s", (incident_id, user.id))
     await log_activity(database, user.email, "incident_created", incident_id, payload.title)

@@ -325,6 +325,13 @@ async def test_changing_email_does_not_orphan_the_accounts_own_incidents(context
     await client.post(
         "/v1/auth/register", json={"email": "auth-test-email-change@example.com", "password": "correct-horse-battery"}
     )
+    # The free-incident trial is retired for new grants (see
+    # test_free_incident.py) -- grant a subscription directly so this test
+    # can create an incident at all; it's about email-change behavior, not
+    # billing.
+    await database.execute(
+        "UPDATE users SET subscription_status='active' WHERE email=%s", ("auth-test-email-change@example.com",)
+    )
     incident = await client.post(
         "/v1/postmortems/incidents", json={"title": "Before email change", "severity": "sev3"}
     )

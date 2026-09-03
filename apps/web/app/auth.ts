@@ -8,9 +8,14 @@ export type AuthUser = {
   is_founder: boolean;
   subscription_status: string;
   has_active_subscription: boolean;
-  // Whether this account can still create its one free incident before
-  // paying -- see apps/api/app/auth.py's User.has_free_incident_available.
+  // Permanently false now -- the free-incident trial is retired for new
+  // grants. See apps/api/app/auth.py's User.has_free_incident_available.
   has_free_incident_available: boolean;
+  // Whether this account already has a free incident on record from
+  // before the trial was retired -- distinguishes "used it already" from
+  // "never offered one" now that the field above no longer can. See
+  // apps/api/app/auth.py's User.has_used_free_incident.
+  has_used_free_incident: boolean;
 };
 
 async function authRequest<T>(path: string, init?: RequestInit): Promise<T> {

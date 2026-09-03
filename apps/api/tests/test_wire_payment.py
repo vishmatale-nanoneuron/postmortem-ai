@@ -140,11 +140,8 @@ async def test_a_founder_approving_a_wire_claim_grants_access(context) -> None:
     }
     claim_id = claim.json()["id"]
 
-    # The free incident is still available regardless of the pending claim
-    # (see test_free_incident.py); a second one is blocked until approved,
-    # exactly like an unapproved UPI claim.
-    free_one = await client.post("/v1/postmortems/incidents", json={"title": "Free incident", "severity": "sev2"})
-    assert free_one.status_code == 201, free_one.text
+    # A pending, unapproved claim must not itself grant access -- blocked
+    # until a founder approves it, exactly like an unapproved UPI claim.
     blocked = await client.post("/v1/postmortems/incidents", json={"title": "Should be blocked", "severity": "sev2"})
     assert blocked.status_code == 402
 
