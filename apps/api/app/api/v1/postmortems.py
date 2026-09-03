@@ -693,20 +693,23 @@ async def similar_incidents(
     ]
 
 
-@router.post("/incidents/{incident_id}/draft", status_code=status.HTTP_201_CREATED)
-async def draft_postmortem(
+async def _draft_postmortem_for_incident(
+    database: Database,
+    provider: ModelProvider,
+    settings: Settings,
+    user: User,
     incident_id: str,
-    database: Database = Depends(get_database),
-    provider: ModelProvider = Depends(get_model_provider),
-    user: User = Depends(require_active_subscription_or_free_incident),
-    settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
-    """Build a review-ready draft from the recorded evidence.
-
-    The model's answer is grounded before it is stored: any claim not supported
-    by a cited evidence entry is replaced or removed, never kept. The result is
-    always a draft -- publishing is a separate, human act.
-    """
+    """The actual drafting work, independent of how it was triggered.
+    Extracted from the /draft route so the PagerDuty-resolution
+    auto-draft (webhooks.py) can call exactly the same logic -- same rate
+    limit, same grounding, same ai_runs logging -- rather than a second,
+    drift-prone copy. Callers are responsible for their own entitlement
+    check before calling this (the route uses
+    require_active_subscription_or_free_incident as a dependency;
+    webhooks.py's _ingest_event already confirmed entitlement earlier in
+    the same request via the same has_active_subscription/free_incident_id
+    condition)."""
     if not await try_record_action(database, user.id, "draft_postmortem", MAX_DRAFTS_PER_HOUR, 60 * 60 * 1000):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
 
@@ -930,6 +933,23 @@ async def draft_postmortem(
             )
 
     return await _load_postmortem(database, incident_id)
+
+
+@router.post("/incidents/{incident_id}/draft", status_code=status.HTTP_201_CREATED)
+async def draft_postmortem(
+    incident_id: str,
+    database: Database = Depends(get_database),
+    provider: ModelProvider = Depends(get_model_provider),
+    user: User = Depends(require_active_subscription_or_free_incident),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    """Build a review-ready draft from the recorded evidence.
+
+    The model's answer is grounded before it is stored: any claim not supported
+    by a cited evidence entry is replaced or removed, never kept. The result is
+    always a draft -- publishing is a separate, human act.
+    """
+    return await _draft_postmortem_for_incident(database, provider, settings, user, incident_id)
 
 
 class PreviousDraftOut(BaseModel):

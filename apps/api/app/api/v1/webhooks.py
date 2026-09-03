@@ -32,12 +32,13 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
+from ...ai.model_router import create_model_provider
 from ...auth import User, current_user, user_by_webhook_token
 from ...database import Database
 from ...dependencies import get_database
 from ...security.rate_limit import try_record_action
 from ...settings import Settings, get_settings
-from .postmortems import log_activity
+from .postmortems import _draft_postmortem_for_incident, log_activity
 
 logger = logging.getLogger("postmortem_ai")
 
@@ -125,10 +126,53 @@ class WebhookEventOut(BaseModel):
     evidence_id: str
     created_incident: bool
     resolved: bool
+    # True only when resolution also produced a real, stored grounded
+    # draft automatically -- false whenever nothing was resolved, drafting
+    # failed for any reason, or (see _auto_draft_on_resolve) an approved
+    # postmortem already exists and auto-draft deliberately left it alone.
+    drafted: bool = False
+
+
+async def _auto_draft_on_resolve(database: Database, settings: Settings, user: User, incident_id: str) -> bool:
+    """Best-effort auto-draft the moment PagerDuty (or the generic
+    webhook) resolves an incident -- the one real, small version of
+    'auto-trigger postmortem generation on incident resolution' this app
+    can actually do today, using the exact same drafting logic the
+    authenticated /draft endpoint already uses (see
+    postmortems.py's _draft_postmortem_for_incident), not a second copy.
+
+    Two things this deliberately does NOT do:
+    - Touch a postmortem that's already PUBLISHED. _draft_postmortem_for_incident
+      upserts on incident_id and would silently revert an already-approved,
+      published postmortem back to a draft (nulling approved_by/approved_at)
+      -- a human approved that one; an automated webhook resolving the
+      underlying incident again is not grounds to un-approve it. Checked
+      here, before calling the shared drafting function at all.
+    - Ever fail the webhook response. A slow or failing drafting model
+      must never turn a real, valid incident-resolved event into a
+      non-2xx response -- PagerDuty disables a subscription after enough
+      of those. The resolve itself (already committed by the caller
+      before this runs) is the real, durable outcome either way.
+    """
+    already_published = await database.fetch_one(
+        "SELECT 1 FROM incident_postmortems WHERE incident_id=%s AND status='published'", (incident_id,)
+    )
+    if already_published:
+        logger.info("auto_draft_skipped", extra={"incident_id": incident_id, "reason": "already_published"})
+        return False
+    try:
+        provider = create_model_provider(settings)
+        await _draft_postmortem_for_incident(database, provider, settings, user, incident_id)
+        logger.info("auto_draft_succeeded", extra={"incident_id": incident_id})
+        return True
+    except Exception:
+        logger.warning("auto_draft_failed", extra={"incident_id": incident_id}, exc_info=True)
+        return False
 
 
 async def _ingest_event(
     database: Database,
+    settings: Settings,
     user: User,
     *,
     source: str,
@@ -214,6 +258,7 @@ async def _ingest_event(
     assert evidence_row is not None
 
     resolved = False
+    drafted = False
     if resolved_flag and not created_incident:
         updated = await database.execute(
             "UPDATE incidents SET status='resolved', updated_at=%s WHERE id=%s AND client_email=%s AND status='open'",
@@ -222,17 +267,23 @@ async def _ingest_event(
         resolved = bool(updated)
         if resolved:
             await log_activity(database, user.email, "status_changed", incident_id, f"resolved via {channel}")
+            drafted = await _auto_draft_on_resolve(database, settings, user, incident_id)
 
     logger.info(
-        "webhook_event_received incident_id=%s created_incident=%s source=%s resolved=%s channel=%s",
+        "webhook_event_received incident_id=%s created_incident=%s source=%s resolved=%s drafted=%s channel=%s",
         incident_id,
         created_incident,
         source,
         resolved,
+        drafted,
         channel,
     )
     return WebhookEventOut(
-        incident_id=incident_id, evidence_id=evidence_row["id"], created_incident=created_incident, resolved=resolved
+        incident_id=incident_id,
+        evidence_id=evidence_row["id"],
+        created_incident=created_incident,
+        resolved=resolved,
+        drafted=drafted,
     )
 
 
@@ -252,6 +303,7 @@ async def receive_webhook_event(
 
     return await _ingest_event(
         database,
+        settings,
         user,
         source=payload.source,
         summary=payload.summary,
@@ -339,6 +391,7 @@ async def receive_pagerduty_webhook(
 
     result = await _ingest_event(
         database,
+        settings,
         user,
         source="alert",
         summary=summary_by_event_type[event_type][:500],

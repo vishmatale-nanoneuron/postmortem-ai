@@ -15,6 +15,32 @@ pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="TEST_DATABASE_URL is n
 
 CLIENT_EMAIL = "webhook-test-user@example.com"
 
+GOOD_DRAFT_RESPONSE = {
+    "summary": {"text": "Checkout latency rose then recovered.", "citations": [1]},
+    "root_cause": {"text": "Unknown from this evidence alone.", "citations": [1]},
+    "detection": {"text": "An alert fired.", "citations": [1]},
+    "resolution": {"text": "Latency returned to baseline.", "citations": [1]},
+    "contributing_factors": [],
+    "actions": [],
+}
+
+
+class FakeProvider:
+    """Same shape as test_postmortem_routes.py's FakeProvider -- kept as
+    its own copy rather than a shared import since the two test files
+    don't otherwise depend on each other, and a shared test helper module
+    would be more machinery than two small classes justify."""
+
+    name = "fake"
+    model_name = "fake-model-v1"
+
+    async def complete(self, request):
+        import json
+
+        from app.ai.provider import ModelResponse
+
+        return ModelResponse(text=json.dumps(GOOD_DRAFT_RESPONSE), output_tokens=42)
+
 
 @pytest_asyncio.fixture
 async def context(monkeypatch: pytest.MonkeyPatch):
@@ -26,6 +52,22 @@ async def context(monkeypatch: pytest.MonkeyPatch):
     from app.database import Database
     from app.main import create_app
     from app.settings import get_settings
+
+    # _auto_draft_on_resolve calls create_model_provider directly (not via
+    # FastAPI Depends, since it's not running inside a request handler
+    # invoked through the DI system) -- application.dependency_overrides
+    # (the mechanism test_postmortem_routes.py uses) has no effect on it.
+    # Patch the name as imported into webhooks.py's own namespace instead,
+    # same reasoning as faking embed_text below: without this, every
+    # "resolved" test in this file would silently attempt a real network
+    # call to Gemini with the placeholder key above.
+    monkeypatch.setattr("app.api.v1.webhooks.create_model_provider", lambda _settings: FakeProvider())
+
+    async def fake_embed_text(_client, _text):
+        return [0.1] * 768
+
+    monkeypatch.setattr("app.api.v1.postmortems.embed_text", fake_embed_text)
+    monkeypatch.setattr("app.ai.rag.embed_text", fake_embed_text)
 
     get_settings.cache_clear()
     database = Database(get_settings())
@@ -131,6 +173,85 @@ async def test_a_webhook_event_with_resolved_true_closes_the_incident(context) -
     row = await database.fetch_one("SELECT status FROM incidents WHERE id=%s", (incident_id,))
     assert row is not None
     assert row["status"] == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_a_resolved_incident_is_automatically_drafted(context) -> None:
+    """The one real 'auto-trigger postmortem generation on incident
+    resolution' capability this app actually has -- no external
+    integrations, just the existing drafting logic called from the
+    webhook's own resolve path instead of waiting for a human to click
+    draft in the UI."""
+    client, database, token = context
+    first = await client.post(
+        f"/v1/webhooks/incidents/{token}",
+        json={"source": "alert", "summary": "Latency spike", "title": "Checkout latency"},
+    )
+    incident_id = first.json()["incident_id"]
+
+    resolve = await client.post(
+        f"/v1/webhooks/incidents/{token}",
+        json={"source": "metric", "summary": "Latency back to baseline", "incident_id": incident_id, "resolved": True},
+    )
+    assert resolve.status_code == 201, resolve.text
+    assert resolve.json()["resolved"] is True
+    assert resolve.json()["drafted"] is True
+
+    postmortem = await database.fetch_one(
+        "SELECT status, summary FROM incident_postmortems WHERE incident_id=%s", (incident_id,)
+    )
+    assert postmortem is not None
+    assert postmortem["status"] == "draft"
+    assert postmortem["summary"] == GOOD_DRAFT_RESPONSE["summary"]["text"]
+
+
+@pytest.mark.asyncio
+async def test_resolving_an_incident_with_an_already_published_postmortem_does_not_redraft_it(context) -> None:
+    """Regression guard for the real risk _auto_draft_on_resolve exists to
+    avoid: without this check, a second resolve event for the same
+    incident (a flapping monitor, PagerDuty resending, the incident being
+    reopened and resolved again) would silently overwrite an
+    already-published, human-approved postmortem back to 'draft' and null
+    out approved_by/approved_at -- unpublishing something a human already
+    signed off on, with no human involved in that decision."""
+    client, database, token = context
+    first = await client.post(
+        f"/v1/webhooks/incidents/{token}",
+        json={"source": "alert", "summary": "Latency spike", "title": "Checkout latency"},
+    )
+    incident_id = first.json()["incident_id"]
+
+    resolve = await client.post(
+        f"/v1/webhooks/incidents/{token}",
+        json={"source": "metric", "summary": "Latency back to baseline", "incident_id": incident_id, "resolved": True},
+    )
+    assert resolve.json()["drafted"] is True
+
+    approved_at = 12345
+    await database.execute(
+        "UPDATE incident_postmortems SET status='published', approved_by=%s, approved_at=%s WHERE incident_id=%s",
+        (CLIENT_EMAIL, approved_at, incident_id),
+    )
+    # Reopen the incident so a second resolve event is even possible to
+    # send (status='open' is what the resolve UPDATE itself requires) --
+    # simulating a flapping monitor or a resent webhook, not a normal path.
+    await database.execute("UPDATE incidents SET status='open' WHERE id=%s", (incident_id,))
+
+    second_resolve = await client.post(
+        f"/v1/webhooks/incidents/{token}",
+        json={"source": "metric", "summary": "Resolved again", "incident_id": incident_id, "resolved": True},
+    )
+    assert second_resolve.status_code == 201, second_resolve.text
+    assert second_resolve.json()["resolved"] is True
+    assert second_resolve.json()["drafted"] is False
+
+    postmortem = await database.fetch_one(
+        "SELECT status, approved_by, approved_at FROM incident_postmortems WHERE incident_id=%s", (incident_id,)
+    )
+    assert postmortem is not None
+    assert postmortem["status"] == "published"
+    assert postmortem["approved_by"] == CLIENT_EMAIL
+    assert postmortem["approved_at"] == approved_at
 
 
 @pytest.mark.asyncio
@@ -368,6 +489,9 @@ async def test_pagerduty_resolved_event_finds_and_resolves_the_same_incident_by_
     assert body["created_incident"] is False
     assert body["incident_id"] == incident_id
     assert body["resolved"] is True
+    # A PagerDuty resolve, not just the generic webhook's, auto-drafts --
+    # both share the exact same _ingest_event resolve path.
+    assert body["drafted"] is True
 
     row = await database.fetch_one("SELECT status FROM incidents WHERE id=%s", (incident_id,))
     assert row is not None
@@ -376,6 +500,10 @@ async def test_pagerduty_resolved_event_finds_and_resolves_the_same_incident_by_
     count = await database.fetch_one("SELECT count(*) AS n FROM incident_evidence WHERE incident_id=%s", (incident_id,))
     assert count is not None
     assert count["n"] == 2
+
+    postmortem = await database.fetch_one("SELECT status FROM incident_postmortems WHERE incident_id=%s", (incident_id,))
+    assert postmortem is not None
+    assert postmortem["status"] == "draft"
 
 
 @pytest.mark.asyncio
