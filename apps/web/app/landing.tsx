@@ -376,9 +376,18 @@ export function SiteFooter() {
     <footer className="border-t border-line px-4 py-8">
       <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 text-xs text-muted">
         <span>&copy; {new Date().getFullYear()} PostMortem AI</span>
-        <nav className="flex flex-wrap gap-x-4 gap-y-1.5">
+        {/* py-1.5 on each link (not just gap on the <nav>) is what actually
+            grows the tap target itself to Google's 24x24px minimum, not
+            just the visual space between them -- found via a live mobile
+            Lighthouse audit flagging these as insufficient-size/insufficient-
+            spacing touch targets, not assumed. */}
+        <nav className="flex flex-wrap gap-x-4 gap-y-0.5">
           {links.map(([label, href]) => (
-            <Link key={href} className="underline-offset-2 hover:text-ink hover:underline" href={href}>
+            <Link
+              key={href}
+              className="inline-block py-1.5 underline-offset-2 hover:text-ink hover:underline"
+              href={href}
+            >
               {label}
             </Link>
           ))}
