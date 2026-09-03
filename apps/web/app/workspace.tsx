@@ -59,6 +59,7 @@ import {
   loginSchema,
   paymentReferenceSchema,
   registerSchema,
+  wireCurrencySchema,
 } from "./validation";
 
 // Used as an override on shadcn's <Card>, not a standalone className --
@@ -1069,13 +1070,15 @@ function UpiPayment() {
   const [upi, setUpi] = useState<UpiPricing | null>(null);
   const [claims, setClaims] = useState<Claim[]>([]);
   const [busy, setBusy] = useState(false);
+  const [emailingDetails, setEmailingDetails] = useState(false);
+  const [detailsSent, setDetailsSent] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
   // Real UPI ID is founder-only now (see api/v1/billing.py) -- a client
   // never fetches it directly; this only shows the price, which is public
-  // information, and a claim-submission form for after they've been given
-  // the actual account to pay via a direct, founder-arranged channel.
+  // information, and a claim-submission form for after they've had the
+  // real account emailed to them (see emailDetails below).
   async function refresh() {
     setUpi(await billing.upiPricing());
     setClaims(await billing.myUpiClaims());
@@ -1084,6 +1087,19 @@ function UpiPayment() {
   useEffect(() => {
     void refresh();
   }, []);
+
+  async function emailDetails() {
+    setEmailingDetails(true);
+    setError("");
+    try {
+      await billing.emailUpiDetails();
+      setDetailsSent(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not email the account details.");
+    } finally {
+      setEmailingDetails(false);
+    }
+  }
 
   async function submitReference(form: FormData) {
     const reference = String(form.get("reference") || "").trim();
@@ -1094,7 +1110,7 @@ function UpiPayment() {
     try {
       await billing.submitUpiClaim(reference);
       await refresh();
-      setMessage("Submitted. The founder will review and activate your account shortly.");
+      setMessage("Submitted. The founder will review and activate your account shortly -- you'll also get an email confirming it.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not submit payment reference.");
     } finally {
@@ -1108,13 +1124,31 @@ function UpiPayment() {
 
   return (
     <>
-      <p className="mb-3 text-sm text-muted">
-        ₹{upi.amount_inr}/month via UPI.{" "}
-        <a className="underline underline-offset-2" href="mailto:vish.matale@gmail.com?subject=UPI%20payment%20details">
-          Email the founder
-        </a>{" "}
-        to receive the account to pay to, then submit your transaction reference below.
-      </p>
+      <p className="mb-3 text-sm text-muted">₹{upi.amount_inr}/month via UPI.</p>
+      {detailsSent ? (
+        <p className="mb-3 text-sm text-accent">
+          Sent to your email -- check your inbox (and spam) for the UPI ID to pay to.{" "}
+          <button className="underline underline-offset-2" onClick={() => void emailDetails()} type="button">
+            Send again
+          </button>
+        </p>
+      ) : (
+        <p className="mb-3 text-sm text-muted">
+          <button
+            className="underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={emailingDetails}
+            onClick={() => void emailDetails()}
+            type="button"
+          >
+            {emailingDetails ? "Sending..." : "Email me the UPI account details"}
+          </button>
+          , then submit your transaction reference below once you&apos;ve paid. Didn&apos;t get it?{" "}
+          <a className="underline underline-offset-2" href="mailto:vish.matale@gmail.com?subject=UPI%20payment%20details">
+            Email the founder directly
+          </a>
+          .
+        </p>
+      )}
       <p className="mb-3 text-xs text-muted">
         UPI requires an Indian bank account -- it can&apos;t accept payment from outside India. Use the
         international wire tab instead if you&apos;re paying from outside India.
@@ -1152,14 +1186,16 @@ function WirePayment() {
   const [claims, setClaims] = useState<Claim[]>([]);
   const [currency, setCurrency] = useState("USD");
   const [busy, setBusy] = useState(false);
+  const [emailingDetails, setEmailingDetails] = useState(false);
+  const [detailsSentFor, setDetailsSentFor] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
   // Real account/SWIFT/correspondent-bank details are founder-only now
   // (see api/v1/billing.py) -- a client never fetches them directly; this
   // only shows prices, which are public information, and a claim-
-  // submission form for after they've been given the actual account to
-  // pay via a direct, founder-arranged channel.
+  // submission form for after they've had the real account emailed to
+  // them (see emailDetails below).
   async function refresh() {
     setWire(await billing.wirePricing());
     setClaims(await billing.myWireClaims());
@@ -1168,6 +1204,21 @@ function WirePayment() {
   useEffect(() => {
     void refresh();
   }, []);
+
+  async function emailDetails() {
+    const validationError = firstError(wireCurrencySchema, { currency });
+    if (validationError) return setError(validationError);
+    setEmailingDetails(true);
+    setError("");
+    try {
+      await billing.emailWireDetails(currency);
+      setDetailsSentFor(currency);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not email the account details.");
+    } finally {
+      setEmailingDetails(false);
+    }
+  }
 
   async function submitReference(form: FormData) {
     const reference = String(form.get("reference") || "").trim();
@@ -1178,7 +1229,7 @@ function WirePayment() {
     try {
       await billing.submitWireClaim(currency, reference);
       await refresh();
-      setMessage("Submitted. The founder will review and activate your account shortly.");
+      setMessage("Submitted. The founder will review and activate your account shortly -- you'll also get an email confirming it.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not submit payment reference.");
     } finally {
@@ -1208,12 +1259,32 @@ function WirePayment() {
       </div>
       <p className="mb-3 text-sm text-muted">
         {currencySymbol(active.currency)}
-        {active.amount}/month via SWIFT wire in {active.currency}.{" "}
-        <a className="underline underline-offset-2" href="mailto:vish.matale@gmail.com?subject=Wire%20payment%20details">
-          Email the founder
-        </a>{" "}
-        to receive the account to wire to, then submit your transaction reference below.
+        {active.amount}/month via SWIFT wire in {active.currency}.
       </p>
+      {detailsSentFor === currency ? (
+        <p className="mb-3 text-sm text-accent">
+          Sent to your email -- check your inbox (and spam) for the account to wire to.{" "}
+          <button className="underline underline-offset-2" onClick={() => void emailDetails()} type="button">
+            Send again
+          </button>
+        </p>
+      ) : (
+        <p className="mb-3 text-sm text-muted">
+          <button
+            className="underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={emailingDetails}
+            onClick={() => void emailDetails()}
+            type="button"
+          >
+            {emailingDetails ? "Sending..." : `Email me the ${active.currency} wire account details`}
+          </button>
+          , then submit your transaction reference below once you&apos;ve paid. Didn&apos;t get it?{" "}
+          <a className="underline underline-offset-2" href="mailto:vish.matale@gmail.com?subject=Wire%20payment%20details">
+            Email the founder directly
+          </a>
+          .
+        </p>
+      )}
       {latestPending ? (
         <PendingClaim claim={latestPending} onChanged={refresh} />
       ) : (

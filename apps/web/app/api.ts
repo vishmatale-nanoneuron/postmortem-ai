@@ -193,10 +193,19 @@ export const billing = {
   upiPricing: () => request<UpiPricing>("/v1/billing/upi/pricing"),
   submitUpiClaim: (reference: string) =>
     request<Claim>("/v1/billing/upi/claim", { method: "POST", body: JSON.stringify({ reference }) }),
+  // Self-serve replacement for emailing the founder to ask for the real
+  // UPI ID -- see api/v1/billing.py's email_upi_details. Sends to the
+  // caller's own registered address; there's no address to pass here.
+  emailUpiDetails: () => request<{ sent: boolean }>("/v1/billing/upi/email-details", { method: "POST" }),
   myUpiClaims: () => request<Claim[]>("/v1/billing/upi/claims"),
   wirePricing: () => request<WirePricing>("/v1/billing/wire/pricing"),
   submitWireClaim: (currency: string, reference: string) =>
     request<Claim>("/v1/billing/wire/claim", { method: "POST", body: JSON.stringify({ currency, reference }) }),
+  emailWireDetails: (currency: string) =>
+    request<{ sent: boolean }>("/v1/billing/wire/email-details", {
+      method: "POST",
+      body: JSON.stringify({ currency }),
+    }),
   myWireClaims: () => request<Claim[]>("/v1/billing/wire/claims"),
   // PATCH -- fix a typo'd reference; DELETE -- withdraw the claim. Both
   // only work while the claim is still 'pending' (enforced server-side).

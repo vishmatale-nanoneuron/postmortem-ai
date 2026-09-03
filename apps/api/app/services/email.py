@@ -86,6 +86,82 @@ def send_free_incident_nudge_email(settings: Settings, to_email: str, incident_t
     logger.info("free_incident_nudge_email_sent")
 
 
+def send_upi_payment_details_email(
+    settings: Settings, to_email: str, request_id: str, upi_id: str, payee_name: str, amount_inr: int
+) -> None:
+    """Self-serve replacement for a client having to email the founder to
+    receive the real UPI ID (see billing.py's POST /upi/email-details). The
+    account details stay founder-only via GET /upi/info -- never returned
+    from an API response a scraper or throwaway account could read -- but a
+    genuine, already-authenticated client can now reach them without a
+    manual round-trip. request_id is a fresh per-request nonce from the
+    caller, not derived from the (static) account details themselves, so a
+    deliberate second send after the rate-limit window still goes out --
+    only a client-side retry of the exact same request collapses to one
+    Resend send, same idempotency reasoning as send_password_reset_email."""
+    if not settings.resend_api_key or not settings.resend_email_domain:
+        raise EmailNotConfiguredError("RESEND_API_KEY/RESEND_EMAIL_DOMAIN are not configured")
+
+    resend.api_key = settings.resend_api_key
+    resend.Emails.send(
+        {
+            "from": f"PostMortem AI <noreply@{settings.resend_email_domain}>",
+            "to": [to_email],
+            "subject": "Your PostMortem AI UPI payment details",
+            "html": (
+                f"<p>Pay <strong>₹{amount_inr}/month</strong> via UPI to:</p>"
+                f"<p>UPI ID: <code>{upi_id}</code><br>Payee name: {payee_name}</p>"
+                "<p>Once you've paid, go back to the UPI tab in your dashboard and submit the transaction "
+                "reference / UTR number from your payment app -- your account is activated once that's reviewed.</p>"
+            ),
+        },
+        {"idempotency_key": f"upi-details/{request_id}"},
+    )
+    logger.info("upi_payment_details_email_sent")
+
+
+def send_wire_payment_details_email(
+    settings: Settings,
+    to_email: str,
+    request_id: str,
+    currency: str,
+    amount: int,
+    account_name: str,
+    account_number: str,
+    bank_name: str,
+    swift_code: str,
+    correspondent_bank: str,
+    correspondent_swift: str,
+    nostro_account: str,
+    routing_reference: str,
+) -> None:
+    """Wire-transfer equivalent of send_upi_payment_details_email above --
+    same reasoning, same idempotency shape."""
+    if not settings.resend_api_key or not settings.resend_email_domain:
+        raise EmailNotConfiguredError("RESEND_API_KEY/RESEND_EMAIL_DOMAIN are not configured")
+
+    resend.api_key = settings.resend_api_key
+    resend.Emails.send(
+        {
+            "from": f"PostMortem AI <noreply@{settings.resend_email_domain}>",
+            "to": [to_email],
+            "subject": f"Your PostMortem AI wire payment details ({currency})",
+            "html": (
+                f"<p>Pay <strong>{currency} {amount}/month</strong> via SWIFT wire to:</p>"
+                f"<p>Account name: {account_name}<br>Account number: <code>{account_number}</code><br>"
+                f"Bank: {bank_name}<br>SWIFT/BIC: <code>{swift_code}</code></p>"
+                f"<p>Correspondent bank: {correspondent_bank}<br>Correspondent SWIFT: "
+                f"<code>{correspondent_swift}</code><br>Intermediary/nostro account: "
+                f"<code>{nostro_account}</code><br>Routing reference (ABA/IBAN): <code>{routing_reference}</code></p>"
+                "<p>Once you've sent it, go back to the Wire tab in your dashboard and submit the transaction "
+                "reference from your MT103 -- your account is activated once that's reviewed.</p>"
+            ),
+        },
+        {"idempotency_key": f"wire-details/{request_id}"},
+    )
+    logger.info("wire_payment_details_email_sent")
+
+
 def send_founder_claim_notification(
     settings: Settings, claim_id: str, method: str, currency: str, amount: int, reference: str, payer_email: str
 ) -> None:
@@ -123,3 +199,38 @@ def send_founder_claim_notification(
         {"idempotency_key": f"claim-notification/{claim_id}"},
     )
     logger.info("founder_claim_notification_sent", extra={"claim_id": claim_id, "method": method})
+
+
+def send_client_claim_confirmation(
+    settings: Settings, claim_id: str, to_email: str, method: str, currency: str, amount: int, reference: str
+) -> None:
+    """The client-side counterpart to send_founder_claim_notification above
+    -- before this existed, submitting a claim only ever produced an inline
+    UI message (see workspace.tsx's UpiPayment/WirePayment 'Submitted...'
+    text); a client who closed the tab had no record anywhere that their
+    claim was received, what reference they submitted, or what happens
+    next. Same best-effort, non-blocking call site as the founder
+    notification (see billing.py's _insert_claim) and the same per-claim
+    idempotency reasoning -- the payment_claims row is the real record
+    either way; this is only ever a courtesy copy of it."""
+    if not settings.resend_api_key or not settings.resend_email_domain:
+        raise EmailNotConfiguredError("RESEND_API_KEY/RESEND_EMAIL_DOMAIN are not configured")
+
+    resend.api_key = settings.resend_api_key
+    resend.Emails.send(
+        {
+            "from": f"PostMortem AI <noreply@{settings.resend_email_domain}>",
+            "to": [to_email],
+            "subject": "We've received your payment claim",
+            "html": (
+                f"<p>Your <strong>{method.upper()}</strong> payment claim for <strong>{currency} {amount}</strong> "
+                f"has been received, with reference <code>{reference}</code>.</p>"
+                "<p>The founder reviews every claim by hand before activating an account -- there's no automatic "
+                "approval. You'll be able to see the outcome in your dashboard, typically within a day.</p>"
+                "<p>If the reference above has a typo, you can correct it or withdraw the claim from the "
+                "payment tab in your dashboard as long as it's still pending.</p>"
+            ),
+        },
+        {"idempotency_key": f"claim-confirmation/{claim_id}"},
+    )
+    logger.info("client_claim_confirmation_sent", extra={"claim_id": claim_id, "method": method})

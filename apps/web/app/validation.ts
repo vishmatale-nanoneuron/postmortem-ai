@@ -47,6 +47,16 @@ export const paymentReferenceSchema = z.object({
   reference: z.string().min(4).max(200),
 });
 
+// Mirrors WireEmailDetailsIn/WireClaimIn's currency constraint in
+// apps/api/app/api/v1/billing.py. The currency value only ever comes from
+// a fixed set of buttons in WirePayment (see workspace.tsx), never free
+// text, so this is defense-in-depth rather than a real user-facing error
+// path -- kept anyway so a future change to that button set can't silently
+// send a currency the backend would 422 on.
+export const wireCurrencySchema = z.object({
+  currency: z.enum(["USD", "GBP", "EUR"]),
+});
+
 // Mirrors IntegrationsUpdate in apps/api/app/api/v1/integrations.py.
 // Empty string is valid (it clears the field); the URL/key format itself
 // isn't otherwise validated client-side -- a malformed webhook URL or key

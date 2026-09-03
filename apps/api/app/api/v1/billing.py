@@ -7,22 +7,42 @@ invisible to this backend).
 """
 
 import logging
+import secrets
 import time
 
+import resend.exceptions
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from ...auth import User, current_founder, current_user
 from ...database import Database
 from ...dependencies import get_database
+from ...security.rate_limit import try_record_action
 from ...services.billing import record_claim_event
-from ...services.email import EmailNotConfiguredError, send_founder_claim_notification
+from ...services.email import (
+    EmailNotConfiguredError,
+    send_client_claim_confirmation,
+    send_founder_claim_notification,
+    send_upi_payment_details_email,
+    send_wire_payment_details_email,
+)
 from ...settings import Settings, get_settings
 
 logger = logging.getLogger("postmortem_ai")
 
 router = APIRouter(prefix="/v1/billing", tags=["billing"])
+
+RATE_LIMITED_DETAIL = "Too many requests. Try again later."
+
+# Sending the real account details is the one client-facing side effect of
+# this action (unlike a claim submission, which is real regardless of
+# whether its notification email goes out) -- bounded per-account so it
+# can't be used to spam an inbox, generous enough that a genuine client
+# checking spam or wanting a second copy isn't blocked.
+MAX_PAYMENT_DETAILS_EMAILS_PER_WINDOW = 5
+PAYMENT_DETAILS_EMAIL_WINDOW_MS = 60 * 60 * 1000
 
 # Subscription lifecycle events only -- checkout completing, a renewal or
 # plan change, and cancellation/non-renewal. invoice.payment_failed is
@@ -317,6 +337,18 @@ async def _insert_claim(
     except Exception:
         logger.warning("founder_claim_notification_failed", extra={"claim_id": row["id"]}, exc_info=True)
 
+    # Same best-effort reasoning as the founder notification above, for the
+    # same claim -- the client-facing courtesy copy (see
+    # send_client_claim_confirmation's own docstring). A Resend outage or
+    # unconfigured environment must never turn an already-committed, real
+    # claim into a failed submission for the customer.
+    try:
+        send_client_claim_confirmation(settings, row["id"], user.email, method, currency, amount, reference)
+    except EmailNotConfiguredError:
+        logger.info("client_claim_confirmation_skipped", extra={"reason": "email_not_configured"})
+    except Exception:
+        logger.warning("client_claim_confirmation_failed", extra={"claim_id": row["id"]}, exc_info=True)
+
     return ClaimOut(**row)
 
 
@@ -413,9 +445,10 @@ async def upi_info(
     client (even a throwaway account created seconds earlier) could still
     reach it. Tightened to founder-only on direct instruction -- no client
     account, however genuine, gets this from the app anymore. A client who
-    wants to pay is told to contact the founder directly (see workspace.tsx
-    UpiPayment/WirePayment) instead of self-serving the account details.
-    The public price-only shape stays at /upi/pricing above."""
+    wants to pay gets the same details emailed to their own registered
+    address instead (POST /upi/email-details below), rather than reading
+    them back from an API response. The public price-only shape stays at
+    /upi/pricing above."""
     return UpiInfoOut(
         upi_id=settings.founder_upi_id,
         payee_name=settings.founder_upi_payee_name,
@@ -436,6 +469,58 @@ async def submit_upi_claim(
     return await _insert_claim(
         database, settings, user, "upi", "INR", settings.subscription_price_inr, payload.reference
     )
+
+
+class EmailDetailsOut(BaseModel):
+    sent: bool
+
+
+@router.post("/upi/email-details", response_model=EmailDetailsOut)
+async def email_upi_details(
+    database: Database = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+    user: User = Depends(current_user),
+) -> EmailDetailsOut:
+    """Self-serve replacement for a client having to email the founder to
+    receive the real UPI ID before they can pay -- see upi_info's docstring
+    for why the account itself stays founder-only. Any signed-in client can
+    call this (unlike GET /upi/info); what's actually rate-limited is
+    getting the real account sent anywhere, and the destination is always
+    the caller's own registered email, never a client-supplied address."""
+    if not settings.founder_upi_id:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="UPI payment is not configured")
+    allowed = await try_record_action(
+        database, user.id, "upi_details_email", MAX_PAYMENT_DETAILS_EMAILS_PER_WINDOW, PAYMENT_DETAILS_EMAIL_WINDOW_MS
+    )
+    if not allowed:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
+    try:
+        await run_in_threadpool(
+            send_upi_payment_details_email,
+            settings,
+            user.email,
+            secrets.token_hex(8),
+            settings.founder_upi_id,
+            settings.founder_upi_payee_name,
+            settings.subscription_price_inr,
+        )
+    except EmailNotConfiguredError as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Email is not configured") from error
+    except resend.exceptions.ResendError as error:
+        # Unlike the founder-notification/client-confirmation emails, this
+        # response IS the deliverable -- there's no already-committed record
+        # underneath it to fall back on, so a real Resend-side failure (rate
+        # limit, a rejected address, an outage) must be reported honestly as
+        # failed, not swallowed into a false "sent: true". 502, not 500: this
+        # is a real, anticipated failure mode of a specific downstream
+        # dependency, not an unexpected bug -- the client still has the
+        # mailto fallback link in the UI for exactly this case.
+        logger.warning("upi_payment_details_email_failed", extra={"user_id": user.id}, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not send the email right now. Try again, or email the founder directly.",
+        ) from error
+    return EmailDetailsOut(sent=True)
 
 
 @router.get("/upi/claims", response_model=list[ClaimOut])
@@ -545,9 +630,10 @@ async def wire_info(
     throwaway account created seconds earlier) could still reach it.
     Tightened to founder-only on direct instruction -- no client account,
     however genuine, gets this from the app anymore. A client who wants to
-    pay is told to contact the founder directly (see workspace.tsx
-    UpiPayment/WirePayment) instead of self-serving the account details.
-    The public price-only shape stays at /wire/pricing above."""
+    pay gets the same details emailed to their own registered address
+    instead (POST /wire/email-details below), rather than reading them back
+    from an API response. The public price-only shape stays at
+    /wire/pricing above."""
     return WireInfoOut(
         account_name=settings.founder_bank_account_name,
         account_number=settings.founder_bank_account_number,
@@ -571,6 +657,58 @@ async def submit_wire_claim(
     return await _insert_claim(
         database, settings, user, "wire", payload.currency, amounts[payload.currency], payload.reference
     )
+
+
+class WireEmailDetailsIn(BaseModel):
+    currency: str = Field(pattern="^(USD|GBP|EUR)$")
+
+
+@router.post("/wire/email-details", response_model=EmailDetailsOut)
+async def email_wire_details(
+    payload: WireEmailDetailsIn,
+    database: Database = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+    user: User = Depends(current_user),
+) -> EmailDetailsOut:
+    """Wire equivalent of email_upi_details above -- same self-serve
+    reasoning, same per-account rate limit (shared counter action name is
+    deliberately different per method so a client exhausting the UPI limit
+    can still request wire details, and vice versa)."""
+    if not settings.founder_bank_account_number:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Wire payment is not configured")
+    allowed = await try_record_action(
+        database, user.id, "wire_details_email", MAX_PAYMENT_DETAILS_EMAILS_PER_WINDOW, PAYMENT_DETAILS_EMAIL_WINDOW_MS
+    )
+    if not allowed:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
+    details = next(d for d in _wire_currency_details(settings) if d.currency == payload.currency)
+    try:
+        await run_in_threadpool(
+            send_wire_payment_details_email,
+            settings,
+            user.email,
+            secrets.token_hex(8),
+            details.currency,
+            details.amount,
+            settings.founder_bank_account_name,
+            settings.founder_bank_account_number,
+            settings.founder_bank_name,
+            settings.founder_bank_swift_code,
+            details.correspondent_bank,
+            details.correspondent_swift,
+            details.nostro_account,
+            details.routing_reference,
+        )
+    except EmailNotConfiguredError as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Email is not configured") from error
+    except resend.exceptions.ResendError as error:
+        # Same reasoning as email_upi_details' identical except block above.
+        logger.warning("wire_payment_details_email_failed", extra={"user_id": user.id}, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not send the email right now. Try again, or email the founder directly.",
+        ) from error
+    return EmailDetailsOut(sent=True)
 
 
 @router.get("/wire/claims", response_model=list[ClaimOut])
