@@ -85,13 +85,25 @@ export default function FounderAuth() {
             : "Not a client login. Access is restricted to one account."}
         </p>
         <form action={submit}>
-          <label className={fieldLabel}>Email</label>
-          <input className={fieldInput} name="email" type="email" autoComplete="email" required />
+          <label className={fieldLabel} htmlFor="founder-email">
+            Email
+          </label>
+          <input
+            className={fieldInput}
+            id="founder-email"
+            name="email"
+            type="email"
+            autoComplete="email"
+            required
+          />
           {mode !== "forgot" && (
             <>
-              <label className={fieldLabel}>Password</label>
+              <label className={fieldLabel} htmlFor="founder-password">
+                Password
+              </label>
               <input
                 className={fieldInput}
+                id="founder-password"
                 name="password"
                 type="password"
                 autoComplete={mode === "login" ? "current-password" : "new-password"}

@@ -58,9 +58,12 @@ function ResetPasswordForm() {
           </>
         ) : (
           <form action={submit}>
-            <label className={fieldLabel}>New password</label>
+            <label className={fieldLabel} htmlFor="reset-new-password">
+              New password
+            </label>
             <input
               className={fieldInput}
+              id="reset-new-password"
               name="new_password"
               type="password"
               autoComplete="new-password"
