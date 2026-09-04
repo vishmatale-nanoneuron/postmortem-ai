@@ -6,16 +6,20 @@ Canonical product: [https://www.nanoneuron.ai/](https://www.nanoneuron.ai/)
 [Published postmortems](https://www.nanoneuron.ai/postmortems)
 [Pricing](https://www.nanoneuron.ai/pricing)
 Contact: vish.matale@gmail.com
-Last factual review: 2026-08-30
+Last factual review: 2026-09-04
 
 ## What this is
 
-An incident postmortem tool: record evidence about an incident, generate an
-AI-drafted postmortem, publish it once a named human approves. Signed-in
-users only -- account required (email + password). A forgotten password
-can be reset via a real emailed link (Resend) -- a single-use, 30-minute
-token, sent only if the address belongs to a real account, though the
-request endpoint never reveals which case it was.
+An incident postmortem tool for DevOps and SRE teams: record evidence about
+an incident, generate an AI-drafted postmortem, publish it once a named
+human approves. Also used by freelance SRE/DevOps consultants for a single
+client engagement -- one account is one user's own incidents, not a shared
+organization (see "The core loop" in /docs for exactly what that does and
+doesn't mean today). Signed-in users only -- account required (email +
+password). A forgotten password can be reset via a real emailed link
+(Resend) -- a single-use, 30-minute token, sent only if the address belongs
+to a real account, though the request endpoint never reveals which case it
+was.
 
 ## The core guarantee: grounded drafting, not free-text generation
 

@@ -48,6 +48,12 @@ export default function DocsPage() {
           </a>{" "}
           and the actual running code, not a roadmap.
         </p>
+        <p className="mt-2 text-sm text-muted">
+          Built for DevOps and SRE teams running their own on-call rotation, and for freelance SRE/DevOps
+          consultants who need a clean, citable writeup at the end of an engagement -- one account, one client&apos;s
+          incidents at a time; see &quot;The core loop&quot; below for exactly what that does and doesn&apos;t
+          mean today.
+        </p>
       </div>
 
       {section(

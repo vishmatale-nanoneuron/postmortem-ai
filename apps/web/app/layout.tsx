@@ -7,8 +7,14 @@ import { cn } from "@/lib/utils";
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 const TITLE = "PostMortem AI";
+// "For DevOps and SRE teams" up front is deliberate, not filler -- it's
+// the actual audience (on-call rotations, incident commanders, and
+// freelance SRE/DevOps consultants writing up one client's incident) and
+// puts the real search terms they'd use where a meta description carries
+// the most weight. Still one sentence, still exactly what it does -- no
+// claim added that isn't already true of the product.
 const DESCRIPTION =
-  "Record incident evidence and generate AI-drafted postmortems where every claim is grounded to a cited evidence entry -- unsupported claims are marked, never invented. Publish only after a named human approves.";
+  "For DevOps and SRE teams: record incident evidence and generate AI-drafted postmortems where every claim is grounded to a cited evidence entry -- unsupported claims are marked, never invented. Publish only after a named human approves.";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://www.nanoneuron.ai"),
@@ -27,7 +33,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: TITLE,
     description:
-      "Evidence-grounded incident postmortem drafting. Every claim cites real recorded evidence; unsupported claims are marked, never fabricated.",
+      "Evidence-grounded incident postmortem drafting for DevOps and SRE teams. Every claim cites real recorded evidence; unsupported claims are marked, never fabricated.",
     url: "https://www.nanoneuron.ai",
     siteName: TITLE,
     type: "website",

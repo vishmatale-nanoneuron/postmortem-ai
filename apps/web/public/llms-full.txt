@@ -7,7 +7,7 @@ Canonical product: [https://www.nanoneuron.ai/](https://www.nanoneuron.ai/)
 [Published postmortems](https://www.nanoneuron.ai/postmortems)
 [Pricing](https://www.nanoneuron.ai/pricing)
 Contact: vish.matale@gmail.com
-Last factual review: 2026-08-30
+Last factual review: 2026-09-04
 
 This file is the complete reference; llms.txt above is the short index. Every
 claim here is checked against the running code and, where practical, against
@@ -17,10 +17,13 @@ the running product is correct and this file is stale.
 
 ## What this is
 
-A single-account incident postmortem tool: record evidence about an incident
-as it unfolds, generate an AI-drafted postmortem grounded in that evidence,
-publish it once a named human approves. Each account is one person's own
-incidents — no shared organizations, teams, or roles yet.
+A single-account incident postmortem tool for DevOps and SRE teams, and for
+freelance SRE/DevOps consultants working a single client engagement: record
+evidence about an incident as it unfolds, generate an AI-drafted postmortem
+grounded in that evidence, publish it once a named human approves. Each
+account is one person's own incidents — no shared organizations, teams, or
+roles yet, so a freelancer serving multiple clients is one account per
+engagement today, not built-in multi-client management.
 
 ## Architecture
 

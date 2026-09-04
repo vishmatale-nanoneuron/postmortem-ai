@@ -28,7 +28,7 @@ async function fetchPublicSlugs(): Promise<PublicPostmortem[]> {
 // whether anything changed.
 const LAST_MODIFIED = {
   home: new Date("2026-08-29T13:58:11+05:30"),
-  docs: new Date("2026-09-04T01:19:04+05:30"),
+  docs: new Date("2026-09-04T13:18:27+00:00"),
   pricing: new Date("2026-09-01T22:45:05+05:30"),
   groundingMechanism: new Date("2026-09-02T20:56:15+05:30"),
   githubOutageDemo: new Date("2026-09-02T20:56:15+05:30"),
