@@ -52,7 +52,7 @@ export function Hero() {
           className="h-auto animate-in fade-in slide-in-from-bottom-2 gap-1.5 rounded-full border-line px-3 py-1 text-[11px] text-muted duration-700"
         >
           <Sparkles className="size-3 text-accent" />
-          AI-drafted, evidence-cited postmortems
+          For DevOps, SRE, and freelance consultants
         </Badge>
         <h1 className="mt-5 animate-in fade-in slide-in-from-bottom-3 text-4xl leading-[1.1] font-semibold tracking-tight text-ink duration-700 sm:text-6xl delay-100 fill-mode-backwards">
           Postmortems that{" "}
@@ -61,9 +61,8 @@ export function Hero() {
           </span>
         </h1>
         <p className="mx-auto mt-5 max-w-xl animate-in fade-in slide-in-from-bottom-3 text-lg text-muted duration-700 delay-200 fill-mode-backwards">
-          Record what actually happened during an incident. Get an AI-drafted postmortem where every claim points
-          back to a real, recorded entry — anything the evidence doesn&apos;t support is marked unsupported, never
-          invented.
+          Skip the Friday-afternoon postmortem slog — get an AI-drafted writeup where every claim traces back to a
+          real, recorded entry. Anything the evidence doesn&apos;t support is marked unsupported, never invented.
         </p>
         <div className="mt-9 flex animate-in fade-in slide-in-from-bottom-3 flex-wrap items-center justify-center gap-x-4 gap-y-3 duration-700 delay-300 fill-mode-backwards">
           <a
