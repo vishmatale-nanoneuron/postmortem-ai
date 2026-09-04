@@ -6,7 +6,7 @@ import { SiteFooter, SiteHeader } from "../../landing";
 export const metadata: Metadata = {
   title: "How postmortem drafting is grounded, mechanically",
   description:
-    "The two-layer mechanism behind every AI-drafted postmortem: cited generation, then independent code-level verification of every citation before anything is stored.",
+    "The two-layer mechanism behind every AI-drafted postmortem, built for DevOps and SRE teams: cited generation, then independent code-level verification of every citation before anything is stored.",
   robots: { index: true, follow: true },
   alternates: { canonical: "/blog/grounding-mechanism" },
 };
@@ -28,7 +28,7 @@ const ARTICLE_STRUCTURED_DATA = {
   "@type": "TechArticle",
   headline: "How postmortem drafting is grounded, mechanically",
   description:
-    "The two-layer mechanism behind every AI-drafted postmortem: cited generation, then independent code-level verification of every citation before anything is stored.",
+    "The two-layer mechanism behind every AI-drafted postmortem, built for DevOps and SRE teams: cited generation, then independent code-level verification of every citation before anything is stored.",
   datePublished: PUBLISHED_DATE,
   author: { "@type": "Organization", name: "PostMortem AI", url: "https://www.nanoneuron.ai" },
   publisher: { "@type": "Organization", name: "PostMortem AI", url: "https://www.nanoneuron.ai" },

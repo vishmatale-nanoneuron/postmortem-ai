@@ -6,7 +6,7 @@ import { SiteFooter, SiteHeader } from "../../landing";
 export const metadata: Metadata = {
   title: "What our tool drafted from a real public outage",
   description:
-    "We fed the public facts of GitHub's August 17, 2026 outage into PostMortem AI and published the real, unedited output -- a concrete demonstration of the grounding mechanism, not a claim of being better than anyone's official writeup.",
+    "We fed the public facts of GitHub's August 17, 2026 outage into PostMortem AI and published the real, unedited output -- a concrete demonstration, for DevOps and SRE teams, of the grounding mechanism itself, not a claim of being better than anyone's official writeup.",
   robots: { index: true, follow: true },
   alternates: { canonical: "/blog/github-outage-demo" },
 };
@@ -26,7 +26,7 @@ const ARTICLE_STRUCTURED_DATA = {
   "@type": "TechArticle",
   headline: "What our tool drafted from a real public outage",
   description:
-    "We fed the public facts of GitHub's August 17, 2026 outage into PostMortem AI and published the real, unedited output -- a concrete demonstration of the grounding mechanism, not a claim of being better than anyone's official writeup.",
+    "We fed the public facts of GitHub's August 17, 2026 outage into PostMortem AI and published the real, unedited output -- a concrete demonstration, for DevOps and SRE teams, of the grounding mechanism itself, not a claim of being better than anyone's official writeup.",
   datePublished: PUBLISHED_DATE,
   author: { "@type": "Organization", name: "PostMortem AI", url: "https://www.nanoneuron.ai" },
   publisher: { "@type": "Organization", name: "PostMortem AI", url: "https://www.nanoneuron.ai" },

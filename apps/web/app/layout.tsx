@@ -58,6 +58,11 @@ const STRUCTURED_DATA = {
   operatingSystem: "Web",
   description: DESCRIPTION,
   url: "https://www.nanoneuron.ai",
+  // schema.org's real audience property, not a marketing bullet -- the
+  // same "DevOps and SRE teams, and freelance consultants" fact as
+  // DESCRIPTION above and /docs' own "who this is for" line, just in the
+  // structured-data shape a rich-result/AI-answer consumer actually reads.
+  audience: { "@type": "Audience", audienceType: "DevOps and SRE teams, and freelance SRE/DevOps consultants" },
   // One offer per real payment path (verified live against
   // /v1/billing/upi/pricing and /v1/billing/wire/pricing) -- previously
   // only listed the INR/UPI price, silently omitting the USD/GBP/EUR wire
