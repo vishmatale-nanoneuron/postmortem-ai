@@ -5,7 +5,11 @@ creation and webhook signature verification are covered by unit-level shape
 checks below and by manual verification against the real sandbox).
 """
 
+import hashlib
+import hmac
+import json
 import os
+import time
 
 import pytest
 import pytest_asyncio
@@ -286,3 +290,91 @@ async def test_a_webhook_with_an_invalid_signature_is_rejected(context) -> None:
         headers={"stripe-signature": "t=1,v1=not-a-real-signature"},
     )
     assert response.status_code == 400
+
+
+def _signed_webhook_headers(payload: bytes, secret: str) -> dict[str, str]:
+    """Stripe's own documented webhook signature scheme (docs.stripe.com/
+    webhooks#verify-manually): v1 = HMAC-SHA256(secret, f"{t}.{payload}").
+    The Stripe SDK only ships a *verifier* (WebhookSignature.verify_header),
+    not a generator, so this reimplements the one line of HMAC needed to
+    produce a header stripe.Webhook.construct_event will actually accept --
+    found necessary by discovering, via a real Stripe CLI + real test-mode
+    checkout, that no test anywhere exercised the accept path at all."""
+    timestamp = str(int(time.time()))
+    signed_payload = f"{timestamp}.".encode() + payload
+    signature = hmac.new(secret.encode(), signed_payload, hashlib.sha256).hexdigest()
+    return {"stripe-signature": f"t={timestamp},v1={signature}", "content-type": "application/json"}
+
+
+@pytest.mark.asyncio
+async def test_a_valid_checkout_completed_webhook_activates_the_subscription(
+    context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real gap found the hard way: a live round-trip against the actual
+    Stripe CLI + a real test-mode checkout session, completed with Stripe's
+    own test card, hit a real 503 from this app's own webhook handler --
+    _client(settings) is called unconditionally for every handled event
+    type (even customer.subscription.updated/.deleted, which never read
+    it), so it 503s on anything but a genuinely live key, the same as
+    checkout creation. That's correct, deliberate behavior, not a bug --
+    but it also meant this exact path (a validly-signed
+    checkout.session.completed actually flipping subscription_status to
+    'active') had zero test coverage anywhere in this suite; only the
+    rejection path (bad signature) was tested. Faking just the one Stripe
+    SDK call the handler actually needs (subscriptions.retrieve_async)
+    proves _apply_subscription's real logic without needing a live key."""
+    client, database = context
+    await client.post("/v1/auth/register", json={"email": UNPAID_EMAIL, "password": "correct-horse-battery"})
+    await database.execute(
+        "UPDATE users SET stripe_customer_id='cus_test_webhook_activation' WHERE email=%s", (UNPAID_EMAIL,)
+    )
+
+    class FakeSubscription:
+        id = "sub_test_webhook_activation"
+        status = "active"
+        current_period_end = 9999999999
+
+    class FakeSubscriptions:
+        async def retrieve_async(self, _subscription_id):
+            return FakeSubscription()
+
+    class FakeClient:
+        subscriptions = FakeSubscriptions()
+
+    monkeypatch.setattr("app.api.v1.billing._client", lambda _settings: FakeClient())
+
+    payload = json.dumps(
+        {
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "customer": "cus_test_webhook_activation",
+                    "subscription": "sub_test_webhook_activation",
+                }
+            },
+        }
+    ).encode()
+
+    response = await client.post(
+        "/v1/billing/webhook",
+        content=payload,
+        headers=_signed_webhook_headers(payload, "whsec_not-called-in-these-tests"),
+    )
+    assert response.status_code == 200, response.text
+
+    row = await database.fetch_one(
+        "SELECT subscription_status, current_period_end, stripe_subscription_id FROM users WHERE email=%s",
+        (UNPAID_EMAIL,),
+    )
+    assert row is not None
+    assert row["subscription_status"] == "active"
+    assert row["current_period_end"] == 9999999999
+    assert row["stripe_subscription_id"] == "sub_test_webhook_activation"
+
+    # The actual point: this real webhook is what's supposed to unlock
+    # service. Confirm it did, through the exact same paywall dependency
+    # every other test in this file exercises.
+    unblocked = await client.post(
+        "/v1/postmortems/incidents", json={"title": "Unlocked by a real webhook", "severity": "sev2"}
+    )
+    assert unblocked.status_code == 201, unblocked.text
