@@ -325,7 +325,16 @@ export type ExportedData = {
   actions: unknown[];
 };
 
-export type ActivityLogEntry = { action: string; incident_id: string | null; detail: string | null; created_at: number };
+export type ActivityLogEntry = {
+  action: string;
+  incident_id: string | null;
+  detail: string | null;
+  // "web" (a browser session or a webhook acting as one) or "mcp_agent"
+  // (an AI agent -- Claude Desktop, etc. -- via this account's own MCP
+  // tools). See apps/api/app/mcp_server.py's _audited().
+  source: string;
+  created_at: number;
+};
 
 export type SimilarIncident = { incident_title: string; summary: string; root_cause: string };
 

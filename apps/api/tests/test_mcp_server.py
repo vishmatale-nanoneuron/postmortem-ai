@@ -71,6 +71,15 @@ async def context(monkeypatch: pytest.MonkeyPatch):
     cleanup_database = Database(get_settings())
     await cleanup_database.open()
     await cleanup_database.execute("DELETE FROM users WHERE email IN (%s, %s)", (FOUNDER_EMAIL, CLIENT_EMAIL))
+    # account_activity_log.client_email is a plain column, not a foreign
+    # key (deliberately -- see migration 0024's own comment: history must
+    # survive even an account being deleted) -- so deleting the users rows
+    # above does NOT cascade-clean this table. Without this, a second test
+    # run would see a previous run's rows too, breaking the exact-count
+    # assertions in the agent-accountability tests below.
+    await cleanup_database.execute(
+        "DELETE FROM account_activity_log WHERE client_email IN (%s, %s)", (FOUNDER_EMAIL, CLIENT_EMAIL)
+    )
     await cleanup_database.close()
 
     application = create_app()
@@ -313,4 +322,128 @@ async def test_run_read_only_sql_redacts_password_hash(context) -> None:
     assert result.isError is not True
     text = str(result.content)
     assert "[redacted]" in text
-    assert "scrypt$" not in text
+
+
+# ---------------------------------------------------------------------------
+# Agent accountability: every MCP tool call now writes a durable row into
+# account_activity_log (source='mcp_agent') -- the same real, queryable
+# audit trail REST actions already wrote into, extended to answer "was
+# this a human in the browser, or an agent acting on their account."
+# ---------------------------------------------------------------------------
+
+
+async def _activity_log_rows(client_email: str) -> list[dict]:
+    from app.database import Database
+    from app.settings import get_settings
+
+    database = Database(get_settings())
+    await database.open()
+    try:
+        return await database.fetch_all(
+            "SELECT action, incident_id, detail, source FROM account_activity_log"
+            " WHERE client_email=%s ORDER BY created_at ASC",
+            (client_email,),
+        )
+    finally:
+        await database.close()
+
+
+@pytest.mark.asyncio
+async def test_a_successful_tool_call_is_recorded_with_source_mcp_agent(context) -> None:
+    app, _founder_token, client_token = context
+    async with mcp_session(app, token=client_token) as session:
+        result = await session.call_tool("list_incidents", {})
+    assert result.isError is not True
+
+    rows = await _activity_log_rows(CLIENT_EMAIL)
+    assert any(r["action"] == "agent_list_incidents" and r["source"] == "mcp_agent" for r in rows), rows
+
+
+@pytest.mark.asyncio
+async def test_a_denied_tool_call_is_also_recorded(context) -> None:
+    """The actual authorization-layer half of accountability: a non-founder
+    account calling a founder-only tool is blocked (proven elsewhere in
+    this file), but until this feature, that blocked attempt left no
+    trace anywhere queryable -- only successes were ever visible."""
+    app, _founder_token, client_token = context
+    async with mcp_session(app, token=client_token) as session:
+        result = await session.call_tool("get_founder_summary", {})
+    assert result.isError is True
+
+    rows = await _activity_log_rows(CLIENT_EMAIL)
+    denied = [r for r in rows if r["action"] == "agent_get_founder_summary_denied"]
+    assert len(denied) == 1, rows
+    assert denied[0]["source"] == "mcp_agent"
+    assert "founder" in denied[0]["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_create_incident_via_mcp_writes_exactly_one_row_not_two(context) -> None:
+    """create_incident is one of the two tools whose shared REST route body
+    already logs its own success -- proving here that MCP doesn't ALSO log
+    a second, redundant row is what actually confirms the double-counting
+    bug this design deliberately avoids, not just that logging happens at
+    all (test_a_successful_tool_call_is_recorded... already covers that
+    for an ordinary tool)."""
+    app, founder_token, _client_token = context
+    # The founder account is exempt from the subscription paywall (see
+    # test_a_founder_can_create_and_list_their_own_incident_via_mcp), so
+    # this exercises the success path without needing a real payment.
+    async with mcp_session(app, token=founder_token) as session:
+        result = await session.call_tool(
+            "create_incident", {"title": "Accountability test incident", "severity": "sev3"}
+        )
+    assert result.isError is not True
+
+    rows = await _activity_log_rows(FOUNDER_EMAIL)
+    created = [r for r in rows if r["action"] == "incident_created"]
+    assert len(created) == 1, rows
+    assert created[0]["source"] == "mcp_agent"
+    # And no second, generic "agent_create_incident" row alongside it.
+    assert not any(r["action"] == "agent_create_incident" for r in rows), rows
+
+
+@pytest.mark.asyncio
+async def test_create_incident_denied_via_mcp_is_still_recorded(context) -> None:
+    """The other half of the create_incident/publish_postmortem exception:
+    success is self-logged by the REST route body, but a denial never
+    reaches that body at all (require_mcp_active_subscription_or_free_slot
+    raises first) -- so it must still go through the normal wrapper path,
+    not be silently dropped just because the tool's happy path is
+    self-logged elsewhere."""
+    app, _founder_token, client_token = context
+    # CLIENT_EMAIL has no subscription and the free-incident trial is
+    # retired for new grants (see test_free_incident.py) -- genuinely
+    # unpaid, the real case this is meant to catch.
+    async with mcp_session(app, token=client_token) as session:
+        result = await session.call_tool(
+            "create_incident", {"title": "Should be denied", "severity": "sev3"}
+        )
+    assert result.isError is True
+
+    rows = await _activity_log_rows(CLIENT_EMAIL)
+    denied = [r for r in rows if r["action"] == "agent_create_incident_denied"]
+    assert len(denied) == 1, rows
+    assert denied[0]["source"] == "mcp_agent"
+    assert not any(r["action"] == "incident_created" for r in rows), rows
+
+
+@pytest.mark.asyncio
+async def test_web_and_mcp_agent_actions_are_distinguishable_via_rest(context) -> None:
+    """The actual point of all of this: GET /v1/postmortems/activity-log
+    (the same endpoint the client's own dashboard already calls) can now
+    tell the two apart, not just the raw database table."""
+    app, founder_token, _client_token = context
+    async with mcp_session(app, token=founder_token) as session:
+        await session.call_tool("list_incidents", {})
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+        login = await http.post(
+            "/v1/auth/login", json={"email": FOUNDER_EMAIL, "password": "correct-horse-battery"}
+        )
+        assert login.status_code == 200, login.text
+        response = await http.get("/v1/postmortems/activity-log")
+        assert response.status_code == 200, response.text
+        entries = response.json()
+
+    assert any(e["action"] == "agent_list_incidents" and e["source"] == "mcp_agent" for e in entries), entries

@@ -115,7 +115,12 @@ async def require_incident(database: Database, incident_id: str, email: str) -> 
 
 
 async def log_activity(
-    database: Database, client_email: str, action: str, incident_id: str | None = None, detail: str | None = None
+    database: Database,
+    client_email: str,
+    action: str,
+    incident_id: str | None = None,
+    detail: str | None = None,
+    source: str = "web",
 ) -> None:
     """A real, queryable 'who did what, when' audit trail -- the same
     append-only-ledger discipline this app already applies to payment
@@ -123,11 +128,21 @@ async def log_activity(
     (postmortem_draft_history), extended to account-level actions. Best-
     effort by design: a logging failure must never block the real action
     it's recording -- see every call site below, all wrapped so an audit-
-    log write failure degrades to a log line, not a broken request."""
+    log write failure degrades to a log line, not a broken request.
+
+    source defaults to "web" (every real caller today is either a browser
+    session or a webhook acting as one) -- mcp_server.py is the only
+    caller that ever passes "mcp_agent", for the exact two actions
+    (create_incident, publish_postmortem) that have both an MCP tool and
+    an inner log_activity call in their own REST route body, so this is
+    the one true record of which channel an action actually came through
+    rather than a second, separately-logged row that would double-count
+    it and mislabel the original as "web" regardless of the real source."""
     try:
         await database.execute(
-            "INSERT INTO account_activity_log (client_email, action, incident_id, detail, created_at) VALUES (%s, %s, %s, %s, %s)",
-            (client_email, action, incident_id, detail, int(time.time() * 1000)),
+            "INSERT INTO account_activity_log (client_email, action, incident_id, detail, source, created_at)"
+            " VALUES (%s, %s, %s, %s, %s, %s)",
+            (client_email, action, incident_id, detail, source, int(time.time() * 1000)),
         )
     except Exception:
         logger.warning("activity_log_write_failed", extra={"action": action, "incident_id": incident_id}, exc_info=True)
@@ -248,7 +263,15 @@ async def create_incident(
     payload: IncidentCreate,
     database: Database = Depends(get_database),
     user: User = Depends(require_active_subscription_or_free_slot),
+    source: str = "web",
 ) -> dict[str, object]:
+    # A plain-typed param with a default on a POST route (no Body(...)
+    # wrapper) is a query param to FastAPI, not part of the JSON body --
+    # the real frontend never sends ?source=, so every REST call still
+    # defaults to "web" unchanged. mcp_server.py calls this function
+    # directly (never through an HTTP request), so it just passes
+    # source="mcp_agent" as a plain keyword argument -- see log_activity's
+    # own docstring for why this exists instead of a second log call.
     if not await try_record_action(database, user.id, "create_incident", MAX_INCIDENTS_PER_HOUR, 60 * 60 * 1000):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
 
@@ -278,7 +301,7 @@ async def create_incident(
     # records a slot as used for an incident that doesn't exist).
     if not user.has_active_subscription:
         await database.execute("UPDATE users SET free_incident_id=%s WHERE id=%s", (incident_id, user.id))
-    await log_activity(database, user.email, "incident_created", incident_id, payload.title)
+    await log_activity(database, user.email, "incident_created", incident_id, payload.title, source=source)
     return dict(row or {})
 
 
@@ -308,6 +331,11 @@ class ActivityLogEntryOut(BaseModel):
     action: str
     incident_id: str | None
     detail: str | None
+    # "web" (a browser session or a webhook acting as one) or "mcp_agent"
+    # (an AI agent -- Claude Desktop, etc. -- calling the same action via
+    # this account's own MCP tools). The actual accountability answer:
+    # not just what happened, but whether a human or an agent did it.
+    source: str
     created_at: int
 
 
@@ -324,7 +352,7 @@ async def get_activity_log(
     just as useful for a single-person account checking their own history.
     Scoped by client_email exactly like every other read in this file."""
     rows = await database.fetch_all(
-        "SELECT action, incident_id, detail, created_at FROM account_activity_log"
+        "SELECT action, incident_id, detail, source, created_at FROM account_activity_log"
         " WHERE client_email=%s ORDER BY created_at DESC LIMIT %s",
         (user.email, MAX_ACTIVITY_LOG_ROWS),
     )
@@ -1016,7 +1044,11 @@ async def publish_postmortem(
     database: Database = Depends(get_database),
     user: User = Depends(require_active_subscription),
     settings: Settings = Depends(get_settings),
+    source: str = "web",
 ) -> dict[str, object]:
+    # Same query-param-that-nobody-sends trick as create_incident above --
+    # real REST callers always get "web", mcp_server.py passes
+    # source="mcp_agent" as a direct keyword argument.
     incident = await require_incident(database, incident_id, user.email)
     now = int(time.time() * 1000)
     updated = await database.execute(
@@ -1028,7 +1060,7 @@ async def publish_postmortem(
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No draft postmortem to publish")
 
-    await log_activity(database, user.email, "postmortem_published", incident_id, f"approved_by={user.email}")
+    await log_activity(database, user.email, "postmortem_published", incident_id, f"approved_by={user.email}", source=source)
     published = await _load_postmortem(database, incident_id)
     # Best-effort, never blocks the publish response -- a failure here
     # only means this postmortem won't surface as RAG context for future

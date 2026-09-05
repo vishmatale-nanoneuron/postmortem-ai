@@ -1551,6 +1551,31 @@ export function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser
 // checking their own history too. Self-contained/self-fetching, same
 // pattern as QualitySummaryPanel and ConversionFunnelPanel elsewhere in
 // this file.
+const ACTION_LABELS: Record<string, string> = {
+  incident_created: "Incident created",
+  status_changed: "Status changed",
+  postmortem_published: "Postmortem published",
+  data_exported: "Data exported",
+};
+
+// agent_<tool_name>[_denied|_failed] is the shape every MCP tool call logs
+// under (see mcp_server.py's _audited) -- humanized here rather than
+// hand-listing one label per tool (14 tools today, and growing), which
+// would silently go stale the moment a new tool is added. Falls through
+// to the raw action string for anything that matches neither this nor
+// ACTION_LABELS, same as before this feature existed.
+function formatActivityAction(action: string): string {
+  if (action in ACTION_LABELS) return ACTION_LABELS[action];
+  const match = /^agent_(.+?)(_denied|_failed)?$/.exec(action);
+  if (!match) return action;
+  const [, toolName, outcome] = match;
+  const readable = toolName.replaceAll("_", " ");
+  const capitalized = readable.charAt(0).toUpperCase() + readable.slice(1);
+  if (outcome === "_denied") return `${capitalized} — denied`;
+  if (outcome === "_failed") return `${capitalized} — failed`;
+  return capitalized;
+}
+
 function ActivityLogPanel() {
   const [entries, setEntries] = useState<ActivityLogEntry[] | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -1558,13 +1583,6 @@ function ActivityLogPanel() {
   useEffect(() => {
     api.activityLog().then(setEntries).catch(() => setEntries([]));
   }, []);
-
-  const ACTION_LABELS: Record<string, string> = {
-    incident_created: "Incident created",
-    status_changed: "Status changed",
-    postmortem_published: "Postmortem published",
-    data_exported: "Data exported",
-  };
 
   if (!entries || entries.length === 0) return null;
 
@@ -1582,7 +1600,15 @@ function ActivityLogPanel() {
           {entries.map((entry, i) => (
             <li key={i} className="flex justify-between rounded-md bg-paper px-3 py-1.5 text-xs">
               <span>
-                {ACTION_LABELS[entry.action] ?? entry.action}
+                {entry.source === "mcp_agent" && (
+                  <span
+                    className="mr-1.5 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent"
+                    title="Taken by an AI agent via MCP, not you directly in the browser"
+                  >
+                    AI agent
+                  </span>
+                )}
+                {formatActivityAction(entry.action)}
                 {entry.detail && <span className="text-muted"> -- {entry.detail}</span>}
               </span>
               <span className="text-muted">{new Date(entry.created_at).toLocaleString()}</span>

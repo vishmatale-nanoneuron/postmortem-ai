@@ -22,6 +22,7 @@ import contextvars
 import functools
 import logging
 import re
+import time
 from collections.abc import Awaitable, Callable
 
 from mcp.server.fastmcp import FastMCP
@@ -49,6 +50,14 @@ _current_user: contextvars.ContextVar[User | None] = contextvars.ContextVar("mcp
 # table they come from -- credential-shaped columns are never readable
 # through this tool, full stop, not just "not selected by default."
 _REDACTED_COLUMNS = {"password_hash", "stripe_customer_id", "stripe_subscription_id"}
+
+# Tools whose shared REST route body already writes its own
+# account_activity_log row on success (with a real source= passed
+# through) -- _audited() skips its own *success* logging for these two
+# specifically, to avoid double-counting. Denials/errors still go through
+# the normal path regardless, since those never reach the inner route
+# body (and its own log_activity call) at all -- see _audited's docstring.
+_SELF_LOGGED_TOOLS = {"create_incident", "publish_postmortem"}
 
 
 def current_mcp_user() -> User:
@@ -161,28 +170,6 @@ class MCPBearerAuthMiddleware:
             _current_user.reset(reset_token)
 
 
-def _audited(tool_name: str) -> Callable[[Callable[..., Awaitable[object]]], Callable[..., Awaitable[object]]]:
-    """Every tool call is logged before it runs -- actor, tool name -- the
-    same audit-before-execute discipline as nanoneuron-software-company's
-    auditedTool(), adapted to structured logging (this project logs
-    security-relevant events, e.g. founder_login_succeeded, rather than
-    writing a dedicated audit table)."""
-
-    def decorator(fn: Callable[..., Awaitable[object]]) -> Callable[..., Awaitable[object]]:
-        @functools.wraps(fn)
-        async def wrapper(*args: object, **kwargs: object) -> object:
-            actor = "unauthenticated"
-            user = _current_user.get()
-            if user is not None:
-                actor = user.email
-            logger.info("mcp_tool_called", extra={"tool": tool_name, "actor": actor})
-            return await fn(*args, **kwargs)
-
-        return wrapper
-
-    return decorator
-
-
 def _redact_row(row: dict) -> dict:
     return {key: ("[redacted]" if key in _REDACTED_COLUMNS else value) for key, value in row.items()}
 
@@ -208,6 +195,83 @@ def build_mcp_server(get_database: Callable[[], Database], settings: Settings) -
         name="postmortem-ai",
         transport_security=TransportSecuritySettings(allowed_hosts=settings.mcp_allowed_hosts),
     )
+
+    def _audited(tool_name: str) -> Callable[[Callable[..., Awaitable[object]]], Callable[..., Awaitable[object]]]:
+        """Every tool call is logged before it runs -- actor, tool name --
+        the same audit-before-execute discipline as nanoneuron-software-
+        company's auditedTool(). Beyond that structured log line (real-time
+        ops visibility, but ephemeral -- it ages out with Vercel's log
+        retention and isn't queryable by the founder or the client), every
+        call now also writes a durable row into account_activity_log with
+        source='mcp_agent' -- the same real, already-existing audit trail
+        REST actions write into (see postmortems.py's log_activity), now
+        able to answer the actual accountability question: was this action
+        taken by the client in their browser, or by an AI agent acting on
+        their account via MCP.
+
+        Nested inside build_mcp_server (not a module-level function, unlike
+        before) specifically so it can close over get_database -- the audit
+        row needs a real database write, which a module-level decorator
+        defined before get_database exists has no way to reach.
+
+        Records the *outcome*, not just the attempt: a PermissionError from
+        one of the require_mcp_* gates above (called from inside the tool
+        body, not by this wrapper) is caught here and logged as a denial --
+        the actual "authorization layer" half of accountability, since
+        without this an agent's blocked attempts were invisible, only its
+        successes ever showed up anywhere. This denial path applies to
+        every tool, including the two self-logged ones below -- a
+        PermissionError there is raised before their shared REST route body
+        (and its own internal log_activity call) is ever reached, so
+        skipping this wrapper entirely for them would have silently lost
+        exactly the denials that matter most.
+
+        create_incident and publish_postmortem's *success* path is the one
+        exception: their shared REST route bodies (see postmortems.py)
+        already call log_activity themselves, with source="mcp_agent"
+        passed through as a real keyword argument -- logging success again
+        here would double-count those two specific actions, with the
+        original row wrongly saying "web" regardless."""
+
+        def decorator(fn: Callable[..., Awaitable[object]]) -> Callable[..., Awaitable[object]]:
+            @functools.wraps(fn)
+            async def wrapper(*args: object, **kwargs: object) -> object:
+                user = _current_user.get()
+                actor = user.email if user is not None else "unauthenticated"
+                logger.info("mcp_tool_called", extra={"tool": tool_name, "actor": actor})
+
+                incident_id = kwargs.get("incident_id") if isinstance(kwargs.get("incident_id"), str) else None
+                started = time.monotonic()
+                try:
+                    result = await fn(*args, **kwargs)
+                except PermissionError as exc:
+                    if user is not None:
+                        await postmortem_routes.log_activity(
+                            get_database(), user.email, f"agent_{tool_name}_denied", incident_id, str(exc), source="mcp_agent"
+                        )
+                    raise
+                except Exception as exc:
+                    if user is not None:
+                        await postmortem_routes.log_activity(
+                            get_database(),
+                            user.email,
+                            f"agent_{tool_name}_failed",
+                            incident_id,
+                            str(exc)[:300],
+                            source="mcp_agent",
+                        )
+                    raise
+                else:
+                    if user is not None and tool_name not in _SELF_LOGGED_TOOLS:
+                        latency_ms = int((time.monotonic() - started) * 1000)
+                        await postmortem_routes.log_activity(
+                            get_database(), user.email, f"agent_{tool_name}", incident_id, f"{latency_ms}ms", source="mcp_agent"
+                        )
+                    return result
+
+            return wrapper
+
+        return decorator
 
     # ---- Founder-only tools ----------------------------------------
 
@@ -313,7 +377,7 @@ def build_mcp_server(get_database: Callable[[], Database], settings: Settings) -
         database = get_database()
         user = require_mcp_active_subscription_or_free_slot()
         payload = postmortem_routes.IncidentCreate(title=title, severity=severity, impact=impact)
-        return await postmortem_routes.create_incident(payload, database=database, user=user)
+        return await postmortem_routes.create_incident(payload, database=database, user=user, source="mcp_agent")
 
     @mcp.tool()
     @_audited("add_evidence")
@@ -373,7 +437,7 @@ def build_mcp_server(get_database: Callable[[], Database], settings: Settings) -
         database = get_database()
         user = require_mcp_active_subscription()
         return await postmortem_routes.publish_postmortem(
-            incident_id, database=database, user=user, settings=settings
+            incident_id, database=database, user=user, settings=settings, source="mcp_agent"
         )
 
     @mcp.tool()
