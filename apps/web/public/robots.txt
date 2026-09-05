@@ -1,4 +1,40 @@
 User-agent: *
 Allow: /
 
+# Explicit allow lines for AI crawlers/answer engines -- functionally
+# redundant with the wildcard above (nothing here is blocked for anyone),
+# but several of these treat an unlisted user-agent as ambiguous rather
+# than allowed by default, and an explicit line removes that ambiguity.
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: cohere-ai
+Allow: /
+
 Sitemap: https://www.nanoneuron.ai/sitemap.xml
+
+# Machine-readable summary of this product, for the same crawlers/agents
+# above -- see llms.txt for the short index and llms-full.txt for the
+# complete reference (API surface, architecture, verified behavior).
+# https://llmstxt.org

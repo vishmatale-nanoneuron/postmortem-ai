@@ -6,7 +6,7 @@ Canonical product: [https://www.nanoneuron.ai/](https://www.nanoneuron.ai/)
 [Published postmortems](https://www.nanoneuron.ai/postmortems)
 [Pricing](https://www.nanoneuron.ai/pricing)
 Contact: vish.matale@gmail.com
-Last factual review: 2026-09-04
+Last factual review: 2026-09-05
 
 ## What this is
 
@@ -53,13 +53,25 @@ labeled as non-evidence. The grounding check above only ever validates
 citations against the current incident's own numbered evidence, so a
 retrieved past incident can never become the source for a claim.
 
-## MCP
+## MCP -- and agent accountability
 
 The backend exposes an MCP server with tools for founders (platform
-summary, payment-claim review, a defense-in-depth read-only SQL tool) and
-clients (incidents, evidence, drafting, publishing, similar-incident
-search) -- the same business logic and authorization as the REST API. The
-frontend federates to it under the caller's own session.
+summary, payment-claim review, a defense-in-depth read-only SQL tool, and
+a cross-account activity-log query) and clients (incidents, evidence,
+drafting, publishing, similar-incident search) -- the same business logic
+and authorization as the REST API. The frontend federates to it under the
+caller's own session.
+
+Every tool call is recorded, including denials: an agent that isn't
+authorized for a given action (a client-scoped account calling a
+founder-only tool, an unpaid account trying to create an incident) is
+refused, and that refusal is written into the same durable, queryable
+activity log as a successful call -- not just to ops logging that ages
+out. Each account can see its own history; the founder can see every
+account's at once, filterable by account, by source (browser session vs.
+AI agent), and by time. An agent gets exactly the access a browser
+session would, no more, and every attempt it makes, allowed or not,
+leaves a real record.
 
 ## Webhook ingestion
 
@@ -106,8 +118,11 @@ configured.
 Creating an incident, recording evidence, AI extraction, drafting,
 publishing, and creating a second incident all require an active
 subscription. For clients in any country, an international SWIFT wire
-(USD/GBP/EUR) or UPI (India) works today -- submit the transaction
-reference and the founder reviews and approves it personally. Self-serve
+(USD/GBP/EUR) or UPI (India) works today: a signed-in client can request
+the real account details (UPI ID, wire account number) be emailed
+directly to their own registered address -- self-serve, no need to
+contact the founder first -- then submit the transaction reference once
+paid, and the founder reviews and approves it personally. Self-serve
 card payment via Stripe Checkout is built (and self-serve subscription
 management via the Stripe Customer Portal) but not yet switched on for
 real payments -- it appears automatically once it is, with no other

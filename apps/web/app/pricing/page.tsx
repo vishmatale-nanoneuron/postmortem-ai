@@ -18,6 +18,40 @@ type WireInfo = { currencies: WireCurrency[]; configured: boolean };
 
 const CURRENCY_SYMBOLS: Record<string, string> = { USD: "$", GBP: "£", EUR: "€" };
 
+// Sourced only from facts already stated elsewhere on this page and in
+// llms.txt -- nothing invented for the sake of having an FAQ. Rendered as
+// real, visible page content below (Google's FAQPage rich-result
+// eligibility requires the marked-up text to actually appear on the
+// page, not just exist in the schema) and mirrored verbatim into the
+// JSON-LD script tag in the component -- keep the two in sync if either
+// changes.
+const FAQ: { question: string; answer: string }[] = [
+  {
+    question: "Is there a free trial?",
+    answer:
+      "Not for new accounts -- an active subscription is required from your first incident. (A small number of legacy accounts that used a free incident before this policy took effect keep what they already had.)",
+  },
+  {
+    question: "How do I get the UPI ID or bank account details to pay?",
+    answer:
+      "Request them from your account settings once signed in -- they're emailed directly to your own registered address. No need to contact the founder first just to find out how to pay.",
+  },
+  {
+    question: "What happens after I submit a payment reference?",
+    answer:
+      "The founder reviews and approves it personally, usually within the day. Access activates the moment it's approved, not before.",
+  },
+  {
+    question: "What if I'm not happy after subscribing?",
+    answer:
+      "Email vish.matale@gmail.com within 14 days of your first charge and it's refunded -- the founder processes it personally, the same review as approving a payment in the first place.",
+  },
+  {
+    question: "Does this support teams or organizations?",
+    answer: "Not yet -- each account is a single user's own incidents, not a shared organization.",
+  },
+];
+
 // Two genuinely different outcomes were both collapsing into the same "—"
 // before this: the backend saying "this payment method isn't offered" and
 // this fetch simply failing (a transient network blip, a cold start, the
@@ -58,8 +92,25 @@ export default async function PricingPage() {
   const upiUnreachable = upi.status === "unreachable";
   const wireUnreachable = wire.status === "unreachable";
 
+  // Mirrors FAQ above exactly -- same reasoning as layout.tsx's own
+  // STRUCTURED_DATA: static, hardcoded JSON with no user input, safe
+  // despite dangerouslySetInnerHTML.
+  const faqStructuredData = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: FAQ.map((item) => ({
+      "@type": "Question",
+      name: item.question,
+      acceptedAnswer: { "@type": "Answer", text: item.answer },
+    })),
+  };
+
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqStructuredData) }}
+      />
       <SiteHeader />
       <main className="mx-auto max-w-2xl px-4 py-10">
       <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 text-center duration-700">
@@ -130,6 +181,20 @@ export default async function PricingPage() {
           within 14 days of your first charge and you get it back -- the founder reviews and processes it
           personally, same as approving a payment.
         </p>
+      </div>
+
+      <div className="mt-8">
+        <h2 className="mb-3 text-center text-xs font-medium tracking-widest text-muted uppercase">
+          Frequently asked
+        </h2>
+        <div className="space-y-3">
+          {FAQ.map((item) => (
+            <div key={item.question} className={card}>
+              <div className="text-sm font-medium text-ink">{item.question}</div>
+              <p className="mt-1.5 text-sm text-muted">{item.answer}</p>
+            </div>
+          ))}
+        </div>
       </div>
 
       <p className="mt-8 text-center">

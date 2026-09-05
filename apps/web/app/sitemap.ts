@@ -27,9 +27,9 @@ async function fetchPublicSlugs(): Promise<PublicPostmortem[]> {
 // than one that silently reads "today" on every request regardless of
 // whether anything changed.
 const LAST_MODIFIED = {
-  home: new Date("2026-09-04T13:29:18+00:00"),
-  docs: new Date("2026-09-04T13:18:27+00:00"),
-  pricing: new Date("2026-09-01T22:45:05+05:30"),
+  home: new Date("2026-09-05T18:08:04+00:00"), // navbar MCP link added
+  docs: new Date("2026-09-05T18:08:04+00:00"), // MCP section rewritten with agent-accountability behavior
+  pricing: new Date("2026-09-05T18:08:04+00:00"), // FAQ section + FAQPage structured data added
   groundingMechanism: new Date("2026-09-04T13:23:04+00:00"),
   githubOutageDemo: new Date("2026-09-04T13:23:04+00:00"),
   postmortems: new Date("2026-09-01T22:56:32+05:30"),

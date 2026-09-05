@@ -7,7 +7,7 @@ Canonical product: [https://www.nanoneuron.ai/](https://www.nanoneuron.ai/)
 [Published postmortems](https://www.nanoneuron.ai/postmortems)
 [Pricing](https://www.nanoneuron.ai/pricing)
 Contact: vish.matale@gmail.com
-Last factual review: 2026-09-04
+Last factual review: 2026-09-05
 
 This file is the complete reference; llms.txt above is the short index. Every
 claim here is checked against the running code and, where practical, against
@@ -38,7 +38,7 @@ engagement today, not built-in multi-client management.
   Claude is a real, configured fallback provider (not just described), used
   only when Gemini's own call fails or its circuit breaker is open — each
   provider has its own independent circuit breaker (closed/open/half-open).
-- 22 forward-only SQL migrations as of this review.
+- 28 forward-only SQL migrations as of this review.
 
 ## The core guarantee: grounded drafting
 
@@ -144,11 +144,33 @@ comparable to what it replaced instead of an unexplained rewrite.
 ## MCP
 
 The backend exposes a real MCP server (`/mcp` on the API; federated to
-`/api/mcp` on the frontend under the caller's own session) with tools for
-founders (platform summary, payment-claim review, a defense-in-depth
-read-only SQL tool) and clients (incidents, evidence, drafting, publishing,
-similar-incident search) — the same business logic and authorization as the
-REST endpoints below, not a parallel implementation.
+`/api/mcp` on the frontend under the caller's own session), 15 tools
+total: founder-only (`get_founder_summary`, `list_payment_claims`,
+`approve_payment_claim`, `reject_payment_claim`, `run_read_only_sql` — a
+defense-in-depth read-only query tool, `list_agent_activity` — the
+cross-account activity-log query below) and client-scoped
+(`list_incidents`, `get_dashboard_summary`, `create_incident`,
+`add_evidence`, `draft_postmortem`, `find_similar_incidents`,
+`publish_postmortem`, `get_integrations`, `update_integrations`) — the
+same business logic and authorization as the REST endpoints below, not a
+parallel implementation.
+
+## Agent accountability
+
+Every MCP tool call is recorded into `account_activity_log` (the same
+table REST-driven actions already wrote into, tagged `source='web'` vs.
+`source='mcp_agent'`), including denials: a `PermissionError` raised by
+one of the three subscription/founder gates above is caught and logged as
+a denial before propagating, so a blocked attempt is visible, not just a
+successful one. Reads and writes are split into an explicit command
+(`RecordActivityCommand`/`handle_record_activity`) and query
+(`ActivityLogFilter`/`handle_activity_log_query`, real keyset pagination
+on `(created_at, id)`, not `OFFSET`) in `app/cqrs/activity.py`, shared by
+every reader: `GET /v1/postmortems/activity-log` (caller's own account),
+`GET /v1/founder/activity-log` (every account, filterable by
+client_email/source/time window), and the `list_agent_activity` MCP tool
+above -- one query implementation behind all three, not three that could
+drift apart.
 
 ## REST API surface (all under `/v1`)
 
@@ -165,14 +187,20 @@ pre-fill -- suggestion only, creates nothing), `POST /incidents`,
 `GET /incidents/{id}/evidence`, `POST /incidents/{id}/evidence/extract`
 (AI-assisted extraction from pasted raw text), `POST /incidents/{id}/draft`,
 `POST /incidents/{id}/publish`, `PATCH /incidents/{id}/public`,
-`GET /public` (list published+public postmortems), `GET /public/{slug}`.
+`GET /public` (list published+public postmortems), `GET /public/{slug}`,
+`GET /export` (the caller's own full data as JSON), `GET /activity-log`
+(the caller's own account_activity_log rows, source-tagged web vs.
+mcp_agent -- see Agent accountability above).
 
 Billing (`/v1/billing`): `POST /checkout`, `POST /portal`, `GET /status`,
 `GET /card/pricing`, `POST /webhook` (Stripe, signature-verified),
-`GET /upi/pricing` (public), `GET /upi/info` (founder-only — real UPI ID is
-never given to a client account, by design; a client is told to contact the
-founder directly), `POST /upi/claim`, `GET /upi/claims`,
-`GET /wire/pricing` (public), `GET /wire/info` (founder-only, same reasoning),
+`GET /upi/pricing` (public), `GET /upi/info` (founder-only — the real UPI
+ID is never returned in an API response to a client account),
+`POST /upi/email-details` (self-serve: emails the real UPI ID to the
+caller's own registered address, no founder round-trip needed),
+`POST /upi/claim`, `GET /upi/claims`, `GET /wire/pricing` (public),
+`GET /wire/info` (founder-only, same reasoning as UPI),
+`POST /wire/email-details` (self-serve, same as UPI above),
 `POST /wire/claim`, `GET /wire/claims`, `PATCH /claims/{id}` (edit a
 still-pending claim's reference), `DELETE /claims/{id}` (withdraw a
 still-pending claim), `POST /bank-alert` (inbound webhook for a forwarded
@@ -189,7 +217,10 @@ the publish response on failure).
 
 Founder-only (`/v1/founder`): `GET /summary`, `GET /payment-claims`,
 `POST /payment-claims/{id}/approve`, `POST /payment-claims/{id}/reject`,
-`POST /payment-claims/{id}/annotate`, `GET /payment-claims/{id}/events`.
+`POST /payment-claims/{id}/annotate`, `GET /payment-claims/{id}/events`,
+`GET /activity-log` (every account's activity, not just the caller's own
+— filterable by `client_email`, `source`, `since_ms`/`until_ms`, keyset
+`cursor`-paginated; see Agent accountability above).
 
 ## Auth model
 
@@ -210,7 +241,13 @@ Creating an incident, evidence, AI extraction, drafting, publishing, and
 creating a second incident all require an active subscription. For
 clients in any country, two real paths work today: (1)
 manual UPI (India), founder-reviewed; (2) manual international SWIFT wire
-(USD/GBP/EUR), founder-reviewed. A third path — Stripe Checkout,
+(USD/GBP/EUR), founder-reviewed. Both are self-serve to get started: a
+signed-in client requests the real account details (UPI ID; wire account
+number, SWIFT code, correspondent bank) via `POST /upi/email-details` or
+`POST /wire/email-details`, which emails them to that client's own
+registered address -- no founder round-trip needed just to find out how
+to pay. Submitting the transaction reference afterward still requires the
+founder's explicit approval before access activates. A third path — Stripe Checkout,
 self-serve, instant activation on webhook receipt, cancel/manage via the
 Stripe Customer Portal — is fully built and code-complete but not yet
 switched on for real payments (the production Stripe key is currently
