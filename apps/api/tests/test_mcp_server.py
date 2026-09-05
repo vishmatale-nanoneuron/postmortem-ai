@@ -168,21 +168,20 @@ async def test_a_founder_can_call_get_founder_summary(context) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_brand_new_unpaid_client_can_create_its_free_incident_via_mcp(context) -> None:
-    """Real bug found by auditing every entry path for free-tier parity,
-    not assumed fixed: create_incident/add_evidence/draft_postmortem here
-    all used the flat require_mcp_active_subscription() (no free-slot
-    allowance) until this fix -- a brand-new signup calling this tool via
-    an MCP client (Claude Desktop, etc.) got an immediate 'subscription
-    required' error on their very first call, unable to reach the exact
-    free incident the REST API and the webhook path both correctly grant.
-    The CLIENT_EMAIL account in this fixture is a genuinely fresh signup
-    (registered above, never given a subscription, free_incident_id never
-    set) -- the real case this bug affected."""
+async def test_a_brand_new_unpaid_client_cannot_create_an_incident_via_mcp(context) -> None:
+    """The free-incident trial is retired for new grants (see
+    test_free_incident.py on the REST side, and auth.py's
+    has_free_incident_available docstring) -- a brand-new signup calling
+    this tool via an MCP client (Claude Desktop, etc.) is blocked from its
+    very first call, the same as POST /v1/postmortems/incidents. This test
+    used to assert the opposite (that a free incident was granted); it was
+    updated to match the policy change, not a regression caught here --
+    confirmed via the actual error message below, not just isError."""
     app, _founder_token, client_token = context
     async with mcp_session(app, token=client_token) as session:
-        result = await session.call_tool("create_incident", {"title": "Free incident via MCP", "severity": "sev2"})
-    assert result.isError is not True, result.content
+        result = await session.call_tool("create_incident", {"title": "Should be blocked", "severity": "sev2"})
+    assert result.isError is True
+    assert "subscription" in str(result.content).lower()
 
 
 @pytest.mark.asyncio
