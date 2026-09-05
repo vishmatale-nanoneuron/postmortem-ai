@@ -378,3 +378,161 @@ async def test_a_valid_checkout_completed_webhook_activates_the_subscription(
         "/v1/postmortems/incidents", json={"title": "Unlocked by a real webhook", "severity": "sev2"}
     )
     assert unblocked.status_code == 201, unblocked.text
+
+
+@pytest.mark.asyncio
+async def test_a_subscription_updated_webhook_applies_the_new_status(
+    context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other three HANDLED_EVENTS never had accept-path coverage
+    either -- same gap as checkout.session.completed, closed the same
+    way. customer.subscription.updated/.deleted are actually simpler:
+    the handler passes the event's own data object straight to
+    _apply_subscription without a client.subscriptions.retrieve_async
+    call (see billing.py's stripe_webhook) -- _client(settings) is still
+    called unconditionally first, so the same live-key gate still
+    applies and still needs faking, but nothing on the fake client is
+    ever invoked for this event type."""
+    client, database = context
+    await client.post("/v1/auth/register", json={"email": UNPAID_EMAIL, "password": "correct-horse-battery"})
+    await database.execute(
+        "UPDATE users SET stripe_customer_id='cus_test_webhook_updated', subscription_status='active', "
+        "current_period_end=9999999999 WHERE email=%s",
+        (UNPAID_EMAIL,),
+    )
+    monkeypatch.setattr("app.api.v1.billing._client", lambda _settings: object())
+
+    payload = json.dumps(
+        {
+            "type": "customer.subscription.updated",
+            "data": {
+                "object": {
+                    "id": "sub_test_webhook_updated",
+                    "customer": "cus_test_webhook_updated",
+                    "status": "past_due",
+                    "current_period_end": 1234567890,
+                }
+            },
+        }
+    ).encode()
+
+    response = await client.post(
+        "/v1/billing/webhook",
+        content=payload,
+        headers=_signed_webhook_headers(payload, "whsec_not-called-in-these-tests"),
+    )
+    assert response.status_code == 200, response.text
+
+    row = await database.fetch_one("SELECT subscription_status, current_period_end FROM users WHERE email=%s", (UNPAID_EMAIL,))
+    assert row is not None
+    assert row["subscription_status"] == "past_due"
+    assert row["current_period_end"] == 1234567890
+
+    # past_due isn't in ACTIVE_SUBSCRIPTION_STATUSES (auth.py) -- confirm
+    # the downgrade actually re-locks the paywall, not just that the
+    # column changed.
+    blocked = await client.post(
+        "/v1/postmortems/incidents", json={"title": "Should be re-blocked", "severity": "sev2"}
+    )
+    assert blocked.status_code == 402
+
+
+@pytest.mark.asyncio
+async def test_a_subscription_deleted_webhook_revokes_access(context, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, database = context
+    await client.post("/v1/auth/register", json={"email": UNPAID_EMAIL, "password": "correct-horse-battery"})
+    await database.execute(
+        "UPDATE users SET stripe_customer_id='cus_test_webhook_deleted', subscription_status='active', "
+        "current_period_end=9999999999 WHERE email=%s",
+        (UNPAID_EMAIL,),
+    )
+    monkeypatch.setattr("app.api.v1.billing._client", lambda _settings: object())
+
+    payload = json.dumps(
+        {
+            "type": "customer.subscription.deleted",
+            "data": {
+                "object": {
+                    "id": "sub_test_webhook_deleted",
+                    "customer": "cus_test_webhook_deleted",
+                    "status": "canceled",
+                    "current_period_end": 1234567890,
+                }
+            },
+        }
+    ).encode()
+
+    response = await client.post(
+        "/v1/billing/webhook",
+        content=payload,
+        headers=_signed_webhook_headers(payload, "whsec_not-called-in-these-tests"),
+    )
+    assert response.status_code == 200, response.text
+
+    row = await database.fetch_one("SELECT subscription_status FROM users WHERE email=%s", (UNPAID_EMAIL,))
+    assert row is not None
+    assert row["subscription_status"] == "canceled"
+
+    blocked = await client.post(
+        "/v1/postmortems/incidents", json={"title": "Should be blocked after cancellation", "severity": "sev2"}
+    )
+    assert blocked.status_code == 402
+
+
+@pytest.mark.asyncio
+async def test_an_invoice_payment_failed_webhook_downgrades_the_account(
+    context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """invoice.payment_failed does call client.subscriptions.retrieve_async
+    (same as checkout.session.completed) to get the subscription's real,
+    current status after the failed charge -- Stripe's own event payload
+    for this type doesn't carry the subscription's status directly."""
+    client, database = context
+    await client.post("/v1/auth/register", json={"email": UNPAID_EMAIL, "password": "correct-horse-battery"})
+    await database.execute(
+        "UPDATE users SET stripe_customer_id='cus_test_webhook_failed', subscription_status='active', "
+        "current_period_end=9999999999 WHERE email=%s",
+        (UNPAID_EMAIL,),
+    )
+
+    class FakeSubscription:
+        id = "sub_test_webhook_failed"
+        status = "past_due"
+        current_period_end = 1234567890
+
+    class FakeSubscriptions:
+        async def retrieve_async(self, _subscription_id):
+            return FakeSubscription()
+
+    class FakeClient:
+        subscriptions = FakeSubscriptions()
+
+    monkeypatch.setattr("app.api.v1.billing._client", lambda _settings: FakeClient())
+
+    payload = json.dumps(
+        {
+            "type": "invoice.payment_failed",
+            "data": {
+                "object": {
+                    "customer": "cus_test_webhook_failed",
+                    "subscription": "sub_test_webhook_failed",
+                }
+            },
+        }
+    ).encode()
+
+    response = await client.post(
+        "/v1/billing/webhook",
+        content=payload,
+        headers=_signed_webhook_headers(payload, "whsec_not-called-in-these-tests"),
+    )
+    assert response.status_code == 200, response.text
+
+    row = await database.fetch_one("SELECT subscription_status FROM users WHERE email=%s", (UNPAID_EMAIL,))
+    assert row is not None
+    assert row["subscription_status"] == "past_due"
+
+    blocked = await client.post(
+        "/v1/postmortems/incidents", json={"title": "Should be blocked after failed payment", "severity": "sev2"}
+    )
+    assert blocked.status_code == 402
