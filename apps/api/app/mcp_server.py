@@ -38,6 +38,7 @@ from .api.v1 import founder as founder_routes
 from .api.v1 import integrations as integrations_routes
 from .api.v1 import postmortems as postmortem_routes
 from .auth import User, _is_founder
+from .cqrs.activity import ActivityLogFilter, handle_activity_log_query
 from .database import Database
 from .security.tokens import verify_token
 from .settings import Settings
@@ -347,6 +348,45 @@ def build_mcp_server(get_database: Callable[[], Database], settings: Settings) -
         async with database.read_only_transaction() as tx:
             rows = await tx.fetch_all(wrapped)
         return [_redact_row(dict(row)) for row in rows]
+
+    @mcp.tool()
+    @_audited("list_agent_activity")
+    async def list_agent_activity(
+        client_email: str | None = None,
+        source: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> dict:
+        """The accountability audit trail across every account, not just
+        the caller's own -- who (or which agent) did what, when. Pass
+        source="mcp_agent" to see only actions other AI agents have taken,
+        or client_email to scope to one account. This is the same query
+        handler api/v1/founder.py's GET /activity-log REST route uses
+        (cqrs.activity.handle_activity_log_query) -- reused rather than
+        reimplemented, so a founder gets the identical answer whether they
+        ask via this tool or the dashboard. Returns up to `limit` entries
+        (max 200) plus a next_cursor to page further back if there are
+        more."""
+        database = get_database()
+        require_mcp_founder()
+        page = await handle_activity_log_query(
+            database,
+            ActivityLogFilter(client_email=client_email, source=source, limit=limit, cursor=cursor),
+        )
+        return {
+            "entries": [
+                {
+                    "client_email": entry.client_email,
+                    "action": entry.action,
+                    "incident_id": entry.incident_id,
+                    "detail": entry.detail,
+                    "source": entry.source,
+                    "created_at": entry.created_at,
+                }
+                for entry in page.entries
+            ],
+            "next_cursor": page.next_cursor,
+        }
 
     # ---- Client-scoped tools (any authenticated user, own account only) --
 

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from ...auth import User, current_founder
+from ...cqrs.activity import ActivityLogFilter, handle_activity_log_query
 from ...database import Database
 from ...dependencies import get_database
 from ...services.billing import activate_manual_subscription, record_claim_event
@@ -305,3 +306,64 @@ async def payment_claim_events(
         (claim_id,),
     )
     return [PaymentClaimEventOut(**row) for row in rows]
+
+
+class ActivityLogEntryOut(BaseModel):
+    client_email: str
+    action: str
+    incident_id: str | None
+    detail: str | None
+    # "web" or "mcp_agent" -- see mcp_server.py's _audited().
+    source: str
+    created_at: int
+
+
+class ActivityLogPageOut(BaseModel):
+    entries: list[ActivityLogEntryOut]
+    # Pass back as ?cursor=... to fetch the next page; null means this was
+    # the last one.
+    next_cursor: str | None
+
+
+@router.get("/activity-log", response_model=ActivityLogPageOut)
+async def founder_activity_log(
+    client_email: str | None = None,
+    source: str | None = None,
+    since_ms: int | None = None,
+    until_ms: int | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+    database: Database = Depends(get_database),
+    _founder: User = Depends(current_founder),
+) -> ActivityLogPageOut:
+    """The cross-account counterpart to /v1/postmortems/activity-log --
+    that endpoint only ever shows the caller's own history; this is the
+    actual accountability surface for an autonomous agent acting across
+    every account, not just one. Same query handler
+    (cqrs.activity.handle_activity_log_query) as the client-scoped route
+    and as mcp_server.py's list_agent_activity tool, called here with
+    client_email left unset rather than a second, separately-written SQL
+    query -- filters (source, a specific client_email, a time window) are
+    real WHERE clauses, not client-side filtering of an unbounded dump,
+    and pagination is keyset-based (see cqrs/activity.py) so a busy log
+    doesn't drift or duplicate rows across pages the way OFFSET would."""
+    page = await handle_activity_log_query(
+        database,
+        ActivityLogFilter(
+            client_email=client_email, source=source, since_ms=since_ms, until_ms=until_ms, limit=limit, cursor=cursor
+        ),
+    )
+    return ActivityLogPageOut(
+        entries=[
+            ActivityLogEntryOut(
+                client_email=entry.client_email,
+                action=entry.action,
+                incident_id=entry.incident_id,
+                detail=entry.detail,
+                source=entry.source,
+                created_at=entry.created_at,
+            )
+            for entry in page.entries
+        ],
+        next_cursor=page.next_cursor,
+    )

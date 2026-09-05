@@ -39,6 +39,13 @@ async def context(monkeypatch: pytest.MonkeyPatch):
     await database.execute("DELETE FROM incidents WHERE client_email LIKE %s", ("founder-test-%",))
     await database.execute("DELETE FROM users WHERE email LIKE %s", ("founder-test-%",))
     await database.execute("DELETE FROM users WHERE email=%s", (FOUNDER_EMAIL,))
+    # account_activity_log.client_email is a plain column, not a foreign
+    # key (deliberately -- see migration 0024's own comment: history must
+    # survive even an account being deleted) -- so the DELETEs above don't
+    # cascade-clean it. Needed for the activity-log tests' exact-count
+    # assertions below to stay reliable across repeated runs.
+    await database.execute("DELETE FROM account_activity_log WHERE client_email LIKE %s", ("founder-test-%",))
+    await database.execute("DELETE FROM account_activity_log WHERE client_email=%s", (FOUNDER_EMAIL,))
 
     application = create_app()
     application.state.database = database
@@ -243,3 +250,146 @@ async def test_conversion_funnel_excludes_the_founder_and_tracks_real_signups(co
     assert funnel["tried_free_incident"] - baseline["tried_free_incident"] == 1
     assert funnel["ever_paid"] - baseline["ever_paid"] == 2
     assert funnel["currently_paying"] - baseline["currently_paying"] == 1
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/founder/activity-log: the cross-account counterpart to
+# GET /v1/postmortems/activity-log (see cqrs/activity.py) -- same query
+# handler, called with client_email left unset instead of scoped to one
+# caller.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_non_founder_cannot_reach_the_platform_wide_activity_log(context) -> None:
+    client, _ = context
+    await client.post(
+        "/v1/auth/register", json={"email": "founder-test-regular@example.com", "password": "correct-horse-battery"}
+    )
+    response = await client.get("/v1/founder/activity-log")
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_the_platform_wide_activity_log_sees_another_accounts_own_history(context) -> None:
+    """The whole point of this endpoint: unlike GET
+    /v1/postmortems/activity-log (scoped to the caller's own client_email),
+    the founder can see an action a *different* account took."""
+    client, database = context
+    await client.post(
+        "/v1/auth/register", json={"email": "founder-test-other@example.com", "password": "correct-horse-battery"}
+    )
+    # The free-incident trial is retired for new signups (see
+    # test_free_incident.py) -- grant a real active subscription directly,
+    # same pattern as the conversion-funnel test above, so creating an
+    # incident below isn't blocked by the paywall this test isn't about.
+    await database.execute(
+        "UPDATE users SET subscription_status='active', current_period_end=%s WHERE email=%s",
+        (9999999999, "founder-test-other@example.com"),
+    )
+    created = await client.post(
+        "/v1/postmortems/incidents", json={"title": "Someone else's incident", "severity": "sev2"}
+    )
+    assert created.status_code == 201
+    await client.post("/v1/auth/logout")
+
+    await client.post("/v1/auth/register", json={"email": FOUNDER_EMAIL, "password": "correct-horse-battery"})
+    # A founder account with no incidents of its own would see this in
+    # their own GET /v1/postmortems/activity-log only if it were their own
+    # action -- it isn't, so that endpoint would show nothing for it.
+    own_scope = await client.get("/v1/postmortems/activity-log")
+    assert not any(e["action"] == "incident_created" for e in own_scope.json())
+
+    response = await client.get("/v1/founder/activity-log")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert any(
+        e["client_email"] == "founder-test-other@example.com" and e["action"] == "incident_created"
+        for e in body["entries"]
+    ), body
+
+
+@pytest.mark.asyncio
+async def test_the_platform_wide_activity_log_filters_by_client_email_and_source(context) -> None:
+    client, database = context
+    await client.post(
+        "/v1/auth/register", json={"email": "founder-test-filterme@example.com", "password": "correct-horse-battery"}
+    )
+    await database.execute(
+        "UPDATE users SET subscription_status='active', current_period_end=%s WHERE email=%s",
+        (9999999999, "founder-test-filterme@example.com"),
+    )
+    created = await client.post("/v1/postmortems/incidents", json={"title": "Filter target", "severity": "sev3"})
+    assert created.status_code == 201, created.text
+    await client.post("/v1/auth/logout")
+
+    await client.post("/v1/auth/register", json={"email": FOUNDER_EMAIL, "password": "correct-horse-battery"})
+
+    scoped = await client.get(
+        "/v1/founder/activity-log", params={"client_email": "founder-test-filterme@example.com"}
+    )
+    assert scoped.status_code == 200
+    scoped_entries = scoped.json()["entries"]
+    assert len(scoped_entries) > 0
+    assert all(e["client_email"] == "founder-test-filterme@example.com" for e in scoped_entries)
+
+    # source="web" -- this row really was created over REST, not MCP -- so
+    # the filter should still include it; a bogus source should exclude it.
+    web_only = await client.get(
+        "/v1/founder/activity-log",
+        params={"client_email": "founder-test-filterme@example.com", "source": "web"},
+    )
+    assert any(e["action"] == "incident_created" for e in web_only.json()["entries"])
+
+    agent_only = await client.get(
+        "/v1/founder/activity-log",
+        params={"client_email": "founder-test-filterme@example.com", "source": "mcp_agent"},
+    )
+    assert agent_only.json()["entries"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_platform_wide_activity_log_paginates_with_a_real_cursor(context) -> None:
+    """Real keyset pagination (cqrs/activity.py), not OFFSET: fetching two
+    pages of 1 with the second page's cursor from the first must not
+    repeat a row, and must stay consistent even though other tests in this
+    file/run are writing to the same shared table concurrently."""
+    client, database = context
+    await client.post(
+        "/v1/auth/register", json={"email": "founder-test-paginate@example.com", "password": "correct-horse-battery"}
+    )
+    await database.execute(
+        "UPDATE users SET subscription_status='active', current_period_end=%s WHERE email=%s",
+        (9999999999, "founder-test-paginate@example.com"),
+    )
+    first_created = await client.post("/v1/postmortems/incidents", json={"title": "Page one", "severity": "sev4"})
+    assert first_created.status_code == 201, first_created.text
+    second_created = await client.post("/v1/postmortems/incidents", json={"title": "Page two", "severity": "sev4"})
+    assert second_created.status_code == 201, second_created.text
+    await client.post("/v1/auth/logout")
+
+    await client.post("/v1/auth/register", json={"email": FOUNDER_EMAIL, "password": "correct-horse-battery"})
+
+    first_page = await client.get(
+        "/v1/founder/activity-log",
+        params={"client_email": "founder-test-paginate@example.com", "limit": 1},
+    )
+    assert first_page.status_code == 200
+    first_body = first_page.json()
+    assert len(first_body["entries"]) == 1
+    assert first_body["next_cursor"] is not None
+
+    second_page = await client.get(
+        "/v1/founder/activity-log",
+        params={
+            "client_email": "founder-test-paginate@example.com",
+            "limit": 1,
+            "cursor": first_body["next_cursor"],
+        },
+    )
+    assert second_page.status_code == 200
+    second_body = second_page.json()
+    assert len(second_body["entries"]) == 1
+    assert second_body["entries"][0]["created_at"] != first_body["entries"][0]["created_at"] or (
+        second_body["entries"][0]["action"] != first_body["entries"][0]["action"]
+    )

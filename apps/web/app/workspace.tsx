@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   api,
   billing,
+  founderActivity,
   founderBilling,
   integrations,
   type ActivityLogEntry,
@@ -12,6 +13,7 @@ import {
   type Evidence,
   type EvidenceQualitySummary,
   type ExtractedEvidence,
+  type FounderActivityLogEntry,
   type FounderSummary,
   type Incident,
   type Integrations,
@@ -300,6 +302,7 @@ function FounderDashboard() {
     ["Signups", "#founder-signups"],
     ["AI runs", "#founder-ai-runs"],
     ["Payment claims", "#founder-claims"],
+    ["Agent activity", "#founder-agent-activity"],
   ];
 
   return (
@@ -420,7 +423,123 @@ function FounderDashboard() {
       <div id="founder-claims" className="scroll-mt-16">
         <PaymentClaimsReview />
       </div>
+      <div id="founder-agent-activity" className="scroll-mt-16">
+        <AgentActivityPanel />
+      </div>
     </Card>
+  );
+}
+
+// The cross-account counterpart to the client-scoped ActivityLogPanel
+// further down this file -- that one only ever shows the caller's own
+// history; this is the actual accountability surface for an autonomous
+// agent acting across every account, not just one. Same source of truth
+// (account_activity_log via cqrs/activity.py's query handler), reached
+// here through GET /v1/founder/activity-log instead of
+// GET /v1/postmortems/activity-log.
+function AgentActivityPanel() {
+  const [entries, setEntries] = useState<FounderActivityLogEntry[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [clientEmail, setClientEmail] = useState("");
+  const [source, setSource] = useState<"" | "web" | "mcp_agent">("");
+  const [error, setError] = useState("");
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  function load(reset: boolean) {
+    founderActivity
+      .list({
+        clientEmail: clientEmail.trim() || undefined,
+        source: source || undefined,
+        cursor: reset ? undefined : (nextCursor ?? undefined),
+        limit: 20,
+      })
+      .then((page) => {
+        setEntries((prev) => (reset ? page.entries : [...prev, ...page.entries]));
+        setNextCursor(page.next_cursor);
+        setError("");
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : "Could not load agent activity."));
+  }
+
+  // Re-run whenever a filter changes, always as a fresh (non-appending)
+  // load -- changing a filter mid-pagination should start over, not
+  // append mismatched pages onto the existing list.
+  useEffect(() => {
+    load(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientEmail, source]);
+
+  async function loadMore() {
+    setLoadingMore(true);
+    try {
+      load(false);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  return (
+    <div>
+      <h3 className="mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">
+        Agent activity (every account)
+      </h3>
+      <p className="mb-2 text-xs text-muted">
+        Who -- or which AI agent -- did what, across every account, not just your own. The same audit
+        trail each client sees for their own history, filterable here by account and by whether it came
+        from the browser or from an MCP tool call.
+      </p>
+      <div className="mb-2 flex flex-wrap gap-2">
+        <input
+          className={cn(fieldInput, "mb-0 max-w-64")}
+          placeholder="Filter by account email"
+          value={clientEmail}
+          onChange={(e) => setClientEmail(e.target.value)}
+        />
+        <select
+          className={cn(fieldInput, "mb-0 w-auto")}
+          value={source}
+          onChange={(e) => setSource(e.target.value as "" | "web" | "mcp_agent")}
+        >
+          <option value="">All sources</option>
+          <option value="web">Web only</option>
+          <option value="mcp_agent">AI agent only</option>
+        </select>
+      </div>
+      {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
+      {entries.length === 0 && !error ? (
+        <p className="text-sm text-muted">No matching activity yet.</p>
+      ) : (
+        <ul className="space-y-1 text-sm">
+          {entries.map((entry, i) => (
+            <li key={i} className="flex flex-wrap justify-between gap-x-3 rounded-md bg-paper px-3 py-1.5 text-xs">
+              <span>
+                {entry.source === "mcp_agent" && (
+                  <span
+                    className="mr-1.5 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent"
+                    title="Taken by an AI agent via MCP, not a browser session"
+                  >
+                    AI agent
+                  </span>
+                )}
+                <span className="font-medium">{entry.client_email}</span> -- {formatActivityAction(entry.action)}
+                {entry.detail && <span className="text-muted"> -- {entry.detail}</span>}
+              </span>
+              <span className="text-muted">{new Date(entry.created_at).toLocaleString()}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {nextCursor && (
+        <button
+          type="button"
+          className="mt-2 text-xs text-ink underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={loadingMore}
+          onClick={() => void loadMore()}
+        >
+          {loadingMore ? "Loading…" : "Load more"}
+        </button>
+      )}
+    </div>
   );
 }
 

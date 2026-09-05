@@ -447,3 +447,44 @@ async def test_web_and_mcp_agent_actions_are_distinguishable_via_rest(context) -
         entries = response.json()
 
     assert any(e["action"] == "agent_list_incidents" and e["source"] == "mcp_agent" for e in entries), entries
+
+
+@pytest.mark.asyncio
+async def test_list_agent_activity_via_mcp_is_founder_only_and_cross_account(context) -> None:
+    """list_agent_activity is the actual payoff of splitting activity-log
+    reads out as a query handler (cqrs/activity.py): the same handler
+    behind api/v1/founder.py's GET /activity-log REST route, reachable
+    here too, and -- unlike GET /v1/postmortems/activity-log -- able to
+    see every account's rows, not just the caller's own."""
+    app, founder_token, client_token = context
+
+    # A non-founder can't reach it at all -- same gate as every other
+    # founder-only tool.
+    async with mcp_session(app, token=client_token) as session:
+        denied = await session.call_tool("list_agent_activity", {})
+    assert denied.isError is True
+    assert "founder" in str(denied.content).lower()
+
+    # Generate one real row on the client's own account, then have the
+    # founder query across all accounts for it -- proving this tool sees
+    # accounts other than the caller's own, which GET
+    # /v1/postmortems/activity-log structurally cannot.
+    async with mcp_session(app, token=client_token) as session:
+        await session.call_tool("list_incidents", {})
+
+    async with mcp_session(app, token=founder_token) as session:
+        everyone = await session.call_tool("list_agent_activity", {"source": "mcp_agent", "limit": 100})
+    assert everyone.isError is not True
+    everyone_body = json.loads(everyone.content[0].text)  # type: ignore[union-attr]
+    assert any(
+        e["client_email"] == CLIENT_EMAIL and e["action"] == "agent_list_incidents"
+        for e in everyone_body["entries"]
+    ), everyone_body
+
+    # Scoping by client_email narrows it back down to one account, same
+    # filter the REST route and the dashboard would apply.
+    async with mcp_session(app, token=founder_token) as session:
+        scoped = await session.call_tool("list_agent_activity", {"client_email": CLIENT_EMAIL})
+    scoped_body = json.loads(scoped.content[0].text)  # type: ignore[union-attr]
+    assert len(scoped_body["entries"]) > 0
+    assert all(e["client_email"] == CLIENT_EMAIL for e in scoped_body["entries"]), scoped_body

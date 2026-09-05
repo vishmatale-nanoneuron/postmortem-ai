@@ -27,6 +27,7 @@ from ...auth import (
     require_active_subscription_or_free_incident,
     require_active_subscription_or_free_slot,
 )
+from ...cqrs.activity import ActivityLogFilter, RecordActivityCommand, handle_activity_log_query, handle_record_activity
 from ...database import Database
 from ...dependencies import get_database
 from ...integrations.linear import create_linear_issue
@@ -122,13 +123,13 @@ async def log_activity(
     detail: str | None = None,
     source: str = "web",
 ) -> None:
-    """A real, queryable 'who did what, when' audit trail -- the same
-    append-only-ledger discipline this app already applies to payment
-    claims (payment_claim_events) and postmortem drafts
-    (postmortem_draft_history), extended to account-level actions. Best-
-    effort by design: a logging failure must never block the real action
-    it's recording -- see every call site below, all wrapped so an audit-
-    log write failure degrades to a log line, not a broken request.
+    """The command side of the activity-log CQRS split (see
+    cqrs/activity.py) -- kept as a thin, stably-named wrapper because every
+    existing call site (below, and mcp_server.py's _audited()) already
+    calls it by this name and signature; the actual write now lives in
+    handle_record_activity, shared with nothing else that writes this
+    table, so there is exactly one INSERT statement for it in the whole
+    codebase.
 
     source defaults to "web" (every real caller today is either a browser
     session or a webhook acting as one) -- mcp_server.py is the only
@@ -138,14 +139,12 @@ async def log_activity(
     the one true record of which channel an action actually came through
     rather than a second, separately-logged row that would double-count
     it and mislabel the original as "web" regardless of the real source."""
-    try:
-        await database.execute(
-            "INSERT INTO account_activity_log (client_email, action, incident_id, detail, source, created_at)"
-            " VALUES (%s, %s, %s, %s, %s, %s)",
-            (client_email, action, incident_id, detail, source, int(time.time() * 1000)),
-        )
-    except Exception:
-        logger.warning("activity_log_write_failed", extra={"action": action, "incident_id": incident_id}, exc_info=True)
+    await handle_record_activity(
+        database,
+        RecordActivityCommand(
+            client_email=client_email, action=action, incident_id=incident_id, detail=detail, source=source
+        ),
+    )
 
 
 async def load_evidence(database: Database, incident_id: str) -> list[EvidenceEntry]:
@@ -350,13 +349,20 @@ async def get_activity_log(
     when, not a promise about one. Genuinely enterprise-relevant (a common
     real requirement before a larger team adopts any tool at all), and
     just as useful for a single-person account checking their own history.
-    Scoped by client_email exactly like every other read in this file."""
-    rows = await database.fetch_all(
-        "SELECT action, incident_id, detail, source, created_at FROM account_activity_log"
-        " WHERE client_email=%s ORDER BY created_at DESC LIMIT %s",
-        (user.email, MAX_ACTIVITY_LOG_ROWS),
+    Scoped by client_email exactly like every other read in this file --
+    the query side of the CQRS split in cqrs/activity.py, with
+    client_email set (unlike api/v1/founder.py's cross-account version of
+    this same query)."""
+    page = await handle_activity_log_query(
+        database, ActivityLogFilter(client_email=user.email, limit=MAX_ACTIVITY_LOG_ROWS)
     )
-    return [ActivityLogEntryOut(**row) for row in rows]
+    return [
+        ActivityLogEntryOut(
+            action=entry.action, incident_id=entry.incident_id, detail=entry.detail, source=entry.source,
+            created_at=entry.created_at,
+        )
+        for entry in page.entries
+    ]
 
 
 @router.get("/export")

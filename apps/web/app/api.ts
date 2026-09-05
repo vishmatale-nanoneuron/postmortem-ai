@@ -241,6 +241,47 @@ export const founderBilling = {
   claimEvents: (claimId: string) => request<PaymentClaimEvent[]>(`/v1/founder/payment-claims/${claimId}/events`),
 };
 
+export type FounderActivityLogEntry = {
+  client_email: string;
+  action: string;
+  incident_id: string | null;
+  detail: string | null;
+  // "web" or "mcp_agent" -- see mcp_server.py's _audited().
+  source: string;
+  created_at: number;
+};
+
+export type FounderActivityLogPage = {
+  entries: FounderActivityLogEntry[];
+  // Pass back as the `cursor` filter to fetch the next page; null means
+  // this was the last one. See cqrs/activity.py's keyset pagination.
+  next_cursor: string | null;
+};
+
+export const founderActivity = {
+  // The cross-account counterpart to api.activityLog() -- that one is
+  // always scoped to the caller's own account; this one can see every
+  // account, the actual point of a founder-only accountability view.
+  list: (filter?: {
+    clientEmail?: string;
+    source?: string;
+    sinceMs?: number;
+    untilMs?: number;
+    limit?: number;
+    cursor?: string;
+  }) => {
+    const query = new URLSearchParams();
+    if (filter?.clientEmail) query.set("client_email", filter.clientEmail);
+    if (filter?.source) query.set("source", filter.source);
+    if (filter?.sinceMs != null) query.set("since_ms", String(filter.sinceMs));
+    if (filter?.untilMs != null) query.set("until_ms", String(filter.untilMs));
+    if (filter?.limit != null) query.set("limit", String(filter.limit));
+    if (filter?.cursor) query.set("cursor", filter.cursor);
+    const qs = query.toString();
+    return request<FounderActivityLogPage>(`/v1/founder/activity-log${qs ? `?${qs}` : ""}`);
+  },
+};
+
 export type Integrations = { slack_connected: boolean; linear_connected: boolean; linear_team_id: string | null };
 
 export const integrations = {
