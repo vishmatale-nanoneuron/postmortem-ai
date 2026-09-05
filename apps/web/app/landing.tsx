@@ -339,6 +339,14 @@ export function SiteHeader() {
           <Link className="hover:text-ink hover:underline underline-offset-2" href="/docs">
             Docs
           </Link>
+          {/* Links into /docs's own MCP section rather than a separate
+              marketing page -- the accountability/audit-trail behavior it
+              describes (every agent tool call recorded, denials included)
+              is real and already shipped, but doesn't carry enough of its
+              own distinct content yet to justify a standalone route. */}
+          <Link className="hover:text-ink hover:underline underline-offset-2" href="/docs#mcp">
+            MCP
+          </Link>
           <Link className="hover:text-ink hover:underline underline-offset-2" href="/pricing">
             Pricing
           </Link>

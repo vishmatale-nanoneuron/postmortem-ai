@@ -20,11 +20,19 @@ const code = "rounded bg-paper px-1.5 py-0.5 font-mono text-xs";
 // .tilt-card in globals.css) and a staggered entrance -- section() below
 // keeps that boilerplate (wrapper + delay + tilt classes) in one place
 // instead of repeating it eight times by hand.
-function section(index: number, children: React.ReactNode) {
+function section(index: number, children: React.ReactNode, id?: string) {
   return (
     <div
+      id={id}
       style={{ animationDelay: `${index * 70}ms` }}
-      className="tilt-card-wrap mb-4 animate-in fade-in slide-in-from-bottom-2 fill-mode-backwards duration-700"
+      // scroll-mt-16 only matters for a section with an id (something links
+      // to it directly, e.g. the navbar's /docs#mcp) -- without it, this
+      // page's own sticky SiteHeader would cover the top of the section on
+      // arrival via anchor link.
+      className={cn(
+        "tilt-card-wrap mb-4 animate-in fade-in slide-in-from-bottom-2 fill-mode-backwards duration-700",
+        id && "scroll-mt-16",
+      )}
     >
       <section tabIndex={0} className={cn(card, "tilt-card mb-0")}>
         {children}
@@ -123,7 +131,16 @@ export default function DocsPage() {
             authorization rules as the REST API, not a second implementation. The frontend federates to it at{" "}
             <span className={code}>/api/mcp</span>, under the caller&apos;s own session.
           </p>
+          <p className={p}>
+            Every tool call is recorded, including denials: an agent that isn&apos;t authorized for a given action
+            (a client-scoped account calling a founder-only tool, an unpaid account trying to create an incident)
+            gets refused, and that refusal is written into the same durable activity log as a successful call --
+            not just logged to ops output that ages out, queryable via each account&apos;s own activity log, and,
+            for the founder, across every account at once. An agent gets exactly the access a browser session
+            would, no more, and every attempt it makes -- allowed or not -- leaves a real record.
+          </p>
         </>,
+        "mcp",
       )}
 
       {section(
