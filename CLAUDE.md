@@ -157,6 +157,12 @@ bun run --cwd apps/web build  # NEXT_PUBLIC_API_BASE is baked in at build time, 
 # Deploy (no GitHub auto-deploy configured -- see Deployment above)
 npx vercel deploy --prod --yes --cwd apps/api   # backend
 npx vercel deploy --prod --yes --cwd apps/web   # frontend, only after backend if NEXT_PUBLIC_API_BASE changed
+
+# SEO: push real URLs to Bing/Yandex immediately (no account needed --
+# Google doesn't participate in IndexNow; Search Console is still the
+# real fix for Google specifically). Run after a real content change
+# (new blog post, a newly published postmortem), not on every deploy.
+node scripts/submit-indexnow.mjs
 ```
 
 ## Authentication
