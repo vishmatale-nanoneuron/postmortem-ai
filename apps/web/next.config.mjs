@@ -12,9 +12,19 @@ const API_ORIGIN = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 // itself; a nonce-based CSP would remove that but is a larger, separate
 // change. connect-src needs the API's own origin since the frontend calls
 // FastAPI directly, cross-origin (see apps/web/app/api.ts).
+// Dev only: Next.js's React Refresh runtime (hot reload) evaluates strings
+// as JavaScript, which this CSP otherwise blocks outright -- and the
+// failure is not graceful. It throws an uncaught EvalError in the main
+// bundle, which means *no client component hydrates at all* in local dev:
+// every form, the whole workspace, any useEffect. Found by loading the
+// real dev server in a browser and reading the console, not by reasoning
+// about the config. Production keeps the tight policy unchanged -- Next
+// doesn't use eval in a production build, so this costs nothing there.
+const isDev = process.env.NODE_ENV === "development";
+
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   `connect-src 'self' ${API_ORIGIN}`,

@@ -20,6 +20,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { LogoMark } from "./logo-mark";
 import { GeminiLogo, LinearLogo, StripeLogo } from "./brand-icons";
+import { HeroParticles } from "./hero-particles";
 import { ScrollReveal } from "./scroll-reveal";
 
 export function Hero() {
@@ -45,6 +46,13 @@ export function Hero() {
         aria-hidden
         className="hero-blob-b pointer-events-none absolute top-[2rem] right-[8%] -z-10 size-64 rounded-full bg-[radial-gradient(circle,color-mix(in_oklab,var(--color-accent)_14%,transparent),transparent_70%)] blur-2xl"
       />
+      {/* Canvas particle field, layered above the static wash and drifting
+          blobs but still behind the content (-z-10 on all three, and this
+          comes last so it composites on top of them). Sized to the hero
+          box only -- it must never extend past this overflow-hidden
+          wrapper. See hero-particles.tsx for why it pauses off-screen,
+          honors prefers-reduced-motion in JS, and caps its own cost. */}
+      <HeroParticles className="pointer-events-none absolute inset-0 -z-10 h-[32rem] w-full" />
       <div className="mx-auto max-w-3xl px-4 pt-20 pb-12 text-center sm:pt-28">
         <LogoMark size={40} className="mx-auto mb-5 animate-in fade-in zoom-in-95 duration-700" />
         <Badge
