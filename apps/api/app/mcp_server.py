@@ -417,7 +417,14 @@ def build_mcp_server(get_database: Callable[[], Database], settings: Settings) -
         database = get_database()
         user = require_mcp_active_subscription_or_free_slot()
         payload = postmortem_routes.IncidentCreate(title=title, severity=severity, impact=impact)
-        return await postmortem_routes.create_incident(payload, database=database, user=user, source="mcp_agent")
+        # _create_incident, not create_incident -- the latter is the
+        # REST route itself, which no longer accepts source at all (see
+        # its own docstring: that was spoofable via a REST client
+        # deliberately). This is a plain Python call, not an HTTP
+        # request, so passing source="mcp_agent" here is trustworthy --
+        # it's set by mcp_server.py's own code, never by anything a
+        # caller sends.
+        return await postmortem_routes._create_incident(payload, database, user, source="mcp_agent")
 
     @mcp.tool()
     @_audited("add_evidence")
@@ -476,9 +483,9 @@ def build_mcp_server(get_database: Callable[[], Database], settings: Settings) -
         get_integrations/update_integrations)."""
         database = get_database()
         user = require_mcp_active_subscription()
-        return await postmortem_routes.publish_postmortem(
-            incident_id, database=database, user=user, settings=settings, source="mcp_agent"
-        )
+        # _publish_postmortem, not publish_postmortem -- see
+        # create_incident's call above for why.
+        return await postmortem_routes._publish_postmortem(incident_id, database, user, settings, source="mcp_agent")
 
     @mcp.tool()
     @_audited("get_integrations")

@@ -262,15 +262,28 @@ async def create_incident(
     payload: IncidentCreate,
     database: Database = Depends(get_database),
     user: User = Depends(require_active_subscription_or_free_slot),
+) -> dict[str, object]:
+    """Thin REST wrapper -- source is deliberately NOT a parameter here.
+    An earlier version had `source: str = "web"` directly on this route: a
+    plain-typed param with no Body(...) wrapper is a query parameter to
+    FastAPI, which meant any authenticated REST caller could send
+    `?source=mcp_agent` and spoof the agent-accountability audit trail
+    (see mcp_server.py's _audited() docstring for what that trail is for).
+    Restricting the *values* source could take wouldn't have closed this
+    -- an attacker only needs one of the two legitimate values to lie
+    convincingly. Removing it from the HTTP-facing signature entirely
+    does: there is no way for any request to influence it. See
+    _create_incident below, which mcp_server.py calls directly (a plain
+    Python call, never over HTTP) with source="mcp_agent"."""
+    return await _create_incident(payload, database, user, source="web")
+
+
+async def _create_incident(
+    payload: IncidentCreate,
+    database: Database,
+    user: User,
     source: str = "web",
 ) -> dict[str, object]:
-    # A plain-typed param with a default on a POST route (no Body(...)
-    # wrapper) is a query param to FastAPI, not part of the JSON body --
-    # the real frontend never sends ?source=, so every REST call still
-    # defaults to "web" unchanged. mcp_server.py calls this function
-    # directly (never through an HTTP request), so it just passes
-    # source="mcp_agent" as a plain keyword argument -- see log_activity's
-    # own docstring for why this exists instead of a second log call.
     if not await try_record_action(database, user.id, "create_incident", MAX_INCIDENTS_PER_HOUR, 60 * 60 * 1000):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
 
@@ -1050,11 +1063,21 @@ async def publish_postmortem(
     database: Database = Depends(get_database),
     user: User = Depends(require_active_subscription),
     settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    """Thin REST wrapper -- see create_incident's own docstring above for
+    why source is deliberately not a parameter on this route (it was, and
+    was spoofable via `?source=mcp_agent` from any REST caller, before
+    this fix)."""
+    return await _publish_postmortem(incident_id, database, user, settings, source="web")
+
+
+async def _publish_postmortem(
+    incident_id: str,
+    database: Database,
+    user: User,
+    settings: Settings,
     source: str = "web",
 ) -> dict[str, object]:
-    # Same query-param-that-nobody-sends trick as create_incident above --
-    # real REST callers always get "web", mcp_server.py passes
-    # source="mcp_agent" as a direct keyword argument.
     incident = await require_incident(database, incident_id, user.email)
     now = int(time.time() * 1000)
     updated = await database.execute(

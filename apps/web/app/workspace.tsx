@@ -437,42 +437,108 @@ function FounderDashboard() {
 // (account_activity_log via cqrs/activity.py's query handler), reached
 // here through GET /v1/founder/activity-log instead of
 // GET /v1/postmortems/activity-log.
+// Shared between AgentActivityPanel (founder, cross-account) and
+// ActivityLogPanel (a client's own history, further down this file) --
+// previously each hand-rolled its own near-identical badge and list-item
+// markup, which had already started drifting (different wrapper classes,
+// different badge title wording) with no test or lint catching it. One
+// shared shape now; a future styling/accessibility fix only needs to
+// happen once.
+function AgentSourceBadge() {
+  return (
+    <span
+      className="mr-1.5 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent"
+      title="Taken by an AI agent via MCP, not a browser session"
+    >
+      AI agent
+    </span>
+  );
+}
+
+function ActivityLogRow({
+  action,
+  detail,
+  source,
+  createdAt,
+  clientEmail,
+}: {
+  action: string;
+  detail: string | null;
+  source: string;
+  createdAt: number;
+  // Only passed by AgentActivityPanel -- ActivityLogPanel's rows are
+  // always the viewer's own account, so naming it again would be noise.
+  clientEmail?: string;
+}) {
+  return (
+    <li className="flex flex-wrap justify-between gap-x-3 rounded-md bg-paper px-3 py-1.5 text-xs">
+      <span>
+        {source === "mcp_agent" && <AgentSourceBadge />}
+        {clientEmail && <span className="font-medium">{clientEmail} -- </span>}
+        {formatActivityAction(action)}
+        {detail && <span className="text-muted"> -- {detail}</span>}
+      </span>
+      <span className="text-muted">{new Date(createdAt).toLocaleString()}</span>
+    </li>
+  );
+}
+
 function AgentActivityPanel() {
   const [entries, setEntries] = useState<FounderActivityLogEntry[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [clientEmail, setClientEmail] = useState("");
+  const [debouncedClientEmail, setDebouncedClientEmail] = useState("");
   const [source, setSource] = useState<"" | "web" | "mcp_agent">("");
   const [error, setError] = useState("");
   const [loadingMore, setLoadingMore] = useState(false);
+  // Guards against out-of-order responses: only the most recently *fired*
+  // request's result is ever applied to state. Debouncing below cuts down
+  // how often a request fires per keystroke, but doesn't by itself
+  // guarantee responses land in the order they were sent -- this ref does.
+  const requestIdRef = useRef(0);
 
-  function load(reset: boolean) {
-    founderActivity
+  // Without this, every keystroke into the free-text email filter fired
+  // its own request -- both wasteful and, combined with the ordering risk
+  // above, the actual mechanism that could show results for a filter the
+  // founder no longer has typed.
+  useEffect(() => {
+    const handle = setTimeout(() => setDebouncedClientEmail(clientEmail.trim()), 300);
+    return () => clearTimeout(handle);
+  }, [clientEmail]);
+
+  function load(reset: boolean): Promise<void> {
+    const requestId = ++requestIdRef.current;
+    return founderActivity
       .list({
-        clientEmail: clientEmail.trim() || undefined,
+        clientEmail: debouncedClientEmail || undefined,
         source: source || undefined,
         cursor: reset ? undefined : (nextCursor ?? undefined),
         limit: 20,
       })
       .then((page) => {
+        if (requestId !== requestIdRef.current) return; // superseded by a newer request
         setEntries((prev) => (reset ? page.entries : [...prev, ...page.entries]));
         setNextCursor(page.next_cursor);
         setError("");
       })
-      .catch((err) => setError(err instanceof Error ? err.message : "Could not load agent activity."));
+      .catch((err) => {
+        if (requestId !== requestIdRef.current) return;
+        setError(err instanceof Error ? err.message : "Could not load agent activity.");
+      });
   }
 
   // Re-run whenever a filter changes, always as a fresh (non-appending)
   // load -- changing a filter mid-pagination should start over, not
   // append mismatched pages onto the existing list.
   useEffect(() => {
-    load(true);
+    void load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientEmail, source]);
+  }, [debouncedClientEmail, source]);
 
   async function loadMore() {
     setLoadingMore(true);
     try {
-      load(false);
+      await load(false);
     } finally {
       setLoadingMore(false);
     }
@@ -511,21 +577,14 @@ function AgentActivityPanel() {
       ) : (
         <ul className="space-y-1 text-sm">
           {entries.map((entry, i) => (
-            <li key={i} className="flex flex-wrap justify-between gap-x-3 rounded-md bg-paper px-3 py-1.5 text-xs">
-              <span>
-                {entry.source === "mcp_agent" && (
-                  <span
-                    className="mr-1.5 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent"
-                    title="Taken by an AI agent via MCP, not a browser session"
-                  >
-                    AI agent
-                  </span>
-                )}
-                <span className="font-medium">{entry.client_email}</span> -- {formatActivityAction(entry.action)}
-                {entry.detail && <span className="text-muted"> -- {entry.detail}</span>}
-              </span>
-              <span className="text-muted">{new Date(entry.created_at).toLocaleString()}</span>
-            </li>
+            <ActivityLogRow
+              key={i}
+              action={entry.action}
+              detail={entry.detail}
+              source={entry.source}
+              createdAt={entry.created_at}
+              clientEmail={entry.client_email}
+            />
           ))}
         </ul>
       )}
@@ -1717,21 +1776,13 @@ function ActivityLogPanel() {
       {expanded && (
         <ul className="mt-2 space-y-1 text-sm">
           {entries.map((entry, i) => (
-            <li key={i} className="flex justify-between rounded-md bg-paper px-3 py-1.5 text-xs">
-              <span>
-                {entry.source === "mcp_agent" && (
-                  <span
-                    className="mr-1.5 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent"
-                    title="Taken by an AI agent via MCP, not you directly in the browser"
-                  >
-                    AI agent
-                  </span>
-                )}
-                {formatActivityAction(entry.action)}
-                {entry.detail && <span className="text-muted"> -- {entry.detail}</span>}
-              </span>
-              <span className="text-muted">{new Date(entry.created_at).toLocaleString()}</span>
-            </li>
+            <ActivityLogRow
+              key={i}
+              action={entry.action}
+              detail={entry.detail}
+              source={entry.source}
+              createdAt={entry.created_at}
+            />
           ))}
         </ul>
       )}

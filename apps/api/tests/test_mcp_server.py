@@ -322,6 +322,12 @@ async def test_run_read_only_sql_redacts_password_hash(context) -> None:
     assert result.isError is not True
     text = str(result.content)
     assert "[redacted]" in text
+    # The actual guarantee, not just that the redaction marker is present
+    # somewhere: the real hash must be genuinely absent, not merely
+    # accompanied by "[redacted]" alongside it (e.g. a bug that
+    # concatenates the marker instead of replacing the value would still
+    # pass the assertion above).
+    assert "scrypt$" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -488,3 +494,50 @@ async def test_list_agent_activity_via_mcp_is_founder_only_and_cross_account(con
     scoped_body = json.loads(scoped.content[0].text)  # type: ignore[union-attr]
     assert len(scoped_body["entries"]) > 0
     assert all(e["client_email"] == CLIENT_EMAIL for e in scoped_body["entries"]), scoped_body
+
+
+@pytest.mark.asyncio
+async def test_a_real_browser_client_cannot_spoof_source_via_query_string(context) -> None:
+    """Regression: create_incident and publish_postmortem's REST routes
+    used to accept `source` as a plain, un-Body-wrapped parameter, which
+    FastAPI treats as an ordinary query parameter -- any authenticated
+    REST caller could send `?source=mcp_agent` and have a genuine browser
+    action mislabeled as an AI agent's, defeating the entire point of this
+    feature (found by a real code-review pass, not caught by any existing
+    test). The fix removes `source` from both routes' HTTP-facing
+    signatures entirely -- this proves a query string can no longer
+    influence it, not just that a particular value is rejected."""
+    app, _founder_token, client_token = context
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+        http.cookies.set("session_token", client_token)
+        created = await http.post(
+            "/v1/postmortems/incidents?source=mcp_agent",
+            json={"title": "Spoof attempt", "severity": "sev2"},
+        )
+        # CLIENT_EMAIL has no subscription (free tier retired) -- this is
+        # expected to 402 regardless of the spoof attempt; the actual
+        # assertion is about what gets logged when it's rejected. Also
+        # exercise the founder account, which IS exempt from the paywall,
+        # to prove a genuinely successful REST call still can't be
+        # mislabeled either.
+        assert created.status_code == 402
+
+    rows = await _activity_log_rows(CLIENT_EMAIL)
+    assert not any(r["source"] == "mcp_agent" for r in rows), rows
+
+
+@pytest.mark.asyncio
+async def test_a_real_browser_clients_successful_incident_is_never_labeled_as_an_agent(context) -> None:
+    app, founder_token, _client_token = context
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+        http.cookies.set("session_token", founder_token)
+        created = await http.post(
+            "/v1/postmortems/incidents?source=mcp_agent",
+            json={"title": "Spoof attempt, founder account", "severity": "sev2"},
+        )
+        assert created.status_code == 201, created.text
+
+    rows = await _activity_log_rows(FOUNDER_EMAIL)
+    incident_created_rows = [r for r in rows if r["action"] == "incident_created"]
+    assert len(incident_created_rows) == 1, rows
+    assert incident_created_rows[0]["source"] == "web", rows
