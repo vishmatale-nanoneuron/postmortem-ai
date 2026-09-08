@@ -188,6 +188,22 @@ def send_wire_payment_details_email(
                 f"<p>Correspondent bank: {correspondent_bank}<br>Correspondent SWIFT: "
                 f"<code>{correspondent_swift}</code><br>Intermediary/nostro account: "
                 f"<code>{nostro_account}</code><br>Routing reference (ABA/IBAN): <code>{routing_reference}</code></p>"
+                # The single most important instruction in this email, and it
+                # was missing entirely. Correspondent banks deduct their fees
+                # from the transfer itself under SHA/BEN charge codes, so a
+                # customer who sends the exact price has *less* than the price
+                # arrive. bank_alerts.py matches on an exact amount
+                # (amount != claim.amount_inr -> no auto-verification), which
+                # means a short-landing wire silently fails to verify and has
+                # to be reconciled by hand, every time. "OUR" makes the sender
+                # bear those fees so the full amount lands and matching works.
+                f'<p style="background:#fff8e1;border-left:3px solid #b8860b;padding:10px 14px">'
+                f"<strong>Important:</strong> please send with charge code <code>OUR</code> "
+                f"(sender pays all fees). Under <code>SHA</code> or <code>BEN</code>, intermediary "
+                f"banks deduct their fees from the transfer, so less than {currency} {amount} arrives "
+                "-- which delays activation while it's reconciled by hand.</p>"
+                f"<p>Please also put your account email in the payment reference/message field, so the "
+                "transfer can be matched to your account.</p>"
                 "<p>Once you've sent it, go back to the Wire tab in your dashboard and submit the transaction "
                 "reference from your MT103 -- your account is activated once that's reviewed.</p>"
             ),
