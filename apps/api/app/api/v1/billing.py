@@ -14,6 +14,8 @@ import resend.exceptions
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from ...auth import User, current_founder, current_user
@@ -33,6 +35,11 @@ from ...settings import Settings, get_settings
 logger = logging.getLogger("postmortem_ai")
 
 router = APIRouter(prefix="/v1/billing", tags=["billing"])
+
+# Deliberately a Literal, not a plain str: FastAPI rejects anything else
+# at the edge with a 422, which together with migration 0029's CHECK
+# constraint means an invalid period can neither be sent nor stored.
+BillingPeriod = Literal["monthly", "annual"]
 
 RATE_LIMITED_DETAIL = "Too many requests. Try again later."
 
@@ -283,6 +290,9 @@ class UpiInfoOut(BaseModel):
 
 class UpiClaimIn(BaseModel):
     reference: str = Field(min_length=4, max_length=200)
+    # Defaults to monthly so an older client that doesn't send the field
+    # keeps working unchanged, and can only ever get the smaller grant.
+    billing_period: BillingPeriod = "monthly"
 
 
 class ClaimOut(BaseModel):
@@ -293,10 +303,32 @@ class ClaimOut(BaseModel):
     reference: str
     status: str
     created_at: int
+    # "monthly" or "annual" -- what the client actually paid for, and what
+    # approve_payment_claim will grant. Defaulted rather than required so a
+    # row read back from before migration 0029 still deserialises.
+    billing_period: str = "monthly"
+
+
+def annual_price(monthly: int, settings: Settings) -> int:
+    """Annual price derived from the monthly one, so the two can never drift.
+    settings.annual_months_charged defaults to 10 -- the conventional "two
+    months free" discount."""
+    return monthly * settings.annual_months_charged
+
+
+def price_for(monthly: int, period: str, settings: Settings) -> int:
+    return annual_price(monthly, settings) if period == "annual" else monthly
 
 
 async def _insert_claim(
-    database: Database, settings: Settings, user: User, method: str, currency: str, amount: int, reference: str
+    database: Database,
+    settings: Settings,
+    user: User,
+    method: str,
+    currency: str,
+    amount: int,
+    reference: str,
+    billing_period: str = "monthly",
 ) -> ClaimOut:
     # A real UPI/wire transaction reference is unique per transaction --
     # amount and currency are already server-derived (never client input,
@@ -317,10 +349,12 @@ async def _insert_claim(
 
     now = int(time.time() * 1000)
     row = await database.fetch_one(
-        """INSERT INTO payment_claims (user_id, amount_inr, currency, method, reference, status, created_at)
-           VALUES (%s, %s, %s, %s, %s, 'pending', %s)
-           RETURNING id::text, method, currency, amount_inr AS amount, reference, status, created_at""",
-        (user.id, amount, currency, method, reference, now),
+        """INSERT INTO payment_claims
+             (user_id, amount_inr, currency, method, reference, status, created_at, billing_period)
+           VALUES (%s, %s, %s, %s, %s, 'pending', %s, %s)
+           RETURNING id::text, method, currency, amount_inr AS amount, reference, status, created_at,
+                     billing_period""",
+        (user.id, amount, currency, method, reference, now, billing_period),
     )
     assert row is not None
     await record_claim_event(database, row["id"], "created", user.email, f"{currency} {amount} via {method}")
@@ -423,6 +457,9 @@ async def cancel_my_claim(
 
 class UpiPricingOut(BaseModel):
     amount_inr: int
+    # Derived from the monthly price (see annual_price) rather than stored,
+    # so the two can't drift apart.
+    amount_inr_annual: int = 0
     configured: bool
 
 
@@ -431,7 +468,11 @@ async def upi_pricing(settings: Settings = Depends(get_settings)) -> UpiPricingO
     """Public, unauthenticated -- price only, no real UPI ID. Backs the
     public /pricing page, which never needs the actual account to render a
     price."""
-    return UpiPricingOut(amount_inr=settings.subscription_price_inr, configured=bool(settings.founder_upi_id))
+    return UpiPricingOut(
+        amount_inr=settings.subscription_price_inr,
+        amount_inr_annual=annual_price(settings.subscription_price_inr, settings),
+        configured=bool(settings.founder_upi_id),
+    )
 
 
 @router.get("/upi/info", response_model=UpiInfoOut)
@@ -466,8 +507,13 @@ async def submit_upi_claim(
 ) -> ClaimOut:
     if not settings.founder_upi_id:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="UPI payment is not configured")
+    # The amount is derived server-side from the period, never taken from the
+    # client -- the same reason every other price here comes from settings:
+    # a client-supplied amount would let anyone claim a year for the price of
+    # a month.
+    amount = price_for(settings.subscription_price_inr, payload.billing_period, settings)
     return await _insert_claim(
-        database, settings, user, "upi", "INR", settings.subscription_price_inr, payload.reference
+        database, settings, user, "upi", "INR", amount, payload.reference, payload.billing_period
     )
 
 
@@ -567,6 +613,7 @@ class WireInfoOut(BaseModel):
 class WireClaimIn(BaseModel):
     currency: str = Field(pattern="^(USD|GBP|EUR)$")
     reference: str = Field(min_length=4, max_length=200)
+    billing_period: BillingPeriod = "monthly"
 
 
 def _wire_currency_details(settings: Settings) -> list[WireCurrencyDetails]:
@@ -601,6 +648,7 @@ def _wire_currency_details(settings: Settings) -> list[WireCurrencyDetails]:
 class CurrencyPricingOut(BaseModel):
     currency: str
     amount: int
+    amount_annual: int = 0
 
 
 class WirePricingOut(BaseModel):
@@ -614,7 +662,12 @@ async def wire_pricing(settings: Settings = Depends(get_settings)) -> WirePricin
     details. Backs the public /pricing page."""
     return WirePricingOut(
         configured=bool(settings.founder_bank_account_number),
-        currencies=[CurrencyPricingOut(currency=c.currency, amount=c.amount) for c in _wire_currency_details(settings)],
+        currencies=[
+            CurrencyPricingOut(
+                currency=c.currency, amount=c.amount, amount_annual=annual_price(c.amount, settings)
+            )
+            for c in _wire_currency_details(settings)
+        ],
     )
 
 
@@ -654,8 +707,12 @@ async def submit_wire_claim(
     if not settings.founder_bank_account_number:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Wire payment is not configured")
     amounts = {d.currency: d.amount for d in _wire_currency_details(settings)}
+    # Annual matters most on this rail: an OUR-charge wire costs the sender
+    # roughly USD 15-40 in fees, which is a >100% surcharge on a monthly
+    # subscription but a one-off on an annual one.
+    amount = price_for(amounts[payload.currency], payload.billing_period, settings)
     return await _insert_claim(
-        database, settings, user, "wire", payload.currency, amounts[payload.currency], payload.reference
+        database, settings, user, "wire", payload.currency, amount, payload.reference, payload.billing_period
     )
 
 

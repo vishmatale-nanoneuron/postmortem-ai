@@ -12,17 +12,23 @@ logger = logging.getLogger("postmortem_ai")
 # cycle here, so this is the founder's own reminder window, re-extended
 # each time a claim for the same account is approved.
 MANUAL_SUBSCRIPTION_PERIOD_SECONDS = 30 * 24 * 60 * 60
+ANNUAL_SUBSCRIPTION_PERIOD_SECONDS = 365 * 24 * 60 * 60
 
 
-async def activate_manual_subscription(database: Database | Transaction, user_id: str) -> int:
-    """Grants/renews 30 days of access for a manually-verified (UPI/wire)
+async def activate_manual_subscription(
+    database: Database | Transaction, user_id: str, billing_period: str = "monthly"
+) -> int:
+    """Grants/renews access (30 days, or 365 for an annual claim) for a manually-verified (UPI/wire)
     payment. This is the ONLY place in the entire codebase that sets
     subscription_status='active' for a manual payment -- called from
     exactly one call site, api/v1/founder.py's approve_payment_claim,
     which requires the real founder to click approve. bank_alerts.py's
     webhook (automated bank-alert matching) deliberately never calls this;
     it can only mark a claim bank_verified, never grant access itself."""
-    period_end = int(time.time()) + MANUAL_SUBSCRIPTION_PERIOD_SECONDS
+    # Defaults to monthly so an older/unknown value can only ever grant
+    # *less* access, never a free year.
+    seconds = ANNUAL_SUBSCRIPTION_PERIOD_SECONDS if billing_period == "annual" else MANUAL_SUBSCRIPTION_PERIOD_SECONDS
+    period_end = int(time.time()) + seconds
     await database.execute(
         "UPDATE users SET subscription_status='active', current_period_end=%s WHERE id=%s",
         (period_end, user_id),

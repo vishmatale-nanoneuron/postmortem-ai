@@ -95,7 +95,7 @@ async def test_upi_pricing_is_public_and_never_includes_the_real_upi_id(context)
     response = await client.get("/v1/billing/upi/pricing")
     assert response.status_code == 200
     body = response.json()
-    assert body == {"amount_inr": 999, "configured": True}
+    assert body == {"amount_inr": 999, "amount_inr_annual": 9990, "configured": True}
     assert "upi_id" not in body
     assert "payee_name" not in body
 

@@ -107,7 +107,7 @@ async def test_wire_pricing_is_public_and_never_includes_real_bank_details(conte
     body = response.json()
     assert body["configured"] is True
     usd = next(c for c in body["currencies"] if c["currency"] == "USD")
-    assert usd == {"currency": "USD", "amount": 15}
+    assert usd == {"currency": "USD", "amount": 15, "amount_annual": 150}
     assert "account_number" not in body
     assert "swift_code" not in body
     assert "correspondent_swift" not in usd
@@ -137,6 +137,7 @@ async def test_a_founder_approving_a_wire_claim_grants_access(context) -> None:
         "reference": "SWIFT-REF-99",
         "status": "pending",
         "created_at": claim.json()["created_at"],
+        "billing_period": "monthly",
     }
     claim_id = claim.json()["id"]
 

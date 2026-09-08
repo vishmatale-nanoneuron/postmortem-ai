@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     founder_upi_id: str = Field(default="", alias="FOUNDER_UPI_ID")
     founder_upi_payee_name: str = Field(default="PostMortem AI", alias="FOUNDER_UPI_PAYEE_NAME")
     subscription_price_inr: int = Field(default=999, alias="SUBSCRIPTION_PRICE_INR")
+    # Annual price is derived (monthly x this), not configured per currency:
+    # four more price settings would be four more things to keep in sync,
+    # and a mismatch between them is exactly the kind of pricing bug
+    # nobody notices until a customer is charged wrongly. 10 = the
+    # conventional "two months free" annual discount.
+    annual_months_charged: int = Field(default=10, alias="ANNUAL_MONTHS_CHARGED")
 
     # Bank-alert auto-verification (bank_alerts.py): a client's bank alert
     # (forwarded by the founder from their real inbox to an email-routing

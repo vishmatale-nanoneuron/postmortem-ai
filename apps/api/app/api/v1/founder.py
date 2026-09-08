@@ -173,6 +173,10 @@ class PaymentClaimOut(BaseModel):
     reference: str
     status: str
     created_at: int
+    # "monthly" or "annual" -- what the founder is about to grant when they
+    # approve. Surfaced deliberately: approving an annual claim hands out a
+    # year of access, and that should be visible at the moment of the click.
+    billing_period: str = "monthly"
     # True when a real forwarded bank alert already matched this claim's
     # reference/amount (see bank_alerts.py) -- strong evidence the money
     # really arrived, shown to the founder as a signal, never a substitute
@@ -181,7 +185,8 @@ class PaymentClaimOut(BaseModel):
 
 
 _CLAIM_SELECT = """SELECT c.id::text, c.user_id::text, u.email, c.method, c.currency,
-                           c.amount_inr AS amount, c.reference, c.status, c.created_at, c.bank_verified
+                           c.amount_inr AS amount, c.reference, c.status, c.created_at, c.bank_verified,
+                           c.billing_period
                     FROM payment_claims c JOIN users u ON u.id = c.user_id"""
 
 
@@ -254,7 +259,10 @@ async def approve_payment_claim(
         # activate_manual_subscription with a real, unconditional grant --
         # gated behind current_founder above and the frontend's own
         # explicit confirmation dialog. bank_alerts.py never calls this.
-        await activate_manual_subscription(tx, claim["user_id"])
+        # Grants 365 days for an annual claim, 30 otherwise. The period
+        # comes from the stored claim, never from the approving request,
+        # so what is granted is exactly what the client paid for.
+        await activate_manual_subscription(tx, claim["user_id"], str(claim["billing_period"]))
         await record_claim_event(tx, claim_id, "approved", founder.email)
 
     # Best-effort, and deliberately after the transaction above has
