@@ -78,17 +78,6 @@ const card =
 const fieldLabel = "block text-xs font-medium text-muted mb-1";
 const fieldInput =
   "w-full rounded-md border border-line px-3 py-2 mb-3 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent";
-// Kept as plain <button>+className rather than swapping to shadcn's
-// <Button> (Base UI) primitive across these 13 call sites -- several
-// submit inside React 19's <form action={fn}> pattern, and that
-// interaction isn't one this session could verify by rendering in a real
-// browser. Polished with the same hover-lift already proven on the
-// landing page's CTA instead: real, safe animation without changing the
-// underlying element.
-const primaryButton =
-  "rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper transition-[transform,background-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-ink/90 hover:shadow-md disabled:pointer-events-none disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none";
-const secondaryButton =
-  "rounded-md border border-line px-4 py-2 text-sm font-medium text-ink transition-[transform,background-color] duration-200 hover:-translate-y-0.5 hover:bg-paper disabled:pointer-events-none disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50";
 
 const CURRENCY_SYMBOLS: Record<string, string> = { INR: "₹", USD: "$", GBP: "£", EUR: "€" };
 function currencySymbol(currency: string): string {
@@ -139,9 +128,9 @@ export default function Workspace() {
           >
             {user.email}
           </button>
-          <button className={cn(secondaryButton, "shrink-0")} type="button" onClick={() => void auth.logout().then(() => setUser(null))}>
+          <Button variant="line" size="app" className="shrink-0" type="button" onClick={() => void auth.logout().then(() => setUser(null))}>
             Log out
-          </button>
+          </Button>
         </div>
       </div>
       {showAccount && (
@@ -970,9 +959,9 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
                 />
               </>
             )}
-            <button className={`${primaryButton} w-full`} disabled={busy} type="submit">
+            <Button variant="ink" size="app" className="w-full" disabled={busy} type="submit">
               {mode === "login" ? "Log in" : mode === "register" ? "Create account" : "Send reset link"}
-            </button>
+            </Button>
           </form>
           {message && (
             <Alert role="status" className="mt-3 animate-in fade-in border-accent/30 bg-accent/10 text-accent">
@@ -1171,9 +1160,9 @@ function CardPayment() {
         Pay by card via Stripe -- access activates immediately after payment, no waiting on manual review. You can
         cancel or update your card anytime from account settings.
       </p>
-      <button className={primaryButton} disabled={busy} type="button" onClick={() => void subscribe()}>
+      <Button variant="ink" size="app" disabled={busy} type="button" onClick={() => void subscribe()}>
         {busy ? "Redirecting…" : "Subscribe with card"}
-      </button>
+      </Button>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
     </div>
   );
@@ -1229,12 +1218,12 @@ export function PendingClaim({ claim, onChanged }: { claim: Claim; onChanged: ()
           required
         />
         <div className="flex gap-2">
-          <button className={primaryButton} disabled={busy} type="submit">
+          <Button variant="ink" size="app" disabled={busy} type="submit">
             Save
-          </button>
-          <button className={secondaryButton} disabled={busy} type="button" onClick={() => setEditing(false)}>
+          </Button>
+          <Button variant="line" size="app" disabled={busy} type="button" onClick={() => setEditing(false)}>
             Cancel
-          </button>
+          </Button>
         </div>
         {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       </form>
@@ -1354,9 +1343,9 @@ function UpiPayment() {
             UPI transaction reference / UTR number
           </label>
           <input id="upi-reference" className={fieldInput} name="reference" placeholder="e.g. 123456789012" required />
-          <button className={primaryButton} disabled={busy} type="submit">
+          <Button variant="ink" size="app" disabled={busy} type="submit">
             {busy ? "Submitting..." : "I've paid -- submit reference"}
-          </button>
+          </Button>
         </form>
       )}
       {message && <p className="mt-3 text-sm text-accent">{message}</p>}
@@ -1492,9 +1481,9 @@ function WirePayment() {
             placeholder="e.g. SWIFT MT103 reference"
             required
           />
-          <button className={primaryButton} disabled={busy} type="submit">
+          <Button variant="ink" size="app" disabled={busy} type="submit">
             {busy ? "Submitting..." : "I've paid -- submit reference"}
-          </button>
+          </Button>
         </form>
       )}
       {message && <p className="mt-3 text-sm text-accent">{message}</p>}
@@ -1562,9 +1551,9 @@ function ManageBilling() {
       </div>
       {hasStripeAccount ? (
         <>
-          <button className={cn(secondaryButton, "mt-2")} disabled={busy} type="button" onClick={() => void openPortal()}>
+          <Button variant="line" size="app" className="mt-2" disabled={busy} type="button" onClick={() => void openPortal()}>
             {busy ? "Opening…" : "Manage billing"}
-          </button>
+          </Button>
           {error && (
             <p className="mt-2 text-xs text-muted">
               Paid via UPI/wire instead?{" "}
@@ -1692,9 +1681,9 @@ export function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser
           placeholder="••••••••"
           minLength={8}
         />
-        <button className={secondaryButton} disabled={busy} type="submit">
+        <Button variant="line" size="app" disabled={busy} type="submit">
           Save changes
-        </button>
+        </Button>
       </form>
       {message && <p className="mt-2 text-sm text-accent">{message}</p>}
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
@@ -1905,9 +1894,9 @@ function IntegrationsSettings() {
           placeholder="team-id"
         />
 
-        <button className={secondaryButton} disabled={busy} type="submit">
+        <Button variant="line" size="app" disabled={busy} type="submit">
           Save
-        </button>
+        </Button>
       </form>
       {message && <p className="mt-2 text-sm text-accent">{message}</p>}
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
@@ -1959,9 +1948,9 @@ function CopyField({
         aria-label={ariaLabel}
         onFocus={(e) => e.currentTarget.select()}
       />
-      <button className={secondaryButton} type="button" onClick={() => void copy()}>
+      <Button variant="line" size="app" type="button" onClick={() => void copy()}>
         {copied ? "Copied" : "Copy"}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -2149,9 +2138,9 @@ function IncidentSuggestionHelper({
         onChange={(event) => setText(event.target.value)}
         placeholder="PagerDuty: checkout p99 latency > 4s since 14:04 UTC"
       />
-      <button className={secondaryButton} disabled={busy || !text.trim()} type="button" onClick={() => void suggest()}>
+      <Button variant="line" size="app" disabled={busy || !text.trim()} type="button" onClick={() => void suggest()}>
         {busy ? "Suggesting..." : "Suggest title & severity with AI"}
-      </button>
+      </Button>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       <p className="mt-1.5 text-xs text-muted">Fills in the fields below -- review and edit before creating.</p>
     </div>
@@ -2233,9 +2222,9 @@ function EvidenceExtractor({
         onChange={(event) => setText(event.target.value)}
         placeholder="[14:02] deploy bot: shipped release 1.2&#10;[14:04] pagerduty: p99 latency alert fired..."
       />
-      <button className={secondaryButton} disabled={busy || !text.trim()} type="button" onClick={() => void extract()}>
+      <Button variant="line" size="app" disabled={busy || !text.trim()} type="button" onClick={() => void extract()}>
         {busy ? "Extracting..." : "Extract evidence with AI"}
-      </button>
+      </Button>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       {suggestions.length > 0 && (
         <ul className="mt-3 space-y-2">
@@ -2408,9 +2397,9 @@ function StatusPageSettings({
         A live public page for this incident -- separate from the postmortem, and usable while the incident is
         still open. Only what you write below is ever shown; raw evidence stays private.
       </p>
-      <button className={secondaryButton} disabled={busy} onClick={() => void toggle()} type="button">
+      <Button variant="line" size="app" disabled={busy} onClick={() => void toggle()} type="button">
         {incident.is_public ? "Make private" : "Make public"}
-      </button>
+      </Button>
       {incident.is_public && incident.public_slug && (
         <p className="mt-1.5 text-xs text-muted">
           Public at{" "}
@@ -2434,9 +2423,9 @@ function StatusPageSettings({
           className={cn(fieldInput, "min-h-16")}
           placeholder="We're investigating elevated error rates."
         />
-        <button className={cn(secondaryButton, "mt-1")} disabled={busy} type="submit">
+        <Button variant="line" size="app" className="mt-1" disabled={busy} type="submit">
           Post
-        </button>
+        </Button>
       </form>
       {updates.length > 0 && (
         <ul className="mt-3 space-y-1.5 text-sm">
@@ -2870,9 +2859,9 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
             Impact
           </label>
           <input id="incident-impact" className={fieldInput} name="impact" />
-          <button className={primaryButton} disabled={busy} type="submit">
+          <Button variant="ink" size="app" disabled={busy} type="submit">
             Create incident
-          </button>
+          </Button>
         </form>
       </Card>
 
@@ -2935,23 +2924,22 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
                 Detail (optional)
               </label>
               <input id="evidence-detail" className={fieldInput} name="detail" />
-              <button className={primaryButton} disabled={busy} type="submit">
+              <Button variant="ink" size="app" disabled={busy} type="submit">
                 Add evidence
-              </button>
+              </Button>
             </form>
           </Card>
 
           <Card className={card}>
             <h2 className="mb-3 text-base font-semibold">Draft</h2>
             <SimilarIncidentsPanel incidentId={selectedId} />
-            <button
-              className={primaryButton}
+            <Button variant="ink" size="app"
               disabled={busy || evidence.length === 0}
               onClick={() => void generateDraft()}
               type="button"
             >
               Generate draft
-            </button>
+            </Button>
             {postmortem && previousDraft && <DraftComparison postmortem={postmortem} previous={previousDraft} />}
             {postmortem && (
               <div className="mt-4 space-y-2 text-sm">
@@ -2997,9 +2985,9 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
                   {postmortem.unsupported_claims_dropped}
                 </p>
                 {postmortem.status !== "published" && (
-                  <button className={`${primaryButton} mt-1`} disabled={busy} onClick={() => void publish()} type="button">
+                  <Button variant="ink" size="app" className="mt-1" disabled={busy} onClick={() => void publish()} type="button">
                     Publish
-                  </button>
+                  </Button>
                 )}
                 {postmortem.approved_by && (
                   <p className="text-xs text-muted">
@@ -3008,9 +2996,9 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
                 )}
                 {postmortem.status === "published" && (
                   <div className="mt-1">
-                    <button className={secondaryButton} disabled={busy} onClick={() => void togglePublic()} type="button">
+                    <Button variant="line" size="app" disabled={busy} onClick={() => void togglePublic()} type="button">
                       {postmortem.is_public ? "Make private" : "Make public"}
-                    </button>
+                    </Button>
                     {postmortem.is_public && postmortem.slug && (
                       <p className="mt-1.5 text-xs text-muted">
                         Public at{" "}

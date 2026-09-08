@@ -5,6 +5,7 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Button } from "@/components/ui/button";
 import { auth } from "../auth";
 import { firstError, passwordResetConfirmSchema } from "../validation";
 
@@ -12,8 +13,6 @@ const card = "rounded-lg border border-line bg-white p-4 shadow-sm mb-4";
 const fieldLabel = "block text-xs font-medium text-muted mb-1";
 const fieldInput =
   "w-full rounded-md border border-line px-3 py-2 mb-3 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent";
-const primaryButton =
-  "rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper transition hover:bg-ink/90 disabled:cursor-not-allowed disabled:opacity-50";
 
 function ResetPasswordForm() {
   const router = useRouter();
@@ -52,9 +51,9 @@ function ResetPasswordForm() {
         {done ? (
           <>
             <p className="text-sm text-accent">Your password has been reset. You can now log in with it.</p>
-            <button className={`${primaryButton} mt-3 w-full`} type="button" onClick={() => router.push("/")}>
+            <Button variant="ink" size="app" className="mt-3 w-full" type="button" onClick={() => router.push("/")}>
               Go to log in
-            </button>
+            </Button>
           </>
         ) : (
           <form action={submit}>
@@ -71,9 +70,9 @@ function ResetPasswordForm() {
               required
               autoFocus
             />
-            <button className={`${primaryButton} w-full`} disabled={busy} type="submit">
+            <Button variant="ink" size="app" className="w-full" disabled={busy} type="submit">
               Reset password
-            </button>
+            </Button>
             {error && (
               <p role="status" className="mt-3 text-sm text-red-600">
                 {error}

@@ -9,6 +9,7 @@
 // site or indexed by search engines, and every attempt against the
 // founder email is logged server-side (see api/v1/auth.py).
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import { auth } from "../auth";
 import { emailOnlySchema, firstError, loginSchema, registerSchema } from "../validation";
 
@@ -16,8 +17,6 @@ const card = "rounded-lg border border-line bg-white p-4 shadow-sm";
 const fieldLabel = "block text-xs font-medium text-muted mb-1";
 const fieldInput =
   "w-full rounded-md border border-line px-3 py-2 mb-3 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent";
-const primaryButton =
-  "rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper transition hover:bg-ink/90 disabled:cursor-not-allowed disabled:opacity-50";
 
 export default function FounderAuth() {
   const [mode, setMode] = useState<"login" | "register" | "forgot">("login");
@@ -112,7 +111,7 @@ export default function FounderAuth() {
               />
             </>
           )}
-          <button className={`${primaryButton} w-full`} disabled={busy} type="submit">
+          <Button variant="ink" size="app" className="w-full" disabled={busy} type="submit">
             {busy
               ? "..."
               : mode === "login"
@@ -120,7 +119,7 @@ export default function FounderAuth() {
                 : mode === "register"
                   ? "Register founder account"
                   : "Send reset link"}
-          </button>
+          </Button>
         </form>
         {message && (
           <p role="status" className="mt-3 text-sm text-accent">

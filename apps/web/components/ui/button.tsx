@@ -18,6 +18,15 @@ const buttonVariants = cva(
         destructive:
           "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
         link: "text-primary underline-offset-4 hover:underline",
+        // App-specific variants -- these reproduce the hand-rolled
+        // primaryButton/secondaryButton styles workspace.tsx used before
+        // shadcn covered these call sites. Kept as real variants rather
+        // than per-call-site classNames so the "case-file" look lives in
+        // one place; --color-ink/--color-paper are byte-identical to
+        // --primary/--primary-foreground, so this matches the default
+        // variant's colors while keeping the hover-lift the app already had.
+        ink: "bg-ink text-paper hover:bg-ink/90 hover:-translate-y-0.5 hover:shadow-md disabled:translate-y-0 disabled:shadow-none",
+        line: "border-line text-ink hover:bg-paper hover:-translate-y-0.5 disabled:translate-y-0",
       },
       size: {
         default:
@@ -25,6 +34,9 @@ const buttonVariants = cva(
         xs: "h-6 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
         sm: "h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
         lg: "h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+        // Matches the app's own px-4/py-2 button geometry, which is
+        // chunkier than shadcn's default h-8.
+        app: "h-auto rounded-md px-4 py-2 text-sm font-medium",
         icon: "size-8",
         "icon-xs":
           "size-6 rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
