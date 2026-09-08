@@ -305,7 +305,13 @@ def build_mcp_server(get_database: Callable[[], Database], settings: Settings) -
         subscription immediately, the same as a Stripe webhook would."""
         database = get_database()
         founder = require_mcp_founder()
-        result = await founder_routes.approve_payment_claim(claim_id, database=database, founder=founder)
+        # settings= is required since these routes gained it for the
+        # client-outcome email -- a direct Python call gets no
+        # FastAPI injection, so omitting it passes an unresolved
+        # Depends object. Same bug class as the draft/publish tools hit twice.
+        result = await founder_routes.approve_payment_claim(
+            claim_id, database=database, founder=founder, settings=settings
+        )
         return result.model_dump()
 
     @mcp.tool()
@@ -314,7 +320,13 @@ def build_mcp_server(get_database: Callable[[], Database], settings: Settings) -
         """Reject a payment claim -- the account stays blocked."""
         database = get_database()
         founder = require_mcp_founder()
-        result = await founder_routes.reject_payment_claim(claim_id, database=database, founder=founder)
+        # settings= is required since these routes gained it for the
+        # client-outcome email -- a direct Python call gets no
+        # FastAPI injection, so omitting it passes an unresolved
+        # Depends object. Same bug class as the draft/publish tools hit twice.
+        result = await founder_routes.reject_payment_claim(
+            claim_id, database=database, founder=founder, settings=settings
+        )
         return result.model_dump()
 
     @mcp.tool()

@@ -1,3 +1,4 @@
+import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -8,7 +9,14 @@ from ...cqrs.activity import ActivityLogFilter, handle_activity_log_query
 from ...database import Database
 from ...dependencies import get_database
 from ...services.billing import activate_manual_subscription, record_claim_event
+from ...services.email import (
+    EmailNotConfiguredError,
+    send_client_claim_approved_email,
+    send_client_claim_rejected_email,
+)
 from ...settings import Settings, get_settings
+
+logger = logging.getLogger("postmortem_ai")
 
 router = APIRouter(prefix="/v1/founder", tags=["founder"])
 
@@ -188,11 +196,37 @@ async def list_payment_claims(
     return [PaymentClaimOut(**row) for row in rows]
 
 
+def _notify_client(settings: Settings, claim_id: str, to_email: str, method: str, *, approved: bool) -> None:
+    """Tell the client what happened to their claim. Best-effort by the same
+    reasoning as billing.py's submission emails: the decision is already
+    committed to the database and is the real outcome -- an email failure
+    must never turn a successful approval into a 500 for the founder, or
+    (worse) leave them unsure whether the grant went through.
+
+    This closes the one genuinely silent gap in the manual payment rail:
+    send_client_claim_confirmation tells a client "you'll be able to see the
+    outcome in your dashboard," and until this existed, nothing ever told
+    them the outcome had arrived. On a rail where a human approves by hand,
+    hours later, that meant polling the dashboard was the only way to learn
+    your access had turned on -- or that it hadn't."""
+    send = send_client_claim_approved_email if approved else send_client_claim_rejected_email
+    outcome = "approved" if approved else "rejected"
+    try:
+        send(settings, claim_id, to_email, method)
+    except EmailNotConfiguredError:
+        logger.info("client_claim_outcome_skipped", extra={"reason": "email_not_configured", "outcome": outcome})
+    except Exception:
+        logger.warning(
+            "client_claim_outcome_failed", extra={"claim_id": claim_id, "outcome": outcome}, exc_info=True
+        )
+
+
 @router.post("/payment-claims/{claim_id}/approve", response_model=PaymentClaimOut)
 async def approve_payment_claim(
     claim_id: str,
     database: Database = Depends(get_database),
     founder: User = Depends(current_founder),
+    settings: Settings = Depends(get_settings),
 ) -> PaymentClaimOut:
     claim = await database.fetch_one(f"{_CLAIM_SELECT} WHERE c.id=%s", (claim_id,))
     if not claim:
@@ -222,6 +256,12 @@ async def approve_payment_claim(
         # explicit confirmation dialog. bank_alerts.py never calls this.
         await activate_manual_subscription(tx, claim["user_id"])
         await record_claim_event(tx, claim_id, "approved", founder.email)
+
+    # Best-effort, and deliberately after the transaction above has
+    # committed: the access grant is the real outcome and must never be
+    # rolled back or 500 because Resend is down or unconfigured. Same
+    # pattern as billing.py's claim-submission emails.
+    _notify_client(settings, claim_id, str(claim["email"]), str(claim["method"]), approved=True)
     return PaymentClaimOut(**{**claim, "status": "approved"})
 
 
@@ -230,6 +270,7 @@ async def reject_payment_claim(
     claim_id: str,
     database: Database = Depends(get_database),
     founder: User = Depends(current_founder),
+    settings: Settings = Depends(get_settings),
 ) -> PaymentClaimOut:
     claim = await database.fetch_one(f"{_CLAIM_SELECT} WHERE c.id=%s", (claim_id,))
     if not claim:
@@ -252,6 +293,7 @@ async def reject_payment_claim(
         (founder.email, now, claim_id),
     )
     await record_claim_event(database, claim_id, "rejected", founder.email)
+    _notify_client(settings, claim_id, str(claim["email"]), str(claim["method"]), approved=False)
     return PaymentClaimOut(**{**claim, "status": "rejected"})
 
 

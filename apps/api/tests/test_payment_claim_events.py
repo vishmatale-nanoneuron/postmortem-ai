@@ -148,3 +148,80 @@ async def test_events_endpoint_requires_founder_auth(context) -> None:
     # The claim's own owner is not the founder -- must not see the ledger.
     response = await client.get(f"/v1/founder/payment-claims/{claim_id}/events")
     assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Client notification on the founder's decision. Until this existed, a client
+# submitted a claim, got "you'll be able to see the outcome in your dashboard"
+# (send_client_claim_confirmation), and was then never told the outcome had
+# arrived -- polling the dashboard was the only way to learn your access had
+# turned on, on a rail where a human approves by hand hours later.
+# ---------------------------------------------------------------------------
+
+
+async def _submit_claim(client, reference: str) -> str:
+    await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+    claim = await client.post("/v1/billing/upi/claim", json={"reference": reference})
+    assert claim.status_code == 201, claim.text
+    client.cookies.clear()
+    await client.post("/v1/auth/register", json={"email": FOUNDER_EMAIL, "password": "correct-horse-battery"})
+    return claim.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_approving_a_claim_emails_the_client(context, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, _ = context
+    sent: list[tuple] = []
+    monkeypatch.setattr(
+        "app.api.v1.founder.send_client_claim_approved_email",
+        lambda settings, claim_id, to_email, method: sent.append((claim_id, to_email, method)),
+    )
+
+    claim_id = await _submit_claim(client, "APPROVEMAIL123456")
+    approve = await client.post(f"/v1/founder/payment-claims/{claim_id}/approve")
+    assert approve.status_code == 200, approve.text
+
+    assert len(sent) == 1, sent
+    assert sent[0][0] == claim_id
+    assert sent[0][1] == CLIENT_EMAIL  # always the claim owner, never the founder
+    assert sent[0][2] == "upi"
+
+
+@pytest.mark.asyncio
+async def test_rejecting_a_claim_emails_the_client(context, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, _ = context
+    sent: list[tuple] = []
+    monkeypatch.setattr(
+        "app.api.v1.founder.send_client_claim_rejected_email",
+        lambda settings, claim_id, to_email, method: sent.append((claim_id, to_email, method)),
+    )
+
+    claim_id = await _submit_claim(client, "REJECTMAIL1234567")
+    reject = await client.post(f"/v1/founder/payment-claims/{claim_id}/reject")
+    assert reject.status_code == 200, reject.text
+
+    assert len(sent) == 1, sent
+    assert sent[0][1] == CLIENT_EMAIL
+
+
+@pytest.mark.asyncio
+async def test_an_email_failure_never_breaks_the_approval(context, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The property that actually matters: the access grant is already
+    committed before the email is attempted. A Resend outage must never turn
+    a successful approval into a 500 -- which would leave the founder unsure
+    whether the customer got access, on the one action that takes money."""
+    client, database = context
+
+    def blow_up(*_args, **_kwargs):
+        raise RuntimeError("resend is down")
+
+    monkeypatch.setattr("app.api.v1.founder.send_client_claim_approved_email", blow_up)
+
+    claim_id = await _submit_claim(client, "EMAILFAILS1234567")
+    approve = await client.post(f"/v1/founder/payment-claims/{claim_id}/approve")
+    assert approve.status_code == 200, approve.text
+    assert approve.json()["status"] == "approved"
+
+    # And the grant is real, not just a 200: the account is actually active.
+    row = await database.fetch_one("SELECT subscription_status FROM users WHERE email=%s", (CLIENT_EMAIL,))
+    assert row is not None and row["subscription_status"] == "active"

@@ -234,3 +234,75 @@ def send_client_claim_confirmation(
         {"idempotency_key": f"claim-confirmation/{claim_id}"},
     )
     logger.info("client_claim_confirmation_sent", extra={"claim_id": claim_id, "method": method})
+
+
+def send_client_claim_approved_email(settings: Settings, claim_id: str, to_email: str, method: str) -> None:
+    """The missing end of the manual-payment conversation. A client could
+    submit a claim and receive send_client_claim_confirmation above -- which
+    literally tells them "you'll be able to see the outcome in your
+    dashboard" -- and then never hear anything again. On a rail where
+    approval is manual and asynchronous (the founder reviews by hand,
+    possibly hours later, see founder.py's approve_payment_claim), that left
+    a paying customer with no way to learn their access had turned on except
+    repeatedly logging in to check.
+
+    Deliberately says nothing about amounts or references: this fires after
+    the subscription is already active, so the useful content is "it's on,
+    here's what to do next," not a restatement of the receipt they already
+    got."""
+    if not settings.resend_api_key or not settings.resend_email_domain:
+        raise EmailNotConfiguredError("RESEND_API_KEY/RESEND_EMAIL_DOMAIN are not configured")
+
+    resend.api_key = settings.resend_api_key
+    resend.Emails.send(
+        {
+            "from": f"PostMortem AI <noreply@{settings.resend_email_domain}>",
+            "to": [to_email],
+            "subject": "Your payment is approved -- your account is active",
+            "html": (
+                f"<p>Your <strong>{method.upper()}</strong> payment has been reviewed and approved. "
+                "Your subscription is active now -- nothing else to do.</p>"
+                "<p>You can record an incident, add evidence, and generate a grounded postmortem draft "
+                "straight away. Every claim in a draft cites a real evidence entry you recorded; anything "
+                "the evidence doesn't support is marked unsupported rather than invented, and publishing "
+                "always records you as the named approver.</p>"
+                "<p>If anything looks wrong with your account, reply to this email.</p>"
+            ),
+        },
+        {"idempotency_key": f"claim-approved/{claim_id}"},
+    )
+    logger.info("client_claim_approved_sent", extra={"claim_id": claim_id, "method": method})
+
+
+def send_client_claim_rejected_email(settings: Settings, claim_id: str, to_email: str, method: str) -> None:
+    """Counterpart to send_client_claim_approved_email above, for the other
+    outcome. Worse to omit than the approval, not better: a client whose
+    claim is rejected has usually either paid and had the reference fail to
+    match, or mistyped it -- both cases where silence reads as "my money
+    vanished."
+
+    Deliberately non-accusatory and gives a real next step. It never asserts
+    the customer didn't pay -- the founder rejects a claim when it can't be
+    matched, which is not the same thing."""
+    if not settings.resend_api_key or not settings.resend_email_domain:
+        raise EmailNotConfiguredError("RESEND_API_KEY/RESEND_EMAIL_DOMAIN are not configured")
+
+    resend.api_key = settings.resend_api_key
+    resend.Emails.send(
+        {
+            "from": f"PostMortem AI <noreply@{settings.resend_email_domain}>",
+            "to": [to_email],
+            "subject": "We couldn't match your payment claim",
+            "html": (
+                f"<p>Your <strong>{method.upper()}</strong> payment claim was reviewed but couldn't be "
+                "matched to a payment we've received, so it hasn't activated an account.</p>"
+                "<p>This is usually a mistyped transaction reference, or a transfer still in flight -- "
+                "international wires in particular can take a few working days to land.</p>"
+                "<p><strong>If you have paid:</strong> reply to this email with the transaction reference "
+                "and the date, and it'll be sorted out by hand. You have not lost your payment.</p>"
+                "<p>You can also submit a fresh claim from the payment tab in your dashboard.</p>"
+            ),
+        },
+        {"idempotency_key": f"claim-rejected/{claim_id}"},
+    )
+    logger.info("client_claim_rejected_sent", extra={"claim_id": claim_id, "method": method})
