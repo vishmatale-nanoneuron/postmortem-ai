@@ -87,7 +87,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="font-sans antialiased">
         {children}
-        <Analytics />
+        {/* Production only. In development @vercel/analytics loads
+            script.debug.js from va.vercel-scripts.com, which this app's CSP
+            correctly blocks (cross-origin script) -- producing three console
+            errors on every single dev page load. That noise is worth removing
+            on its own, because it trains you to ignore a console that should
+            be empty and can mask a real error. Skipping it in dev also keeps
+            local pageviews out of production analytics, which is what you'd
+            want regardless. Production is unaffected: there the script is
+            served same-origin through Vercel's own proxied path (verified
+            live returning 200), so the CSP permits it. */}
+        {process.env.NODE_ENV === "production" && <Analytics />}
       </body>
     </html>
   );
