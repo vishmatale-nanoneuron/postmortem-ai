@@ -2,6 +2,7 @@ import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from ...auth import User, current_founder
@@ -201,7 +202,9 @@ async def list_payment_claims(
     return [PaymentClaimOut(**row) for row in rows]
 
 
-def _notify_client(settings: Settings, claim_id: str, to_email: str, method: str, *, approved: bool) -> None:
+async def _notify_client(
+    settings: Settings, claim_id: str, to_email: str, method: str, *, approved: bool
+) -> None:
     """Tell the client what happened to their claim. Best-effort by the same
     reasoning as billing.py's submission emails: the decision is already
     committed to the database and is the real outcome -- an email failure
@@ -217,7 +220,13 @@ def _notify_client(settings: Settings, claim_id: str, to_email: str, method: str
     send = send_client_claim_approved_email if approved else send_client_claim_rejected_email
     outcome = "approved" if approved else "rejected"
     try:
-        send(settings, claim_id, to_email, method)
+        # run_in_threadpool, matching billing.py and auth.py: resend's client
+        # is synchronous, so calling it directly from an async handler blocks
+        # the event loop. A slow Resend would stall the founder's approve
+        # request *after* the grant has already committed -- leaving them
+        # staring at a hanging request with no idea whether the customer got
+        # access.
+        await run_in_threadpool(send, settings, claim_id, to_email, method)
     except EmailNotConfiguredError:
         logger.info("client_claim_outcome_skipped", extra={"reason": "email_not_configured", "outcome": outcome})
     except Exception:
@@ -269,7 +278,7 @@ async def approve_payment_claim(
     # committed: the access grant is the real outcome and must never be
     # rolled back or 500 because Resend is down or unconfigured. Same
     # pattern as billing.py's claim-submission emails.
-    _notify_client(settings, claim_id, str(claim["email"]), str(claim["method"]), approved=True)
+    await _notify_client(settings, claim_id, str(claim["email"]), str(claim["method"]), approved=True)
     return PaymentClaimOut(**{**claim, "status": "approved"})
 
 
@@ -301,7 +310,7 @@ async def reject_payment_claim(
         (founder.email, now, claim_id),
     )
     await record_claim_event(database, claim_id, "rejected", founder.email)
-    _notify_client(settings, claim_id, str(claim["email"]), str(claim["method"]), approved=False)
+    await _notify_client(settings, claim_id, str(claim["email"]), str(claim["method"]), approved=False)
     return PaymentClaimOut(**{**claim, "status": "rejected"})
 
 

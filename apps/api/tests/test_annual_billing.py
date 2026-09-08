@@ -146,3 +146,68 @@ async def test_pricing_endpoints_publish_the_annual_price(context) -> None:
     wire = await client.get("/v1/billing/wire/pricing")
     for c in wire.json()["currencies"]:
         assert c["amount_annual"] == c["amount"] * 10
+
+
+# ---------------------------------------------------------------------------
+# Regressions found by a code-review pass over the annual-billing commit.
+# The feature was written but only half-wired: billing_period was stored
+# correctly and then read back inconsistently, and the quoted price didn't
+# follow the period.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_quoted_price_matches_what_an_annual_claim_will_record(
+    context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The worst of the review findings. email-details hardcoded the monthly
+    price, so an annual customer received a pre-filled UPI deep link for
+    Rs.999 while their claim was recorded at Rs.9990. The credited amount
+    then never matches in bank_alerts.py, so auto-verification silently never
+    fires -- precisely the failure the deep link was added to remove."""
+    client, _ = context
+    quoted: list[int] = []
+    monkeypatch.setattr(
+        "app.api.v1.billing.send_upi_payment_details_email",
+        lambda settings, to, req, upi, payee, amount: quoted.append(amount),
+    )
+    await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+
+    sent = await client.post("/v1/billing/upi/email-details", json={"billing_period": "annual"})
+    assert sent.status_code == 200, sent.text
+
+    claim = await client.post(
+        "/v1/billing/upi/claim", json={"reference": "QUOTEMATCH123456", "billing_period": "annual"}
+    )
+    assert quoted == [9990]
+    assert claim.json()["amount"] == 9990  # quote and claim agree
+
+
+@pytest.mark.asyncio
+async def test_listing_claims_reports_the_real_billing_period(context) -> None:
+    """The list endpoints never selected billing_period, so a client's own
+    Rs.9990 annual claim was reported back to them as "monthly"."""
+    client, _ = context
+    await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+    await client.post("/v1/billing/upi/claim", json={"reference": "LISTPERIOD123456", "billing_period": "annual"})
+
+    listed = await client.get("/v1/billing/upi/claims")
+    assert listed.status_code == 200, listed.text
+    assert listed.json()[0]["billing_period"] == "annual"
+
+
+@pytest.mark.asyncio
+async def test_editing_an_annual_claims_reference_keeps_it_annual(context) -> None:
+    """PATCH's RETURNING omitted billing_period, so correcting a typo'd
+    reference answered "monthly" for an annual claim."""
+    client, _ = context
+    await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+    claim = await client.post(
+        "/v1/billing/upi/claim", json={"reference": "PATCHPERIOD12345", "billing_period": "annual"}
+    )
+    claim_id = claim.json()["id"]
+
+    patched = await client.patch(f"/v1/billing/claims/{claim_id}", json={"reference": "PATCHEDREF123456"})
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["billing_period"] == "annual"
+    assert patched.json()["amount"] == 9990

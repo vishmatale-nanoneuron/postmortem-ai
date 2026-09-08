@@ -41,6 +41,18 @@ router = APIRouter(prefix="/v1/billing", tags=["billing"])
 # constraint means an invalid period can neither be sent nor stored.
 BillingPeriod = Literal["monthly", "annual"]
 
+
+# The single projection every ClaimOut is built from. A code-review pass found
+# this had already drifted: the INSERT returned billing_period while the PATCH
+# and both list endpoints silently omitted it, so a Rs.9990 annual claim was
+# reported back to its own owner as "monthly". Exactly the "two
+# implementations of one read that drift apart" problem the CQRS split in
+# cqrs/activity.py exists to prevent -- so the read side is defined once here
+# and reused, rather than hand-written per endpoint.
+_CLAIM_COLUMNS = (
+    "id::text, method, currency, amount_inr AS amount, reference, status, created_at, billing_period"
+)
+
 RATE_LIMITED_DETAIL = "Too many requests. Try again later."
 
 # Sending the real account details is the one client-facing side effect of
@@ -352,8 +364,8 @@ async def _insert_claim(
         """INSERT INTO payment_claims
              (user_id, amount_inr, currency, method, reference, status, created_at, billing_period)
            VALUES (%s, %s, %s, %s, %s, 'pending', %s, %s)
-           RETURNING id::text, method, currency, amount_inr AS amount, reference, status, created_at,
-                     billing_period""",
+           RETURNING """
+        + _CLAIM_COLUMNS,
         (user.id, amount, currency, method, reference, now, billing_period),
     )
     assert row is not None
@@ -420,7 +432,8 @@ async def update_my_claim(
 
     row = await database.fetch_one(
         """UPDATE payment_claims SET reference=%s WHERE id=%s
-           RETURNING id::text, method, currency, amount_inr AS amount, reference, status, created_at""",
+           RETURNING """
+        + _CLAIM_COLUMNS,
         (payload.reference, claim_id),
     )
     assert row is not None
@@ -521,8 +534,15 @@ class EmailDetailsOut(BaseModel):
     sent: bool
 
 
+class UpiEmailDetailsIn(BaseModel):
+    """Optional body so an older client that posts nothing still works."""
+
+    billing_period: BillingPeriod = "monthly"
+
+
 @router.post("/upi/email-details", response_model=EmailDetailsOut)
 async def email_upi_details(
+    payload: UpiEmailDetailsIn = UpiEmailDetailsIn(),
     database: Database = Depends(get_database),
     settings: Settings = Depends(get_settings),
     user: User = Depends(current_user),
@@ -548,7 +568,13 @@ async def email_upi_details(
             secrets.token_hex(8),
             settings.founder_upi_id,
             settings.founder_upi_payee_name,
-            settings.subscription_price_inr,
+            # Must match what submit_upi_claim will record for the same
+            # period. Quoting the monthly price for an annual claim puts a
+            # pre-filled deep link of Rs.999 in front of a customer whose
+            # claim is Rs.9990, so the credited amount never matches in
+            # bank_alerts.py and auto-verification silently never fires --
+            # exactly the failure the deep link exists to remove.
+            price_for(settings.subscription_price_inr, payload.billing_period, settings),
         )
     except EmailNotConfiguredError as error:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Email is not configured") from error
@@ -575,7 +601,7 @@ async def my_upi_claims(
     user: User = Depends(current_user),
 ) -> list[ClaimOut]:
     rows = await database.fetch_all(
-        """SELECT id::text, method, currency, amount_inr AS amount, reference, status, created_at
+        f"""SELECT {_CLAIM_COLUMNS}
            FROM payment_claims WHERE user_id=%s AND method='upi' ORDER BY created_at DESC""",
         (user.id,),
     )
@@ -718,6 +744,7 @@ async def submit_wire_claim(
 
 class WireEmailDetailsIn(BaseModel):
     currency: str = Field(pattern="^(USD|GBP|EUR)$")
+    billing_period: BillingPeriod = "monthly"
 
 
 @router.post("/wire/email-details", response_model=EmailDetailsOut)
@@ -746,7 +773,10 @@ async def email_wire_details(
             user.email,
             secrets.token_hex(8),
             details.currency,
-            details.amount,
+            # Same reasoning as the UPI path above: the quoted amount must
+            # match what submit_wire_claim records for this period, or the
+            # credited amount can never match the claim.
+            price_for(details.amount, payload.billing_period, settings),
             settings.founder_bank_account_name,
             settings.founder_bank_account_number,
             settings.founder_bank_name,
@@ -774,7 +804,7 @@ async def my_wire_claims(
     user: User = Depends(current_user),
 ) -> list[ClaimOut]:
     rows = await database.fetch_all(
-        """SELECT id::text, method, currency, amount_inr AS amount, reference, status, created_at
+        f"""SELECT {_CLAIM_COLUMNS}
            FROM payment_claims WHERE user_id=%s AND method='wire' ORDER BY created_at DESC""",
         (user.id,),
     )
