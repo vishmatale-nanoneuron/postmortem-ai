@@ -78,3 +78,27 @@ def test_the_wire_email_tells_the_sender_to_use_the_OUR_charge_code(monkeypatch)
     assert "SHA" in html and "BEN" in html          # explains what to avoid, not just what to do
     assert "USD 15" in html                          # the amount that must actually land
     assert "reference" in html.lower()               # asks them to identify the payment
+
+
+def test_the_wire_email_points_NRIs_at_UPI_instead(monkeypatch) -> None:
+    """A large share of this product's audience is Indian DevOps/SRE engineers
+    working abroad. NRIs in 12 countries can pay by UPI from an international
+    mobile number linked to an NRE/NRO account -- instantly, with none of the
+    wire fees. Without this note they were paying USD 15-40 in charges to send
+    a payment they could have made for free."""
+    import resend
+
+    from app.services.email import send_wire_payment_details_email
+
+    captured: dict = {}
+    monkeypatch.setattr(resend.Emails, "send", lambda payload, opts=None: captured.update(payload))
+
+    send_wire_payment_details_email(
+        _settings(monkeypatch), "client@example.test", "req-2", "USD", 15,
+        "Acct", "123", "Bank", "SWIFT", "Corr", "CORRSWIFT", "nostro", "ABA",
+    )
+
+    html = captured["html"]
+    assert "NRE/NRO" in html
+    assert "UPI" in html
+    assert "no wire fees" in html.lower()

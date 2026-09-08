@@ -6,7 +6,7 @@ Canonical product: [https://www.nanoneuron.ai/](https://www.nanoneuron.ai/)
 [Published postmortems](https://www.nanoneuron.ai/postmortems)
 [Pricing](https://www.nanoneuron.ai/pricing)
 Contact: vish.matale@gmail.com
-Last factual review: 2026-09-05
+Last factual review: 2026-09-08
 
 ## What this is
 
@@ -122,7 +122,11 @@ subscription. For clients in any country, an international SWIFT wire
 the real account details (UPI ID, wire account number) be emailed
 directly to their own registered address -- self-serve, no need to
 contact the founder first -- then submit the transaction reference once
-paid, and the founder reviews and approves it personally. Self-serve
+paid, and the founder reviews and approves it personally. An NRI with an NRE/NRO account and an international mobile number
+(supported from the US, UK, Canada, Australia, Singapore, UAE,
+Saudi Arabia, Qatar, Oman, Malaysia, Hong Kong and France) can pay
+by UPI rather than wire -- instant, and without the wire fees.
+Self-serve
 card payment via Stripe Checkout is built (and self-serve subscription
 management via the Stripe Customer Portal) but not yet switched on for
 real payments -- it appears automatically once it is, with no other

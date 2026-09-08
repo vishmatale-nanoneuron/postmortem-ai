@@ -7,7 +7,7 @@ Canonical product: [https://www.nanoneuron.ai/](https://www.nanoneuron.ai/)
 [Published postmortems](https://www.nanoneuron.ai/postmortems)
 [Pricing](https://www.nanoneuron.ai/pricing)
 Contact: vish.matale@gmail.com
-Last factual review: 2026-09-05
+Last factual review: 2026-09-08
 
 This file is the complete reference; llms.txt above is the short index. Every
 claim here is checked against the running code and, where practical, against
@@ -38,7 +38,7 @@ engagement today, not built-in multi-client management.
   Claude is a real, configured fallback provider (not just described), used
   only when Gemini's own call fails or its circuit breaker is open — each
   provider has its own independent circuit breaker (closed/open/half-open).
-- 28 forward-only SQL migrations as of this review.
+- 29 forward-only SQL migrations as of this review.
 
 ## The core guarantee: grounded drafting
 
@@ -247,7 +247,13 @@ number, SWIFT code, correspondent bank) via `POST /upi/email-details` or
 `POST /wire/email-details`, which emails them to that client's own
 registered address -- no founder round-trip needed just to find out how
 to pay. Submitting the transaction reference afterward still requires the
-founder's explicit approval before access activates. A third path — Stripe Checkout,
+founder's explicit approval before access activates. Indian-diaspora customers are not limited to wire: an NRI with an
+NRE/NRO account and an international mobile number (US, UK, Canada,
+Australia, Singapore, UAE, Saudi Arabia, Qatar, Oman, Malaysia,
+Hong Kong, France) can pay via UPI in INR instead, instantly and
+with none of the correspondent-bank fees a wire incurs. The wire
+payment-details email says so explicitly.
+A third path — Stripe Checkout,
 self-serve, instant activation on webhook receipt, cancel/manage via the
 Stripe Customer Portal — is fully built and code-complete but not yet
 switched on for real payments (the production Stripe key is currently

@@ -204,6 +204,18 @@ def send_wire_payment_details_email(
                 "-- which delays activation while it's reconciled by hand.</p>"
                 f"<p>Please also put your account email in the payment reference/message field, so the "
                 "transfer can be matched to your account.</p>"
+                # A large share of this product's audience is Indian DevOps/SRE
+                # engineers working abroad. NRIs in 12 countries (US, UK,
+                # Canada, Australia, Singapore, UAE, Saudi Arabia, Qatar,
+                # Oman, Malaysia, Hong Kong, France) can pay by UPI from an
+                # international mobile number linked to an NRE/NRO account --
+                # instant, and with none of the wire fees above. Nobody was
+                # telling them, so they were paying USD 15-40 in charges to
+                # send a payment they could have made for free.
+                f'<p style="background:#f0f7f4;border-left:3px solid #2a6e5c;padding:10px 14px">'
+                f"<strong>Have an Indian bank account?</strong> If you're an NRI with an NRE/NRO "
+                f"account, you can pay by <strong>UPI instead</strong> -- instantly, with no wire "
+                f"fees at all. Request UPI details from the payment tab in your dashboard.</p>"
                 "<p>Once you've sent it, go back to the Wire tab in your dashboard and submit the transaction "
                 "reference from your MT103 -- your account is activated once that's reviewed.</p>"
             ),
