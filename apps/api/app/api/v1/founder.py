@@ -258,10 +258,24 @@ async def approve_payment_claim(
 
     now = int(time.time() * 1000)
     async with database.transaction() as tx:
-        await tx.execute(
-            "UPDATE payment_claims SET status='approved', reviewed_by=%s, reviewed_at=%s WHERE id=%s",
+        # AND status='pending' is what actually enforces the invariant. The
+        # check above is a read outside this transaction, so on its own it
+        # loses a race: two concurrent approves (a double-click, or two open
+        # dashboard tabs) both saw 'pending' and both proceeded, calling
+        # activate_manual_subscription twice and granting the subscription
+        # period twice over -- a free extra month, or a free extra year on an
+        # annual claim -- plus a duplicate entry in the append-only ledger.
+        # Making the UPDATE conditional and checking the rowcount means
+        # exactly one caller can ever win, and the loser rolls back.
+        updated = await tx.execute(
+            "UPDATE payment_claims SET status='approved', reviewed_by=%s, reviewed_at=%s"
+            " WHERE id=%s AND status='pending'",
             (founder.email, now, claim_id),
         )
+        if not updated:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Only a pending claim can be approved"
+            )
         # 'active' is one of the statuses require_active_subscription treats
         # as paid (see auth.ACTIVE_SUBSCRIPTION_STATUSES). This is the ONLY
         # call site in the whole codebase that reaches
@@ -305,10 +319,16 @@ async def reject_payment_claim(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only a pending claim can be rejected")
 
     now = int(time.time() * 1000)
-    await database.execute(
-        "UPDATE payment_claims SET status='rejected', reviewed_by=%s, reviewed_at=%s WHERE id=%s",
+    # Same conditional-update reasoning as approve above: without
+    # AND status='pending', a concurrent reject/approve pair could both
+    # proceed and write contradictory outcomes to the ledger.
+    updated = await database.execute(
+        "UPDATE payment_claims SET status='rejected', reviewed_by=%s, reviewed_at=%s"
+        " WHERE id=%s AND status='pending'",
         (founder.email, now, claim_id),
     )
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only a pending claim can be rejected")
     await record_claim_event(database, claim_id, "rejected", founder.email)
     await _notify_client(settings, claim_id, str(claim["email"]), str(claim["method"]), approved=False)
     return PaymentClaimOut(**{**claim, "status": "rejected"})

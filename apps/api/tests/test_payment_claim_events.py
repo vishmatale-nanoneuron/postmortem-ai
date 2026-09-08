@@ -4,6 +4,7 @@ reconstructable afterward, not just its current overwritten state.
 """
 
 import os
+import time
 
 import pytest
 import pytest_asyncio
@@ -225,3 +226,39 @@ async def test_an_email_failure_never_breaks_the_approval(context, monkeypatch: 
     # And the grant is real, not just a 200: the account is actually active.
     row = await database.fetch_one("SELECT subscription_status FROM users WHERE email=%s", (CLIENT_EMAIL,))
     assert row is not None and row["subscription_status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_two_concurrent_approvals_grant_the_subscription_only_once(context) -> None:
+    """A double-click, or two open founder tabs. The pre-check reads the
+    claim's status outside the transaction, so on its own it loses this race:
+    both callers saw 'pending', both proceeded, and activate_manual_subscription
+    ran twice -- granting the period twice over (a free extra month, or a free
+    extra year on an annual claim) and writing a duplicate entry into the
+    append-only ledger. The conditional UPDATE is what actually prevents it."""
+    import asyncio
+
+    client, database = context
+    await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+    claim = await client.post("/v1/billing/upi/claim", json={"reference": "RACECONDITION123"})
+    claim_id = claim.json()["id"]
+    client.cookies.clear()
+    await client.post("/v1/auth/register", json={"email": FOUNDER_EMAIL, "password": "correct-horse-battery"})
+
+    first, second = await asyncio.gather(
+        client.post(f"/v1/founder/payment-claims/{claim_id}/approve"),
+        client.post(f"/v1/founder/payment-claims/{claim_id}/approve"),
+        return_exceptions=True,
+    )
+    codes = sorted(r.status_code for r in (first, second) if hasattr(r, "status_code"))
+    assert codes == [200, 409], codes  # exactly one winner
+
+    # The ledger records the approval once, not twice.
+    events = await client.get(f"/v1/founder/payment-claims/{claim_id}/events")
+    approvals = [e for e in events.json() if e["event_type"] == "approved"]
+    assert len(approvals) == 1, events.json()
+
+    # And the grant happened once: ~30 days, not ~60.
+    row = await database.fetch_one("SELECT current_period_end FROM users WHERE email=%s", (CLIENT_EMAIL,))
+    days = (row["current_period_end"] - int(time.time())) / 86400
+    assert 25 < days <= 31, days
