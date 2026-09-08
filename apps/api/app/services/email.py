@@ -8,6 +8,8 @@ template and no shared logic worth factoring out yet.
 import hashlib
 import logging
 
+from urllib.parse import quote, urlencode
+
 import resend
 
 from ..settings import Settings
@@ -86,6 +88,31 @@ def send_free_incident_nudge_email(settings: Settings, to_email: str, incident_t
     logger.info("free_incident_nudge_email_sent")
 
 
+def build_upi_payment_link(upi_id: str, payee_name: str, amount_inr: int) -> str:
+    """An NPCI UPI deep link (`upi://pay?...`), built by hand from the spec.
+
+    Deliberately zero-dependency: this is a URI scheme, not an API, so there
+    is no SDK, no vendor, no fee and no account involved -- the money still
+    moves bank-to-bank exactly as before. It only removes typing.
+
+    Why it matters: before this, a client received a bare UPI ID and had to
+    copy it, then type the amount themselves. A hand-typed amount is the one
+    input most likely to be wrong, and a wrong amount is precisely what stops
+    a payment matching its claim in bank_alerts.py -- which surfaces to the
+    customer as a rejected claim after they have actually paid. Pre-filling
+    payee and amount removes that failure mode at the source.
+
+    Every value is percent-encoded: a payee name with a space or an "&"
+    would otherwise silently truncate the query string and produce a link
+    that opens a UPI app with the wrong (or missing) payee.
+    """
+    params = urlencode(
+        {"pa": upi_id, "pn": payee_name, "am": str(amount_inr), "cu": "INR"},
+        quote_via=quote,
+    )
+    return f"upi://pay?{params}"
+
+
 def send_upi_payment_details_email(
     settings: Settings, to_email: str, request_id: str, upi_id: str, payee_name: str, amount_inr: int
 ) -> None:
@@ -102,6 +129,8 @@ def send_upi_payment_details_email(
     if not settings.resend_api_key or not settings.resend_email_domain:
         raise EmailNotConfiguredError("RESEND_API_KEY/RESEND_EMAIL_DOMAIN are not configured")
 
+    payment_link = build_upi_payment_link(upi_id, payee_name, amount_inr)
+
     resend.api_key = settings.resend_api_key
     resend.Emails.send(
         {
@@ -109,8 +138,14 @@ def send_upi_payment_details_email(
             "to": [to_email],
             "subject": "Your PostMortem AI UPI payment details",
             "html": (
-                f"<p>Pay <strong>₹{amount_inr}/month</strong> via UPI to:</p>"
-                f"<p>UPI ID: <code>{upi_id}</code><br>Payee name: {payee_name}</p>"
+                f"<p>Pay <strong>₹{amount_inr}/month</strong> via UPI.</p>"
+                f'<p><a href="{payment_link}" style="display:inline-block;background:#1a1a1a;color:#f7f7f5;'
+                f'padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600">'
+                f"Pay ₹{amount_inr} with any UPI app</a></p>"
+                "<p style=\"font-size:13px;color:#555\">Opens your UPI app with the payee and amount already "
+                "filled in. Tap it on the phone your UPI app is installed on.</p>"
+                f"<p style=\"font-size:13px;color:#555\">Prefer to enter it manually? UPI ID: <code>{upi_id}</code>"
+                f"<br>Payee name: {payee_name} &middot; Amount: ₹{amount_inr}</p>"
                 "<p>Once you've paid, go back to the UPI tab in your dashboard and submit the transaction "
                 "reference / UTR number from your payment app -- your account is activated once that's reviewed.</p>"
             ),

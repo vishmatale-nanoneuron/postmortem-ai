@@ -319,3 +319,4 @@ async def test_a_claim_is_still_created_even_if_the_confirmation_email_fails(con
     claim = await client.post("/v1/billing/upi/claim", json={"reference": "UTR-CONFIRM-EMAIL-DOWN"})
     assert claim.status_code == 201, claim.text
     assert claim.json()["status"] == "pending"
+
