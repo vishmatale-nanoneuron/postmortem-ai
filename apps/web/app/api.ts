@@ -148,8 +148,11 @@ export type BillingStatus = {
 // Price only -- never the real account/UPI id, never fetched by a client.
 // The real details (UpiInfo/WireInfo below) are founder-only now; a client
 // who wants to pay is told to contact the founder to arrange it.
-export type UpiPricing = { amount_inr: number; configured: boolean };
-export type WirePricing = { configured: boolean; currencies: { currency: string; amount: number }[] };
+export type UpiPricing = { amount_inr: number; amount_inr_annual: number; configured: boolean };
+export type WirePricing = {
+  configured: boolean;
+  currencies: { currency: string; amount: number; amount_annual: number }[];
+};
 
 export type UpiInfo = { upi_id: string; payee_name: string; amount_inr: number; configured: boolean };
 
@@ -179,6 +182,10 @@ export type Claim = {
   reference: string;
   status: string;
   created_at: number;
+  // "monthly" | "annual" -- returned by the backend's single _CLAIM_COLUMNS
+  // projection. It matters at approval time: an annual claim grants 365 days,
+  // not 30, so the founder UI must say which before the click, not after.
+  billing_period: string;
 };
 
 export type PaymentClaim = Claim & { user_id: string; email: string; bank_verified: boolean };
@@ -191,20 +198,30 @@ export const billing = {
   checkout: () => request<{ url: string }>("/v1/billing/checkout", { method: "POST" }),
   portal: () => request<{ url: string }>("/v1/billing/portal", { method: "POST" }),
   upiPricing: () => request<UpiPricing>("/v1/billing/upi/pricing"),
-  submitUpiClaim: (reference: string) =>
-    request<Claim>("/v1/billing/upi/claim", { method: "POST", body: JSON.stringify({ reference }) }),
+  submitUpiClaim: (reference: string, billingPeriod: "monthly" | "annual" = "monthly") =>
+    request<Claim>("/v1/billing/upi/claim", {
+      method: "POST",
+      body: JSON.stringify({ reference, billing_period: billingPeriod }),
+    }),
   // Self-serve replacement for emailing the founder to ask for the real
   // UPI ID -- see api/v1/billing.py's email_upi_details. Sends to the
   // caller's own registered address; there's no address to pass here.
-  emailUpiDetails: () => request<{ sent: boolean }>("/v1/billing/upi/email-details", { method: "POST" }),
+  emailUpiDetails: (billingPeriod: "monthly" | "annual" = "monthly") =>
+    request<{ sent: boolean }>("/v1/billing/upi/email-details", {
+      method: "POST",
+      body: JSON.stringify({ billing_period: billingPeriod }),
+    }),
   myUpiClaims: () => request<Claim[]>("/v1/billing/upi/claims"),
   wirePricing: () => request<WirePricing>("/v1/billing/wire/pricing"),
-  submitWireClaim: (currency: string, reference: string) =>
-    request<Claim>("/v1/billing/wire/claim", { method: "POST", body: JSON.stringify({ currency, reference }) }),
-  emailWireDetails: (currency: string) =>
+  submitWireClaim: (currency: string, reference: string, billingPeriod: "monthly" | "annual" = "monthly") =>
+    request<Claim>("/v1/billing/wire/claim", {
+      method: "POST",
+      body: JSON.stringify({ currency, reference, billing_period: billingPeriod }),
+    }),
+  emailWireDetails: (currency: string, billingPeriod: "monthly" | "annual" = "monthly") =>
     request<{ sent: boolean }>("/v1/billing/wire/email-details", {
       method: "POST",
-      body: JSON.stringify({ currency }),
+      body: JSON.stringify({ currency, billing_period: billingPeriod }),
     }),
   myWireClaims: () => request<Claim[]>("/v1/billing/wire/claims"),
   // PATCH -- fix a typo'd reference; DELETE -- withdraw the claim. Both

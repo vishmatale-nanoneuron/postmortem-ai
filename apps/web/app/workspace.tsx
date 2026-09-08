@@ -715,7 +715,13 @@ function PaymentClaimsReview() {
     }
   }
 
-  async function act(claimId: string, action: "approve" | "reject", reference: string, bankVerified: boolean) {
+  async function act(
+    claimId: string,
+    action: "approve" | "reject",
+    reference: string,
+    bankVerified: boolean,
+    billingPeriod: string,
+  ) {
     // Approving is what actually grants access -- a single accidental
     // click here previously had no safety net at all (this is exactly how
     // a claim with no real payment behind it got approved once already).
@@ -723,12 +729,16 @@ function PaymentClaimsReview() {
     // -- automation (bank_alerts.py) only ever marks a claim verified, it
     // never approves anything itself, per explicit instruction.
     if (action === "approve") {
+      // State the duration explicitly. An annual claim grants 365 days, and
+      // approving one believing it to be the usual 30 is an expensive,
+      // silent mistake -- the two claims looked identical here before.
+      const grant = billingPeriod === "annual" ? "a FULL YEAR (365 days)" : "30 days";
       const confirmed = bankVerified
         ? window.confirm(
-            `Approve reference "${reference}"?\n\nA real forwarded bank alert already matched this exact reference and amount. This grants the client real paid access.`,
+            `Approve reference "${reference}"?\n\nThis grants ${grant} of paid access.\n\nA real forwarded bank alert already matched this exact reference and amount.`,
           )
         : window.confirm(
-            `Approve reference "${reference}"?\n\nNo bank alert has matched this yet -- only click OK if you have personally checked your bank/UPI statement and confirmed this exact amount and reference actually arrived. This grants the client real paid access.`,
+            `Approve reference "${reference}"?\n\nThis grants ${grant} of paid access.\n\nNo bank alert has matched this yet -- only click OK if you have personally checked your bank/UPI statement and confirmed this exact amount and reference actually arrived.`,
           );
       if (!confirmed) return;
     }
@@ -790,6 +800,17 @@ function PaymentClaimsReview() {
                 {claim.amount} via {claim.method === "wire" ? "SWIFT wire" : "UPI"}, ref{" "}
                 <span className="font-mono text-xs">{claim.reference}</span>
                 <span className="text-muted"> ({claim.status})</span>
+                {claim.billing_period === "annual" && (
+                  // Visible before the click, not only in the confirm dialog:
+                  // a year-long grant should never be something you discover
+                  // after approving.
+                  <span
+                    className="ml-1.5 rounded-full bg-ink px-1.5 py-0.5 text-xs font-medium text-paper"
+                    title="Approving this grants 365 days of access, not 30"
+                  >
+                    ANNUAL · 365 days
+                  </span>
+                )}
                 {claim.bank_verified && (
                   <span className="ml-1.5 rounded-full bg-accent/10 px-1.5 py-0.5 text-xs font-medium text-accent">
                     ✓ Bank verified
@@ -801,7 +822,7 @@ function PaymentClaimsReview() {
                   <button
                     className="rounded-md bg-ink px-2 py-1 text-xs font-medium text-paper disabled:opacity-50"
                     disabled={busyId === claim.id}
-                    onClick={() => void act(claim.id, "approve", claim.reference, claim.bank_verified)}
+                    onClick={() => void act(claim.id, "approve", claim.reference, claim.bank_verified, claim.billing_period)}
                     type="button"
                   >
                     Approve
@@ -809,7 +830,7 @@ function PaymentClaimsReview() {
                   <button
                     className="rounded-md border border-line px-2 py-1 text-xs text-muted disabled:opacity-50"
                     disabled={busyId === claim.id}
-                    onClick={() => void act(claim.id, "reject", claim.reference, claim.bank_verified)}
+                    onClick={() => void act(claim.id, "reject", claim.reference, claim.bank_verified, claim.billing_period)}
                     type="button"
                   >
                     Reject

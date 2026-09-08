@@ -25,6 +25,7 @@ const claim = {
   reference: "TXN123",
   status: "pending",
   created_at: Date.now(),
+  billing_period: "monthly",
 };
 
 beforeEach(() => {
