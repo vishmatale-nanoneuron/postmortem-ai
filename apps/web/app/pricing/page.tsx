@@ -206,7 +206,11 @@ export default async function PricingPage() {
         .
       </p>
 
-      <div className={cn(card, "mt-8")}>
+      {/* Anchor target for the footer's "Sales and Refunds" link -- it points
+          here rather than at a separate page, so there is exactly one copy of
+          the refund terms and no chance of two versions disagreeing.
+          scroll-mt clears the sticky header when jumped to. */}
+      <div id="refunds" className={cn(card, "mt-8 scroll-mt-24")}>
         <div className="text-xs font-medium tracking-wide text-muted uppercase">14-day refund</div>
         <p className="mt-2 text-sm text-muted">
           Not happy? Email{" "}
