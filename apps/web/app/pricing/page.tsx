@@ -5,15 +5,21 @@ import { SiteFooter, SiteHeader } from "../landing";
 
 export const metadata: Metadata = {
   title: "Pricing",
-  description: "PostMortem AI pricing: ₹999/month via UPI in India, or a SWIFT wire in USD/GBP/EUR internationally.",
+  description:
+    "PostMortem AI pricing: ₹999/month or ₹9,990/year via UPI in India, or a SWIFT wire in USD/GBP/EUR internationally. Pay annually and two months are free.",
   robots: { index: true, follow: true },
   alternates: { canonical: "/pricing" },
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 
-type UpiInfo = { amount_inr: number; configured: boolean };
-type WireCurrency = { currency: string; amount: number };
+// amount_*_annual are served by both pricing endpoints and were being
+// discarded here: these types omitted the fields entirely, so the annual plan
+// -- fully built in the backend (BillingPeriod, annual_price(), migration
+// 0029's billing_period column) -- was unbuyable, because nothing ever showed
+// it to a customer.
+type UpiInfo = { amount_inr: number; amount_inr_annual: number; configured: boolean };
+type WireCurrency = { currency: string; amount: number; amount_annual: number };
 type WireInfo = { currencies: WireCurrency[]; configured: boolean };
 
 const CURRENCY_SYMBOLS: Record<string, string> = { USD: "$", GBP: "£", EUR: "€" };
@@ -30,6 +36,11 @@ const FAQ: { question: string; answer: string }[] = [
     question: "Is there a free trial?",
     answer:
       "Not for new accounts -- an active subscription is required from your first incident. (A small number of legacy accounts that used a free incident before this policy took effect keep what they already had.)",
+  },
+  {
+    question: "Can I pay annually?",
+    answer:
+      "Yes -- an annual payment is charged for ten months, so two months are free. If you are paying by international SWIFT wire, annual is strongly recommended: a wire costs the sender roughly USD 15-40 in bank fees, which is more than a single month's subscription, so paying monthly by wire means a surcharge larger than the thing you're buying.",
   },
   {
     question: "How do I get the UPI ID or bank account details to pay?",
@@ -115,10 +126,10 @@ export default async function PricingPage() {
       <main className="mx-auto max-w-2xl px-4 py-10">
       <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 text-center duration-700">
         <div className="text-xs font-medium tracking-widest text-muted uppercase">Pricing</div>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">One plan, billed monthly</h1>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">One plan, monthly or annual</h1>
         <p className="mx-auto mt-2 max-w-md text-sm text-muted">
           Full access: unlimited incidents, evidence-grounded AI drafting, and publishing. No trial gimmicks, no
-          hidden tiers.
+          hidden tiers. Pay annually and two months are free.
         </p>
       </div>
 
@@ -130,6 +141,12 @@ export default async function PricingPage() {
               {upi.status === "ok" && upi.data.configured ? `₹${upi.data.amount_inr}` : "—"}
               <span className="text-base font-normal text-muted">/mo</span>
             </div>
+            {upi.status === "ok" && upi.data.configured && upi.data.amount_inr_annual > 0 ? (
+              <div className="mt-1 text-sm text-muted">
+                or <span className="font-semibold text-ink">₹{upi.data.amount_inr_annual}</span>/year
+                <span className="text-verified"> -- two months free</span>
+              </div>
+            ) : null}
             {upiUnreachable ? (
               <p className="mt-2 text-sm text-muted">Couldn&apos;t load pricing just now -- try refreshing.</p>
             ) : (
@@ -146,8 +163,16 @@ export default async function PricingPage() {
                 wire.data.currencies.map((c) => (
                   <div key={c.currency} className="text-lg font-semibold text-ink">
                     {CURRENCY_SYMBOLS[c.currency] ?? `${c.currency} `}
-                    {c.amount}
-                    <span className="text-sm font-normal text-muted"> /mo ({c.currency})</span>
+                    {c.amount_annual > 0 ? c.amount_annual : c.amount}
+                    <span className="text-sm font-normal text-muted">
+                      {c.amount_annual > 0 ? ` /year (${c.currency})` : ` /mo (${c.currency})`}
+                    </span>
+                    {c.amount_annual > 0 ? (
+                      <span className="ml-1 text-sm font-normal text-muted">
+                        or {CURRENCY_SYMBOLS[c.currency] ?? `${c.currency} `}
+                        {c.amount}/mo
+                      </span>
+                    ) : null}
                   </div>
                 ))
               ) : (
@@ -157,14 +182,24 @@ export default async function PricingPage() {
             {wireUnreachable ? (
               <p className="mt-2 text-sm text-muted">Couldn&apos;t load pricing just now -- try refreshing.</p>
             ) : (
-              <p className="mt-2 text-sm text-muted">Pay via international SWIFT wire. Same manual, human-approved process.</p>
+              // Annual is shown first here on purpose, and it is not a
+              // discount play: a SWIFT wire costs the sender roughly USD 15-40
+              // in fees, so paying a ~USD 15 monthly subscription by wire means
+              // a >100% surcharge every month. Annual is the only version of
+              // this rail that is economically sane for an international
+              // customer, which is exactly why migration 0029 added it.
+              <p className="mt-2 text-sm text-muted">
+                Pay via international SWIFT wire. Annual is recommended -- wire fees make a monthly transfer cost more
+                than the subscription. Same manual, human-approved process.
+              </p>
             )}
           </div>
         </div>
       </div>
 
       <p className="mt-6 text-center text-sm text-muted">
-        No card required, no auto-renewal surprise -- payment is a manual, human-reviewed step every time. See{" "}
+        No card required, no auto-renewal surprise -- payment is a manual, human-reviewed step every time. Paying
+        annually makes that once a year instead of twelve. See{" "}
         <Link className="underline underline-offset-2" href="/docs">
           how it works
         </Link>
