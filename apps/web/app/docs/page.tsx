@@ -161,6 +161,19 @@ export default function DocsPage() {
             integration is a documented JSON template for Datadog&apos;s own payload field, pointed at the generic
             webhook above -- also in account settings.
           </p>
+          <p className={p}>
+            Slack has its own receiver too: paste the URL from account settings into a Slack app&apos;s Event
+            Subscriptions, subscribe to <code className="font-mono">message.channels</code>, and invite it to your
+            incident channel. One thread becomes one incident -- the first message opens it, every reply is recorded
+            as further evidence on it, so the timeline assembles itself instead of being pasted in afterwards.
+          </p>
+          <p className={p}>
+            Three things it deliberately won&apos;t do. Messages from bots are ignored, because this app also posts
+            its own notifications into Slack and ingesting those would let it cite text it wrote itself. Edited and
+            deleted messages never rewrite evidence already recorded. And nothing resolves an incident or drafts a
+            postmortem off a chat message -- &quot;we&apos;re resolved&quot; typed in a channel is not an
+            authenticated state change, unlike a PagerDuty resolve, which is.
+          </p>
         </>,
       )}
 
@@ -202,6 +215,22 @@ export default function DocsPage() {
             appear as an option automatically, without anything else here needing to change. Not happy after
             subscribing? Email the founder within 14 days of your first charge and it&apos;s refunded -- the same
             personal review as approving a payment, on any rail.
+          </p>
+          <p className={p}>
+            Both rails can be paid monthly or annually, and annual is charged for ten months -- two are free. If
+            you&apos;re paying by SWIFT wire, take the annual option: a wire costs the sender roughly USD 15-40 in
+            bank fees, which is more than a single month of this subscription, so monthly-by-wire means paying a
+            surcharge larger than the product. Current prices are on the{" "}
+            <Link className="underline underline-offset-2" href="/pricing">
+              pricing page
+            </Link>
+            .
+          </p>
+          <p className={p}>
+            Deleting your account is a real erasure, not a disabled login: every incident, evidence entry,
+            postmortem, draft and activity-log entry it owns is permanently removed, in one transaction, including
+            any postmortem you published publicly. Export your data first if you want to keep a copy -- afterwards
+            there is nothing left to recover, by you or by us.
           </p>
         </>,
       )}
