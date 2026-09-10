@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -43,12 +44,33 @@ const SECURITY_HEADERS = [
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
 ];
 
+// This app gets built two different ways, and the file-tracing root has to
+// differ between them or one of the two breaks:
+//
+//   1. Scoped CLI deploy (`cd apps/web && vercel deploy --prod`) uploads ONLY
+//      this directory, so this directory IS the build root. node_modules lives
+//      here. Tracing root must be __dirname.
+//   2. Git-triggered build with the Vercel project's Root Directory set to
+//      apps/web clones the whole repo and installs the Bun workspace, which
+//      HOISTS node_modules to the repo root -- outside __dirname. Tracing from
+//      __dirname then silently omits server dependencies.
+//
+// (2) is not hypothetical: with a hardcoded `outputFileTracingRoot: __dirname`,
+// setting Root Directory to apps/web produced a build that reported success and
+// then served a persistent 500 on /status in production, while every other
+// route stayed 200 -- because only that route's server-side dependencies fell
+// outside the traced set. Detecting the layout instead of hardcoding either
+// value keeps both paths working.
+//
+// The original reason for pinning this at all still holds: two lockfiles exist
+// by design (the repo root's, for scripts/migrate.mjs's `postgres` dependency,
+// and this app's own), so leaving it unset makes Next.js guess and warn.
+const repoRoot = path.join(__dirname, "..", "..");
+const isWorkspaceBuild = existsSync(path.join(repoRoot, "bun.lock"));
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Two lockfiles exist by design: the repo root's (for scripts/migrate.mjs's
-  // `postgres` dependency) and this app's own. Without this, Next.js guesses
-  // the workspace root and warns on every build.
-  outputFileTracingRoot: __dirname,
+  outputFileTracingRoot: isWorkspaceBuild ? repoRoot : __dirname,
   async headers() {
     return [{ source: "/:path*", headers: SECURITY_HEADERS }];
   },

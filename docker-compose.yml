@@ -1,0 +1,133 @@
+# Local development and test environment.
+#
+# Production does NOT use this: apps/web and apps/api both deploy to Vercel
+# (see docs/BACKEND_DEPLOYMENT.md), and the production database is Supabase.
+# This exists so the pytest suite -- most of which skips itself without a real
+# Postgres -- can actually run, and so the whole stack can be brought up with
+# one command.
+#
+#   docker compose up --build          # full stack on :3000 / :8000
+#   docker compose run --rm migrate    # apply migrations (idempotent, safe to rerun)
+#
+#   # Backend tests, the way CI runs them (311 pass):
+#   docker compose run --rm api pytest -q --ignore=tests/test_mcp_server.py
+#
+#   # The MCP file runs separately and non-fatally. All 21 assertions pass; it
+#   # also emits 21 teardown-only anyio errors ("Attempted to exit cancel scope
+#   # in a different task") -- a known, harmless artifact of driving FastMCP
+#   # across an in-process ASGITransport. See that file's module docstring and
+#   # the matching step in .github/workflows/ci.yml.
+#   docker compose run --rm api pytest -q tests/test_mcp_server.py
+#
+# IMPORTANT -- reset the database before trusting a full-suite run:
+#   docker compose down -v && docker compose run --rm migrate
+#
+# The db-data volume below persists between runs, which is what you want for
+# development and wrong for tests. Most tests clean up their own rows, but
+# test_a_published_postmortem_surfaces_as_rag_context_for_a_later_draft does a
+# similarity search across ALL published postmortems, so leftovers from earlier
+# runs make it match a stale incident and fail. Seen for real: 365 incidents and
+# 9 postmortems accumulated over a session, producing exactly one failure that
+# reproduced with the working tree stashed -- i.e. not a code regression. After
+# a reset: 321 passed, 0 failed. CI never hits this; it gets a fresh service
+# container per run.
+#
+# Postgres image and credentials deliberately mirror .github/workflows/ci.yml
+# so a green run here means the same thing a green run in CI does.
+
+name: postmortem-ai
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postmortem_ai
+    ports:
+      # Published so host-side tooling (psql, scripts/migrate.mjs run outside
+      # Docker) can reach it too. 5433 on the host to avoid colliding with a
+      # Postgres already running locally.
+      - "5433:5432"
+    healthcheck:
+      # Every other service waits on this. Without it they race the database's
+      # first-boot initialisation and fail on connection refused.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postmortem_ai"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+  migrate:
+    # A dedicated image rather than a bind-mounted bun container: a host
+    # bind-mount would let `bun install` overwrite the macOS host's node_modules
+    # with Linux binaries and break local dev outside Docker.
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/postmortem_ai
+      DATABASE_SSL_MODE: disable
+    command: ["bun", "run", "migrate"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    ports:
+      # Host port is configurable because 8000 is a popular default and may
+      # already be taken by another project's containers. Override with
+      # API_PORT=8001 docker compose up -- the web build arg below reads the
+      # same variable, so the two cannot drift apart.
+      - "${API_PORT:-8000}:8000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/postmortem_ai
+      # The compose Postgres has no TLS; without this psycopg refuses to connect.
+      DATABASE_SSL_MODE: disable
+      # Lets `docker compose run --rm api pytest` find a real database. Without
+      # it the majority of apps/api/tests skips silently and a green run means
+      # almost nothing.
+      TEST_DATABASE_URL: postgresql://postgres:postgres@db:5432/postmortem_ai?sslmode=disable
+      SESSION_SECRET: dev-only-session-secret-not-for-production
+      COOKIE_SECURE: "false"
+      CORS_ORIGINS: http://localhost:3000
+      # Optional: inherited from your shell if set, empty otherwise. Only the
+      # AI drafting endpoints need it; everything else works without.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+    volumes:
+      # Source-mounted so editing a route or a test is picked up immediately,
+      # instead of needing `docker compose build api` before every test run.
+      # Safe here in a way a bind-mount is NOT for the bun containers: there is
+      # no node_modules to clobber with Linux binaries, and the installed
+      # site-packages live outside /srv entirely, so the mount can't shadow them.
+      - ./apps/api/app:/srv/app
+      - ./apps/api/tests:/srv/tests
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Browser-facing, and baked in at build time -- see apps/web/Dockerfile.
+        # Reads the same API_PORT as the api service's published port, so
+        # changing the port cannot leave the bundle pointing at the old one.
+        # Note this is a BUILD arg: after changing API_PORT you must rebuild
+        # (`docker compose up --build`), not just restart.
+        NEXT_PUBLIC_API_BASE: http://localhost:${API_PORT:-8000}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      - api
+
+volumes:
+  db-data:

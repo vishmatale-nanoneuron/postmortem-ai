@@ -1280,6 +1280,10 @@ function UpiPayment() {
   const [detailsSent, setDetailsSent] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  // Drives BOTH emailDetails and submitReference below. Splitting them would
+  // recreate the exact mismatch the emailed UPI deep link exists to prevent:
+  // details quoting one amount while the claim records another period.
+  const [period, setPeriod] = useState<"monthly" | "annual">("monthly");
 
   // Real UPI ID is founder-only now (see api/v1/billing.py) -- a client
   // never fetches it directly; this only shows the price, which is public
@@ -1298,7 +1302,7 @@ function UpiPayment() {
     setEmailingDetails(true);
     setError("");
     try {
-      await billing.emailUpiDetails();
+      await billing.emailUpiDetails(period);
       setDetailsSent(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not email the account details.");
@@ -1314,7 +1318,7 @@ function UpiPayment() {
     setBusy(true);
     setError("");
     try {
-      await billing.submitUpiClaim(reference);
+      await billing.submitUpiClaim(reference, period);
       await refresh();
       setMessage("Submitted. The founder will review and activate your account shortly -- you'll also get an email confirming it.");
     } catch (err) {
@@ -1330,7 +1334,43 @@ function UpiPayment() {
 
   return (
     <>
-      <p className="mb-3 text-sm text-muted">₹{upi.amount_inr}/month via UPI.</p>
+      <p className="mb-2 text-sm text-muted">Pay via UPI, monthly or annually.</p>
+      <fieldset
+        className="mb-3"
+        // Changing the period after the details email has gone out would leave
+        // the customer holding a link for the other amount, so re-arm the
+        // "email me the details" prompt rather than silently disagreeing with
+        // what's already in their inbox.
+        onChange={() => setDetailsSent(false)}
+      >
+        <legend className="sr-only">Billing period</legend>
+        <div className="flex flex-wrap gap-4">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="radio"
+              name="upi-billing-period"
+              value="monthly"
+              checked={period === "monthly"}
+              onChange={() => setPeriod("monthly")}
+            />
+            <span>₹{upi.amount_inr} / month</span>
+          </label>
+          {upi.amount_inr_annual > 0 && (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="upi-billing-period"
+                value="annual"
+                checked={period === "annual"}
+                onChange={() => setPeriod("annual")}
+              />
+              <span>
+                ₹{upi.amount_inr_annual} / year <span className="text-verified">-- two months free</span>
+              </span>
+            </label>
+          )}
+        </div>
+      </fieldset>
       {detailsSent ? (
         <p className="mb-3 text-sm text-accent">
           Sent to your email -- check your inbox (and spam) for the UPI ID to pay to.{" "}
@@ -1396,6 +1436,11 @@ function WirePayment() {
   const [detailsSentFor, setDetailsSentFor] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  // Defaults to monthly, matching the backend default and the UPI tab, even
+  // though annual is what's recommended below: defaulting to annual would mean
+  // a customer who didn't read the control pays ten months at once. The
+  // recommendation is made in words instead.
+  const [period, setPeriod] = useState<"monthly" | "annual">("monthly");
 
   // Real account/SWIFT/correspondent-bank details are founder-only now
   // (see api/v1/billing.py) -- a client never fetches them directly; this
@@ -1417,7 +1462,7 @@ function WirePayment() {
     setEmailingDetails(true);
     setError("");
     try {
-      await billing.emailWireDetails(currency);
+      await billing.emailWireDetails(currency, period);
       setDetailsSentFor(currency);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not email the account details.");
@@ -1433,7 +1478,7 @@ function WirePayment() {
     setBusy(true);
     setError("");
     try {
-      await billing.submitWireClaim(currency, reference);
+      await billing.submitWireClaim(currency, reference, period);
       await refresh();
       setMessage("Submitted. The founder will review and activate your account shortly -- you'll also get an email confirming it.");
     } catch (err) {
@@ -1463,10 +1508,43 @@ function WirePayment() {
           </button>
         ))}
       </div>
-      <p className="mb-3 text-sm text-muted">
-        {currencySymbol(active.currency)}
-        {active.amount}/month via SWIFT wire in {active.currency}.
-      </p>
+      <fieldset className="mb-3" onChange={() => setDetailsSentFor(null)}>
+        <legend className="sr-only">Billing period</legend>
+        <div className="flex flex-wrap gap-4">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="radio"
+              name="wire-billing-period"
+              value="monthly"
+              checked={period === "monthly"}
+              onChange={() => setPeriod("monthly")}
+            />
+            <span>
+              {currencySymbol(active.currency)}
+              {active.amount} / month
+            </span>
+          </label>
+          {active.amount_annual > 0 && (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="wire-billing-period"
+                value="annual"
+                checked={period === "annual"}
+                onChange={() => setPeriod("annual")}
+              />
+              <span>
+                {currencySymbol(active.currency)}
+                {active.amount_annual} / year <span className="text-verified">-- two months free</span>
+              </span>
+            </label>
+          )}
+        </div>
+        <p className="mt-2 text-xs text-muted">
+          Annual is recommended for wires: a SWIFT transfer costs the sender roughly USD 15-40 in bank fees, which is
+          more than a single month of this subscription.
+        </p>
+      </fieldset>
       {detailsSentFor === currency ? (
         <p className="mb-3 text-sm text-accent">
           Sent to your email -- check your inbox (and spam) for the account to wire to.{" "}
@@ -1666,8 +1744,12 @@ export function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser
   async function deleteAccount() {
     if (user.is_founder) return; // button is hidden for the founder anyway; guards a stray call too
     if (
+      // This text is a promise about what the server actually does -- keep it
+      // in step with delete_account() in apps/api/app/api/v1/auth.py. It
+      // previously said history "stays as a record", which stopped being true
+      // when deletion became a real erasure.
       !window.confirm(
-        "Delete your account? This cannot be undone. Your incident/postmortem history stays as a record, but you will no longer be able to sign in.",
+        "Delete your account? This cannot be undone. Every incident, evidence entry and postmortem on this account is permanently deleted -- including any postmortem you published publicly, whose public page will stop working.",
       )
     )
       return;
@@ -2014,6 +2096,7 @@ function WebhookSettings() {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
   const genericUrl = token ? `${apiBase}/v1/webhooks/incidents/${token}` : "";
   const pagerdutyUrl = token ? `${apiBase}/v1/webhooks/pagerduty/${token}` : "";
+  const slackUrl = token ? `${apiBase}/v1/webhooks/slack/${token}` : "";
 
   async function rotate() {
     setBusy(true);
@@ -2035,13 +2118,14 @@ function WebhookSettings() {
       <h2 className="mb-1 text-base font-semibold">Webhook</h2>
       <p className="mb-3 text-xs text-muted">
         Let evidence arrive automatically instead of typing it in by hand. Rotating below invalidates every URL
-        built with the old token immediately, across all three tabs -- they all share one token.
+        built with the old token immediately, across all four tabs -- they all share one token.
       </p>
       <Tabs defaultValue="generic">
         <TabsList>
           <TabsTrigger value="generic">Generic</TabsTrigger>
           <TabsTrigger value="pagerduty">PagerDuty</TabsTrigger>
           <TabsTrigger value="datadog">Datadog</TabsTrigger>
+          <TabsTrigger value="slack">Slack</TabsTrigger>
         </TabsList>
         <TabsContent value="generic" className="mt-3">
           <p className="mb-2 text-xs text-muted">
@@ -2091,6 +2175,29 @@ function WebhookSettings() {
             />
           </div>
           <CopyField id="webhook-generic-url-datadog-tab" value={genericUrl} ariaLabel="Generic webhook URL" />
+        </TabsContent>
+        <TabsContent value="slack" className="mt-3">
+          <p className="mb-2 text-xs text-muted">
+            Record the incident channel as it happens, instead of pasting the thread in afterwards. Paste this as a
+            Slack app&apos;s{" "}
+            <a
+              className="underline underline-offset-2 hover:text-ink"
+              href="https://api.slack.com/apis/events-api"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Event Subscriptions
+            </a>{" "}
+            Request URL, subscribe to <code className="font-mono">message.channels</code>, then invite the app to your
+            incident channel. One thread becomes one incident -- the first message opens it and every reply is recorded
+            as further evidence on it.
+          </p>
+          <p className="mb-2 text-xs text-muted">
+            Messages from bots are ignored on purpose, so the notifications this app posts back into Slack can never
+            return as evidence. Edited and deleted messages never rewrite evidence already recorded, and nothing here
+            resolves an incident or drafts a postmortem on its own -- you still do that.
+          </p>
+          <CopyField id="webhook-slack-url" value={slackUrl} ariaLabel="Slack webhook URL" />
         </TabsContent>
       </Tabs>
       <AlertDialog>

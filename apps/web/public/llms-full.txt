@@ -7,7 +7,7 @@ Canonical product: [https://www.nanoneuron.ai/](https://www.nanoneuron.ai/)
 [Published postmortems](https://www.nanoneuron.ai/postmortems)
 [Pricing](https://www.nanoneuron.ai/pricing)
 Contact: vish.matale@gmail.com
-Last factual review: 2026-09-08
+Last factual review: 2026-09-10
 
 This file is the complete reference; llms.txt above is the short index. Every
 claim here is checked against the running code and, where practical, against
@@ -127,6 +127,33 @@ JSON template (account settings) for Datadog's own webhook payload field,
 pointed at the generic endpoint above — there is no fixed Datadog schema
 to parse.
 
+`POST /v1/webhooks/slack/{token}` is a Slack Events API receiver over the
+same `_ingest_event()` write path — paste it as a Slack app's Event
+Subscriptions Request URL, subscribe to `message.channels`, invite the app
+to an incident channel, and the channel records itself as the incident
+unfolds instead of being pasted in afterwards. **A Slack thread maps to one
+incident**: `external_id` is `slack:{channel}:{thread_root_ts}`, so the
+first message opens an incident and every reply appends evidence to that
+same one, via the identical `external_id` lookup PagerDuty uses. A message
+outside a thread keys on its own `ts`, so unrelated channel chatter is
+never absorbed into someone else's incident. Slack's one-time
+`url_verification` challenge is answered before the token lookup, since it
+carries no account context.
+
+Three refusals in that route are deliberate, not omissions. **Bot messages
+are dropped** — this app posts its own notifications *into* Slack via the
+outbound `slack_webhook_url` integration, so ingesting bot output would feed
+those back as evidence and the product would cite text it wrote itself.
+**Edits and deletions are ignored** (`message_changed`, `message_deleted`) —
+evidence is append-only and provenance-preserving, so a later edit must not
+rewrite a row already cited. **Nothing auto-resolves from chat** — someone
+typing "we're resolved" is not an authenticated state change, unlike a
+PagerDuty resolve, which is a real transition in a system of record and does
+auto-draft. Evidence lands with `source: human_note`, one of the six values
+`incident_evidence`'s CHECK constraint permits. Unrecognised payloads return
+an ignored 200, since Slack disables a subscription that keeps failing.
+Authentication is the URL token only, like the other webhook routes.
+
 ## Similar-incident retrieval, evidence quality, and draft comparison
 
 `GET /incidents/{id}/similar` runs the same account-scoped, published-only
@@ -238,8 +265,28 @@ whether the account exists — deliberately, to prevent account enumeration.
 ## Payments
 
 Creating an incident, evidence, AI extraction, drafting, publishing, and
-creating a second incident all require an active subscription. For
-clients in any country, two real paths work today: (1)
+creating a second incident all require an active subscription.
+
+**Price.** One plan, no tiers. India: ₹999/month or ₹9,990/year via UPI.
+International: USD 15, GBP 12, or EUR 14 per month, or USD 150, GBP 120, or
+EUR 140 per year, via SWIFT wire. Annual is charged for ten months, so two
+months are free (`ANNUAL_MONTHS_CHARGED`, default 10). Live prices are served
+publicly and unauthenticated from `GET /v1/billing/upi/pricing`
+(`amount_inr`, `amount_inr_annual`) and `GET /v1/billing/wire/pricing`
+(per-currency `amount`, `amount_annual`) — those endpoints, not this
+document, are the authority if the two ever disagree.
+
+**Annual is the recommended option for international customers, and not as a
+discount.** A SWIFT wire costs the sender roughly USD 15–40 in bank fees.
+Against a USD 15 monthly subscription that is a surcharge larger than the
+product itself, every month, so monthly-by-wire is not economically sensible;
+annual makes it a one-off cost on a single larger transfer. The billing
+period is stored on the claim (`payment_claims.billing_period`, migration
+0029, constrained to `monthly`/`annual`) rather than inferred from the
+amount, because an amount alone is ambiguous across currencies and approval
+needs to know unambiguously how long a grant should last.
+
+For clients in any country, two real paths work today: (1)
 manual UPI (India), founder-reviewed; (2) manual international SWIFT wire
 (USD/GBP/EUR), founder-reviewed. Both are self-serve to get started: a
 signed-in client requests the real account details (UPI ID; wire account
@@ -266,13 +313,20 @@ automatically (verification only — a founder's explicit approval is the only
 thing that ever activates access, regardless of automated verification).
 Every real payment endpoint verifies against the provider's own record
 (amount, currency, signature, captured status), never against
-frontend-supplied state. A one-incident free trial existed before this
-document's current revision and has been retired for new accounts; a
-legacy account that still has a free incident on record from before that
-change, drafted a real postmortem on it, and never subscribed still
-receives exactly one automated reminder email, at least 24 hours after
-that draft — a plain link to pricing, never a repeat send and never a
-fabricated urgency claim.
+frontend-supplied state.
+
+**Every account gets one free incident.** Record evidence on it, generate a
+grounded draft, and see the real output before paying anything. A subscription
+is required to create a *second* incident and to publish. The allowance is
+enforced in one place (`has_free_incident_available` in `apps/api/app/auth.py`)
+and honoured identically by the REST API, the MCP tools and the webhook
+ingestion path, so it cannot be bypassed by choosing a different entry point.
+This trial was switched off on 2026-09-04 and restored on 2026-09-10 after the
+evidence was clear: every payment taken to that point was made while the free
+incident existed, and none afterwards. An account that drafted a real
+postmortem on its free incident and never subscribed receives exactly one
+automated reminder email, at least 24 hours after that draft — a plain link to
+pricing, never a repeat send and never a fabricated urgency claim.
 Refunds: email vish.matale@gmail.com within 14 days of the first charge
 and it's refunded — a manual, founder-processed action on every payment
 rail, the same review discipline as approving a payment in the first

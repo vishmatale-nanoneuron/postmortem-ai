@@ -36,6 +36,7 @@ const LAST_MODIFIED = {
   status: new Date("2026-09-01T20:53:02+05:30"),
   privacy: new Date("2026-09-01T20:53:02+05:30"),
   terms: new Date("2026-09-04T01:19:04+05:30"),
+  siteMap: new Date("2026-09-10T00:00:00+00:00"), // human-readable page added
 } as const;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
@@ -59,6 +60,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${SITE_URL}/status`, lastModified: LAST_MODIFIED.status, changeFrequency: "daily", priority: 0.3 },
     { url: `${SITE_URL}/privacy`, lastModified: LAST_MODIFIED.privacy, changeFrequency: "monthly", priority: 0.3 },
     { url: `${SITE_URL}/terms`, lastModified: LAST_MODIFIED.terms, changeFrequency: "monthly", priority: 0.3 },
+    // The human-readable counterpart of this file. Low priority -- it is a
+    // navigation aid, not content anyone should land on from search.
+    { url: `${SITE_URL}/site-map`, lastModified: LAST_MODIFIED.siteMap, changeFrequency: "monthly", priority: 0.2 },
   ];
 
   const postmortems = await fetchPublicSlugs();

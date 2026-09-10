@@ -76,18 +76,30 @@ class User:
 
     @property
     def has_free_incident_available(self) -> bool:
-        """The free-incident trial is retired for new grants -- always
-        False now, for every account, regardless of subscription history.
-        This only ever gated *starting* a new free incident (see
-        require_active_subscription_or_free_slot); an account that already
-        has free_incident_id set from before this change keeps working on
-        that specific incident exactly as before, since
-        require_active_subscription_or_free_incident checks free_incident_id
-        directly and never consults this property. Kept as a real method
-        (not inlined at call sites) so REST, MCP, and the webhook path's
-        eligibility checks all stay driven by one place if this is ever
-        revisited, the same reason it existed before this change."""
-        return False
+        """One free incident per account, until they've used it.
+
+        This was hardcoded to False on 2026-09-04 ("retired for new grants").
+        Restored 2026-09-10 on the evidence, which was unambiguous: all three
+        payments this product has ever taken were made while the free incident
+        existed (25-27 Aug), and there have been **zero** payment claims since.
+        The last incident anyone created was 3 Sep -- the day before the trial
+        was switched off -- while registrations carried on right through, one
+        of them the day this was written. New accounts were signing up, finding
+        they could not create even a single incident, and leaving.
+
+        Asking someone to pay having never used the product and never seen its
+        output (/postmortems is still empty) converted at 0/28. With the free
+        incident it converted at roughly 10%, which is a good rate for a cold
+        funnel. This is the single change with real evidence behind it.
+
+        Deliberately still ONE incident, not a time-boxed trial: it gates only
+        *starting* a new free incident (see
+        require_active_subscription_or_free_slot), and every action on an
+        existing one is checked against free_incident_id directly by
+        require_active_subscription_or_free_incident, so a user cannot loop
+        back for a second. Kept as a real method rather than inlined so REST,
+        MCP and the webhook path all stay driven by this one place."""
+        return self.free_incident_id is None
 
     @property
     def has_used_free_incident(self) -> bool:

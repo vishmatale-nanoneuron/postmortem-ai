@@ -107,11 +107,16 @@ export default function PrivacyPage() {
             not a promise about one.
           </p>
           <p className={p}>
-            Deleting your account (from the same page) really deletes your user row, and any pending payment
-            claims with it. What it does <em>not</em> delete: incidents and postmortems you already created stay on
-            record, the same append-only-history stance this product applies to its own payment audit trail --
-            useful if you ever need to prove what a postmortem said after the account that wrote it is gone. If you
-            want those removed too, email directly and it&apos;ll be handled manually.
+            Deleting your account (from the same page) is a real erasure, not just a disabled login. It removes your
+            user row, your pending payment claims, and <em>every incident, evidence entry, postmortem, draft and
+            activity-log entry your account owns</em> -- including the AI drafting records and search embeddings
+            derived from them. It happens in a single database transaction, so it either all goes or none of it does.
+          </p>
+          <p className={p}>
+            Two consequences worth being explicit about. If you published a postmortem publicly, that page goes too
+            and its URL stops working. And because the export above is your own copy rather than a promise about
+            ours, exporting first is the only way to keep anything -- once deletion runs there is nothing left to
+            recover, by you or by us.
           </p>
         </>,
       )}

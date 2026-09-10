@@ -66,6 +66,10 @@ async def test_an_unpaid_account_cannot_create_any_incident(context) -> None:
     # starting from its very first incident, not just the second.
     client, _ = context
     await client.post("/v1/auth/register", json={"email": UNPAID_EMAIL, "password": "correct-horse-battery"})
+    # Spend the free incident first, so what follows exercises the real
+    # paywall and not the one-incident trial (restored 2026-09-10 -- see
+    # auth.py's has_free_incident_available).
+    await client.post("/v1/postmortems/incidents", json={"title": "Trial incident", "severity": "sev4"})
 
     response = await client.post("/v1/postmortems/incidents", json={"title": "Should be blocked", "severity": "sev2"})
     assert response.status_code == 402
@@ -232,6 +236,10 @@ async def test_a_manually_approved_subscription_stops_granting_access_after_its_
     # instead of the one month it was actually billed for.
     client, database = context
     await client.post("/v1/auth/register", json={"email": UNPAID_EMAIL, "password": "correct-horse-battery"})
+    # Spend the free incident first, so what follows exercises the real
+    # paywall and not the one-incident trial (restored 2026-09-10 -- see
+    # auth.py's has_free_incident_available).
+    await client.post("/v1/postmortems/incidents", json={"title": "Trial incident", "severity": "sev4"})
     await database.execute(
         "UPDATE users SET subscription_status='active', current_period_end=%s WHERE email=%s",
         (1, UNPAID_EMAIL),  # 1 = Unix epoch second 1, unambiguously in the past
@@ -395,6 +403,10 @@ async def test_a_subscription_updated_webhook_applies_the_new_status(
     ever invoked for this event type."""
     client, database = context
     await client.post("/v1/auth/register", json={"email": UNPAID_EMAIL, "password": "correct-horse-battery"})
+    # Spend the free incident first, so what follows exercises the real
+    # paywall and not the one-incident trial (restored 2026-09-10 -- see
+    # auth.py's has_free_incident_available).
+    await client.post("/v1/postmortems/incidents", json={"title": "Trial incident", "severity": "sev4"})
     await database.execute(
         "UPDATE users SET stripe_customer_id='cus_test_webhook_updated', subscription_status='active', "
         "current_period_end=9999999999 WHERE email=%s",
@@ -441,6 +453,10 @@ async def test_a_subscription_updated_webhook_applies_the_new_status(
 async def test_a_subscription_deleted_webhook_revokes_access(context, monkeypatch: pytest.MonkeyPatch) -> None:
     client, database = context
     await client.post("/v1/auth/register", json={"email": UNPAID_EMAIL, "password": "correct-horse-battery"})
+    # Spend the free incident first, so what follows exercises the real
+    # paywall and not the one-incident trial (restored 2026-09-10 -- see
+    # auth.py's has_free_incident_available).
+    await client.post("/v1/postmortems/incidents", json={"title": "Trial incident", "severity": "sev4"})
     await database.execute(
         "UPDATE users SET stripe_customer_id='cus_test_webhook_deleted', subscription_status='active', "
         "current_period_end=9999999999 WHERE email=%s",
@@ -489,6 +505,10 @@ async def test_an_invoice_payment_failed_webhook_downgrades_the_account(
     for this type doesn't carry the subscription's status directly."""
     client, database = context
     await client.post("/v1/auth/register", json={"email": UNPAID_EMAIL, "password": "correct-horse-battery"})
+    # Spend the free incident first, so what follows exercises the real
+    # paywall and not the one-incident trial (restored 2026-09-10 -- see
+    # auth.py's has_free_incident_available).
+    await client.post("/v1/postmortems/incidents", json={"title": "Trial incident", "severity": "sev4"})
     await database.execute(
         "UPDATE users SET stripe_customer_id='cus_test_webhook_failed', subscription_status='active', "
         "current_period_end=9999999999 WHERE email=%s",

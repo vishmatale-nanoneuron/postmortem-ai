@@ -104,6 +104,10 @@ async def test_upi_pricing_is_public_and_never_includes_the_real_upi_id(context)
 async def test_submitting_a_claim_does_not_itself_grant_access(context) -> None:
     client, _, _ = context
     await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+    # Spend the free incident first, so what follows exercises the real
+    # paywall and not the one-incident trial (restored 2026-09-10 -- see
+    # auth.py's has_free_incident_available).
+    await client.post("/v1/postmortems/incidents", json={"title": "Trial incident", "severity": "sev4"})
 
     claim = await client.post("/v1/billing/upi/claim", json={"reference": "UTR123456789"})
     assert claim.status_code == 201, claim.text
@@ -168,6 +172,10 @@ async def test_a_founder_approving_a_claim_grants_access(context) -> None:
 async def test_a_founder_rejecting_a_claim_leaves_access_blocked(context) -> None:
     client, database, application = context
     await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+    # Spend the free incident first, so what follows exercises the real
+    # paywall and not the one-incident trial (restored 2026-09-10 -- see
+    # auth.py's has_free_incident_available).
+    await client.post("/v1/postmortems/incidents", json={"title": "Trial incident", "severity": "sev4"})
     claim = await client.post("/v1/billing/upi/claim", json={"reference": "UTR-REJECT-ME"})
     claim_id = claim.json()["id"]
 

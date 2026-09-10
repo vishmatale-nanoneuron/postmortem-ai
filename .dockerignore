@@ -1,0 +1,29 @@
+# Build context is the repo root (both Dockerfiles need the Bun workspace's root
+# lockfile), so trimming it here matters -- node_modules alone is hundreds of MB
+# and would be reinstalled inside the image anyway.
+.git
+.github
+node_modules
+**/node_modules
+.next
+**/.next
+.venv
+**/.venv
+__pycache__
+**/__pycache__
+*.pyc
+.vercel
+**/.vercel
+.pytest_cache
+**/.pytest_cache
+
+# Never bake real credentials into an image layer. .env.example is deliberately
+# kept -- it documents the required config and contains no secrets.
+.env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+
+*.log
+.DS_Store

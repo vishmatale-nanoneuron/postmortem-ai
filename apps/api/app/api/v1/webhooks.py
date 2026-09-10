@@ -405,3 +405,137 @@ async def receive_pagerduty_webhook(
         channel="pagerduty",
     )
     return result.model_dump()
+
+
+# Slack message subtypes worth recording. A plain message has no subtype at
+# all; a thread_broadcast is a threaded reply also sent to the channel. Every
+# other subtype (message_changed, message_deleted, channel_join, and the
+# dozens of others Slack defines) is either not new evidence or is an edit of
+# evidence already recorded -- and evidence in this product is append-only and
+# provenance-preserving, so an edit must never mutate a recorded row.
+_SLACK_RECORDED_SUBTYPES = {None, "thread_broadcast"}
+
+
+def _parse_slack_timestamp(value: object) -> int | None:
+    """Slack `ts` is a string of seconds-with-microseconds ("1699999999.000100")
+    and doubles as a message's unique id. Returns epoch milliseconds to match
+    everything else in this file."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return int(float(value) * 1000)
+    except ValueError:
+        return None
+
+
+@router.post("/slack/{token}")
+async def receive_slack_event(
+    token: str,
+    request: Request,
+    database: Database = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Slack Events API receiver -- the URL to paste into a Slack app's Event
+    Subscriptions, subscribed to `message.channels` (and/or `message.groups`).
+
+    This closes the gap against the Slack-first incident tools: an incident
+    discussed in a channel records itself as it unfolds, instead of someone
+    pasting the thread in afterwards. It deliberately does NOT bypass any of
+    this product's guarantees -- messages land as ordinary `incident_evidence`
+    rows that a human still reviews, and nothing here can publish anything.
+
+    **A Slack thread maps to one incident.** `external_id` is keyed on the
+    thread's root timestamp, so the first message in a thread opens an incident
+    and every reply becomes further evidence on that same incident, via the
+    identical `external_id` lookup `_ingest_event` already does for PagerDuty.
+    Messages posted outside a thread each key on their own `ts`, so an
+    unrelated channel message doesn't get absorbed into someone else's incident.
+
+    **Bot messages are ignored, and that is load-bearing, not tidiness.** This
+    app posts its own notifications into Slack via `integrations.py`'s
+    `slack_webhook_url`. Ingesting bot output would feed those notifications
+    back in as evidence -- a real feedback loop that would manufacture
+    "evidence" the product then cites. Anything with a `bot_id`, or Slack's own
+    `bot_message` subtype, is dropped.
+
+    Defensive throughout, for the same reason as the PagerDuty adapter above:
+    Slack disables an Event Subscription that keeps returning non-2xx, so an
+    unrecognised payload degrades to an ignored 200 rather than a 5xx that
+    would silently switch the integration off.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON body")
+
+    if not isinstance(body, dict):
+        return {"status": "ignored", "reason": "unrecognized payload shape"}
+
+    # Slack posts this once when the subscription URL is first saved and will
+    # not enable the subscription until it is echoed back. Answered before the
+    # token lookup on purpose: it carries no account context, and failing it
+    # would make the integration impossible to set up at all.
+    if body.get("type") == "url_verification":
+        challenge = body.get("challenge")
+        if isinstance(challenge, str):
+            return {"challenge": challenge}
+        return {"status": "ignored", "reason": "url_verification without challenge"}
+
+    user = await user_by_webhook_token(database, settings, token)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown webhook token")
+
+    if body.get("type") != "event_callback":
+        return {"status": "ignored", "type": body.get("type")}
+
+    event = body.get("event")
+    if not isinstance(event, dict) or event.get("type") != "message":
+        return {"status": "ignored", "reason": "not a message event"}
+
+    if event.get("bot_id") or event.get("subtype") == "bot_message":
+        return {"status": "ignored", "reason": "bot message"}
+
+    if event.get("subtype") not in _SLACK_RECORDED_SUBTYPES:
+        return {"status": "ignored", "subtype": event.get("subtype")}
+
+    text = event.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return {"status": "ignored", "reason": "empty message text"}
+
+    channel_id = event.get("channel")
+    if not isinstance(channel_id, str) or not channel_id:
+        return {"status": "ignored", "reason": "missing channel"}
+
+    ts = event.get("ts")
+    thread_ts = event.get("thread_ts")
+    root_ts = thread_ts if isinstance(thread_ts, str) and thread_ts else ts
+    if not isinstance(root_ts, str) or not root_ts:
+        return {"status": "ignored", "reason": "missing ts"}
+
+    text = text.strip()
+    speaker = event.get("user")
+    detail = f"Slack {channel_id}" + (f", from {speaker}" if isinstance(speaker, str) and speaker else "")
+
+    result = await _ingest_event(
+        database,
+        settings,
+        user,
+        # 'human_note' is both the honest classification of a chat message and
+        # one of the six values incident_evidence's CHECK constraint permits
+        # (see 0002_incident_postmortems.sql) -- a made-up 'slack' source would
+        # be rejected by the database.
+        source="human_note",
+        summary=text[:500],
+        detail=detail,
+        occurred_at=_parse_slack_timestamp(ts),
+        title=text[:200],
+        severity="sev3",
+        # Never inferred from chat. Someone typing "ok we're resolved" is not
+        # an authenticated status change, and auto-drafting off it would let a
+        # stray message trigger a real AI spend and a postmortem draft.
+        resolved_flag=False,
+        external_id=f"slack:{channel_id}:{root_ts}",
+        authorized_by="webhook:slack",
+        channel="slack",
+    )
+    return result.model_dump()

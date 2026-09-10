@@ -10,7 +10,15 @@ import { NextRequest, NextResponse } from "next/server";
 // which fails toward hidden rather than toward exposed.
 const FOUNDER_PATH_PREFIX = "/founder";
 const GATE_COOKIE = "founder_gate";
-const NOT_FOUND = new NextResponse("Not Found", { status: 404 });
+
+// Built per-request, NOT hoisted to a module-level constant. A Response's body
+// is a single-use stream: one shared instance served its body to the first
+// request on a warm instance and an EMPTY body to every request after it.
+// Confirmed in production before this fix -- six consecutive requests to
+// /founder returned 404 with 9 bytes, then 0, 0, 0, 0, 0. The status code was
+// unaffected, so the gate never actually leaked, which is exactly why it went
+// unnoticed.
+const notFound = () => new NextResponse("Not Found", { status: 404 });
 
 export function middleware(request: NextRequest): NextResponse {
   const { pathname, searchParams } = request.nextUrl;
@@ -20,7 +28,7 @@ export function middleware(request: NextRequest): NextResponse {
 
   const secret = process.env.FOUNDER_ACCESS_KEY;
   if (!secret) {
-    return NOT_FOUND;
+    return notFound();
   }
 
   if (request.cookies.get(GATE_COOKIE)?.value === secret) {
@@ -43,7 +51,7 @@ export function middleware(request: NextRequest): NextResponse {
     return response;
   }
 
-  return NOT_FOUND;
+  return notFound();
 }
 
 export const config = {

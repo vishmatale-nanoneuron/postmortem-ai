@@ -126,6 +126,10 @@ async def test_a_wire_claim_requires_a_supported_currency(context) -> None:
 async def test_a_founder_approving_a_wire_claim_grants_access(context) -> None:
     client, database, application = context
     await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
+    # Spend the free incident first, so what follows exercises the real
+    # paywall and not the one-incident trial (restored 2026-09-10 -- see
+    # auth.py's has_free_incident_available).
+    await client.post("/v1/postmortems/incidents", json={"title": "Trial incident", "severity": "sev4"})
 
     claim = await client.post("/v1/billing/wire/claim", json={"currency": "USD", "reference": "SWIFT-REF-99"})
     assert claim.status_code == 201, claim.text
