@@ -430,13 +430,38 @@ async def delete_account(
     # refuse self-deletion rather than leave the product with no founder.
     if user.is_founder:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="The founder account cannot be deleted")
-    # payment_claims and action_rate_limits both cascade (ON DELETE CASCADE
-    # on user_id) -- see supabase/migrations/0007 and 0010. Incidents and
-    # postmortems are owned by client_email, not a user_id FK, so they are
-    # deliberately NOT deleted here: they stay as historical record even
-    # after the account that created them is gone, consistent with this
-    # app's append-only-history stance elsewhere (payment_claim_events).
-    await database.execute("DELETE FROM users WHERE id=%s", (user.id,))
+    # Deleting an account now erases that account's data, rather than leaving
+    # it behind as historical record. The previous behaviour was deliberate
+    # (an append-only-history stance, matching payment_claim_events) but it is
+    # not compatible with selling to UK/EU customers, who have a statutory
+    # right to erasure: "delete my account" that silently retains every
+    # incident, evidence entry and postmortem is the wrong answer to a real
+    # erasure request. It is also what the button plainly implies.
+    #
+    # Order matters, and the FKs do most of the work:
+    #   - incidents cascades to ai_runs, incident_evidence,
+    #     incident_postmortems (which carries the RAG `embedding` column added
+    #     in 0009, and itself cascades to postmortem_actions),
+    #     incident_public_updates and postmortem_draft_history.
+    #   - users.free_incident_id is ON DELETE SET NULL, so dropping incidents
+    #     first simply clears that pointer instead of blocking.
+    #   - deleting the user then cascades payment_claims (and its own
+    #     payment_claim_events) and api_action_events.
+    # account_activity_log is keyed by client_email with no FK, so it is the
+    # one table that must be named explicitly.
+    #
+    # All in one transaction: a partial erasure -- user row gone, incidents
+    # still present -- would leave data nobody can reach or delete through the
+    # product, which is worse than either outcome on its own.
+    #
+    # A publicly published postmortem disappears with the account, and its
+    # /postmortems/{slug} URL starts 404ing. That is the correct reading of an
+    # erasure request for the person's own content, and is stated on the
+    # account settings screen before the confirmation.
+    async with database.transaction() as tx:
+        await tx.execute("DELETE FROM incidents WHERE client_email=%s", (user.email,))
+        await tx.execute("DELETE FROM account_activity_log WHERE client_email=%s", (user.email,))
+        await tx.execute("DELETE FROM users WHERE id=%s", (user.id,))
     _clear_session_cookie(response, settings)
 
 

@@ -313,8 +313,12 @@ async def test_updating_to_an_email_already_taken_is_a_conflict(context) -> None
 async def test_changing_email_does_not_orphan_the_accounts_own_incidents(context) -> None:
     # Regression test: incidents.client_email / incident_evidence.client_email
     # are plain text, not a real foreign key into users(email) (deliberately
-    # not one -- see _apply_account_update's own comment on why a strict FK
-    # conflicts with delete_account()'s "keep incidents as history" design).
+    # not one -- see _apply_account_update's own comment). Note the original
+    # reason given there, that a strict FK conflicted with delete_account()'s
+    # "keep incidents as history" design, no longer applies: deletion is a real
+    # erasure now. The FK is still absent for a different reason -- email is
+    # mutable, so an FK would need ON UPDATE CASCADE and this endpoint already
+    # propagates the change explicitly, which is what this test guards.
     # Confirmed live against production before this fix: changing an
     # account's email via this exact endpoint made every one of its own
     # incidents silently vanish from GET /incidents -- still present in the
@@ -452,3 +456,60 @@ async def test_registration_is_rate_limited_per_ip(context) -> None:
         json={"email": "auth-test-rate-limit-6th@example.com", "password": "correct-horse-battery"},
     )
     assert blocked.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_delete_me_erases_the_accounts_incidents_evidence_and_postmortems(context) -> None:
+    """Right-to-erasure behaviour. Deleting an account used to leave every
+    incident, evidence entry and postmortem in the database forever -- a
+    deliberate append-only stance, but the wrong answer to a UK/EU erasure
+    request and not what the button implies. Asserts the data is actually gone
+    from every table that holds it, including the ones reached only by cascade
+    and the activity log, which has no FK and must be deleted explicitly."""
+    email = "auth-test-erasure@example.com"
+    client, database = context
+    await client.post("/v1/auth/register", json={"email": email, "password": "correct-horse-battery"})
+    await database.execute("UPDATE users SET subscription_status='active' WHERE email=%s", (email,))
+
+    created = await client.post(
+        "/v1/postmortems/incidents", json={"title": "Erasure test incident", "severity": "sev3"}
+    )
+    assert created.status_code == 201, created.text
+    incident_id = created.json()["id"]
+
+    evidence = await client.post(
+        f"/v1/postmortems/incidents/{incident_id}/evidence",
+        json={"occurred_at": 1_700_000_000_000, "source": "alert", "summary": "Something broke"},
+    )
+    assert evidence.status_code == 201, evidence.text
+
+    # Precondition: the rows genuinely exist, so a passing assertion below
+    # means "deleted", not "was never written".
+    before = await database.fetch_one("SELECT count(*) AS n FROM incidents WHERE client_email=%s", (email,))
+    assert before is not None and before["n"] == 1
+    ev_before = await database.fetch_one(
+        "SELECT count(*) AS n FROM incident_evidence WHERE client_email=%s", (email,)
+    )
+    assert ev_before is not None and ev_before["n"] == 1
+    log_before = await database.fetch_one(
+        "SELECT count(*) AS n FROM account_activity_log WHERE client_email=%s", (email,)
+    )
+    assert log_before is not None and log_before["n"] > 0
+
+    assert (await client.delete("/v1/auth/me")).status_code == 204
+
+    for table in ("incidents", "incident_evidence", "account_activity_log"):
+        row = await database.fetch_one(f"SELECT count(*) AS n FROM {table} WHERE client_email=%s", (email,))
+        assert row is not None and row["n"] == 0, f"{table} still holds rows after account deletion"
+
+    # Reached only via ON DELETE CASCADE from incidents, so this is what proves
+    # the cascade chain actually fired rather than the two explicit deletes.
+    orphans = await database.fetch_one(
+        "SELECT count(*) AS n FROM incident_postmortems WHERE incident_id=%s", (incident_id,)
+    )
+    assert orphans is not None and orphans["n"] == 0
+    runs = await database.fetch_one("SELECT count(*) AS n FROM ai_runs WHERE incident_id=%s", (incident_id,))
+    assert runs is not None and runs["n"] == 0
+
+    user_row = await database.fetch_one("SELECT id FROM users WHERE email=%s", (email,))
+    assert user_row is None

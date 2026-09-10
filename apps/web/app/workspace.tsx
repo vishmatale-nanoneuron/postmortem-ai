@@ -1744,8 +1744,12 @@ export function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser
   async function deleteAccount() {
     if (user.is_founder) return; // button is hidden for the founder anyway; guards a stray call too
     if (
+      // This text is a promise about what the server actually does -- keep it
+      // in step with delete_account() in apps/api/app/api/v1/auth.py. It
+      // previously said history "stays as a record", which stopped being true
+      // when deletion became a real erasure.
       !window.confirm(
-        "Delete your account? This cannot be undone. Your incident/postmortem history stays as a record, but you will no longer be able to sign in.",
+        "Delete your account? This cannot be undone. Every incident, evidence entry and postmortem on this account is permanently deleted -- including any postmortem you published publicly, whose public page will stop working.",
       )
     )
       return;
