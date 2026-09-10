@@ -1,0 +1,19 @@
+# Migration runner (scripts/migrate.mjs). Build context is the repo root.
+#
+# Deliberately NOT the web image: that one runs `next build`, which is minutes of
+# work this script has no use for. The first four layers here are byte-identical
+# to apps/web/Dockerfile's, so BuildKit reuses that cached `bun install` rather
+# than resolving the workspace twice.
+FROM oven/bun:1.3.14
+
+WORKDIR /repo
+
+COPY package.json bun.lock ./
+COPY apps/web/package.json ./apps/web/package.json
+RUN bun install --frozen-lockfile
+
+# Only what the runner actually reads: the script itself and the SQL files.
+COPY scripts ./scripts
+COPY supabase ./supabase
+
+CMD ["bun", "run", "migrate"]
