@@ -17,6 +17,16 @@ export const loginSchema = z.object({
   password: z.string().min(1).max(200),
 });
 
+// Mirrors PatchAccountRequest in apps/api/app/api/v1/auth.py -- PATCH
+// semantics, every field optional, only what's supplied changes. Was the one
+// account-mutating form with no client-side validation at all: a too-short
+// new password round-tripped to the server just to come back as a 422, and
+// an invalid email address the same way.
+export const accountUpdateSchema = z.object({
+  email: z.email().optional(),
+  password: z.string().min(8).max(200).optional(),
+});
+
 // Mirrors PasswordResetRequestIn in apps/api/app/api/v1/auth.py.
 export const emailOnlySchema = z.object({
   email: z.email(),
@@ -63,6 +73,11 @@ export const wireCurrencySchema = z.object({
 // just fails harmlessly server-side (best-effort delivery, never blocks
 // publishing), so there's no correctness reason to duplicate stricter
 // format rules here.
+// Mirrors StatusPageUpdateIn in apps/api/app/api/v1/postmortems.py.
+export const statusPageUpdateSchema = z.object({
+  message: z.string().min(1).max(2000),
+});
+
 export const integrationsSchema = z.object({
   slack_webhook_url: z.string().max(500).optional(),
   linear_api_key: z.string().max(200).optional(),

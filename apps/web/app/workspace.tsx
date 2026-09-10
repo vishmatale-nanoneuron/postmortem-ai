@@ -53,7 +53,9 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
+  accountUpdateSchema,
   emailOnlySchema,
+
   evidenceSchema,
   firstError,
   incidentSchema,
@@ -61,6 +63,7 @@ import {
   loginSchema,
   paymentReferenceSchema,
   registerSchema,
+  statusPageUpdateSchema,
   wireCurrencySchema,
 } from "./validation";
 
@@ -1639,6 +1642,12 @@ export function AccountSettings({ user, onUpdated, onDeleted }: { user: AuthUser
     if (password) fields.password = password;
     if (Object.keys(fields).length === 0) return setError("Change the email or enter a new password first.");
 
+    // The one account-mutating form with no client-side validation --
+    // a too-short new password, or an invalid email, previously round-tripped
+    // to the server just to come back as a 422.
+    const validationError = firstError(accountUpdateSchema, fields);
+    if (validationError) return setError(validationError);
+
     setBusy(true);
     setError("");
     setMessage("");
@@ -2396,6 +2405,10 @@ function StatusPageSettings({
   async function postUpdate(form: FormData) {
     const text = String(form.get("message") || "").trim();
     if (!text) return;
+    // No client-side check existed for the 2000-char server limit -- a long
+    // paste only failed after the round-trip, with no warning while typing.
+    const validationError = firstError(statusPageUpdateSchema, { message: text });
+    if (validationError) return setError(validationError);
     setBusy(true);
     setError("");
     try {
@@ -2441,6 +2454,7 @@ function StatusPageSettings({
         <textarea
           id="status-page-message"
           name="message"
+          maxLength={2000}
           className={cn(fieldInput, "min-h-16")}
           placeholder="We're investigating elevated error rates."
         />
