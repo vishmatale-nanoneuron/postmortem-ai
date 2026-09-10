@@ -16,7 +16,11 @@ const TITLE = "Site map";
 const DESCRIPTION = "Every page on PostMortem AI, in one list.";
 
 export const metadata: Metadata = {
-  title: `${TITLE} — PostMortem AI`,
+  // Bare title: app/layout.tsx applies `template: "%s — PostMortem AI"`, so
+  // spelling the suffix out here renders it twice in the browser tab. The
+  // openGraph title below is NOT run through that template, so it does carry
+  // the suffix.
+  title: TITLE,
   description: DESCRIPTION,
   alternates: { canonical: "https://www.nanoneuron.ai/site-map" },
   openGraph: {
