@@ -19,6 +19,8 @@ from ...security.rate_limit import (
     try_record_registration_attempt,
 )
 from ...security.tokens import issue_password_reset_token, issue_token, verify_password_reset_token
+import resend.exceptions
+
 from ...services.email import EmailNotConfiguredError, send_password_reset_email
 from ...settings import Settings, get_settings
 
@@ -485,7 +487,25 @@ async def request_password_reset(
             await run_in_threadpool(send_password_reset_email, settings, row["email"], reset_url)
         except EmailNotConfiguredError as error:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Email is not configured") from error
-        logger.info("password_reset_requested")
+        except resend.exceptions.ResendError:
+            # Real production bug, found by adversarial testing rather than a
+            # unit test: this was the one email call site in the whole
+            # codebase with no ResendError handler. A Resend-side failure
+            # (rate limit, outage, or a rejected recipient) propagated as an
+            # unhandled exception -> 500, while an unknown email still
+            # returned 202 for this same request shape. That difference is
+            # itself an account-enumeration oracle -- the exact thing this
+            # endpoint's own always-202 design exists to prevent -- and
+            # doubles as a real outage: a genuine password-reset request
+            # failing outright whenever Resend hiccups. Logged and
+            # swallowed, same as every other best-effort email in this
+            # codebase (see billing.py's claim emails) -- the reset token
+            # already exists in the request; not sending the email is a
+            # real degradation, but must never look different from "no such
+            # account" to the caller.
+            logger.warning("password_reset_email_failed", exc_info=True)
+        else:
+            logger.info("password_reset_requested")
     # No matching account: silently no-op (not even a log line naming the
     # email) -- same reasoning as above, and avoids logging an address
     # that was never actually verified to exist.

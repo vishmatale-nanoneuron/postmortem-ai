@@ -134,3 +134,35 @@ async def test_a_session_token_cannot_be_used_as_a_password_reset_token(context)
         "/v1/auth/password-reset/confirm", json={"token": session_cookie, "new_password": "should-not-work"}
     )
     assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_a_resend_failure_still_returns_202_not_a_500(context, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real production bug, found by adversarial testing: this call site was
+    the one email in the whole codebase with no ResendError handler. A
+    Resend-side failure (rate limit, outage, a rejected recipient -- this
+    reproduces the exact exception a real request hit: ValidationError for a
+    domain Resend blocks) propagated as an unhandled exception -> 500, while
+    a request for an unknown email still 202'd. That difference is itself an
+    account-enumeration oracle, on the one endpoint whose entire design
+    exists to prevent exactly that."""
+    import resend.exceptions
+
+    client, _, _sent = context
+
+    def blow_up(settings, to_email, reset_url):
+        raise resend.exceptions.ValidationError(
+            message="Invalid `to` field.", error_type="validation_error", code=422
+        )
+
+    monkeypatch.setattr("app.api.v1.auth.send_password_reset_email", blow_up)
+
+    real_account = await client.post("/v1/auth/password-reset/request", json={"email": CLIENT_EMAIL})
+    unknown_account = await client.post(
+        "/v1/auth/password-reset/request", json={"email": "definitely-not-registered@example.com"}
+    )
+
+    # The actual property: identical outcome regardless of which email is
+    # real, even when sending genuinely fails.
+    assert real_account.status_code == unknown_account.status_code == 202
+    assert real_account.json() == unknown_account.json() == {"ok": True}
