@@ -6,7 +6,7 @@ Canonical product: [https://www.nanoneuron.ai/](https://www.nanoneuron.ai/)
 [Published postmortems](https://www.nanoneuron.ai/postmortems)
 [Pricing](https://www.nanoneuron.ai/pricing)
 Contact: vish.matale@gmail.com
-Last factual review: 2026-09-08
+Last factual review: 2026-09-10
 
 ## What this is
 
@@ -100,6 +100,16 @@ its integration is a documented JSON template for Datadog's own webhook
 payload field, pointed at the generic endpoint above -- see account
 settings for both.
 
+Slack has a dedicated receiver (`/v1/webhooks/slack/{token}`): paste it as a
+Slack app's Event Subscriptions Request URL, subscribe to
+`message.channels`, and an incident channel records itself as the incident
+unfolds rather than being pasted in afterwards. One Slack thread maps to one
+incident -- the first message opens it, every reply appends evidence to that
+same incident. Messages from bots are deliberately ignored, because this app
+also posts its own notifications into Slack and ingesting them would let the
+product cite text it wrote itself; edited and deleted messages never rewrite
+evidence already recorded; and nothing auto-resolves an incident from chat.
+
 ## Reliability and anti-abuse
 
 A circuit breaker (closed/open/half-open) wraps the drafting model --
@@ -117,7 +127,21 @@ configured.
 
 Creating an incident, recording evidence, AI extraction, drafting,
 publishing, and creating a second incident all require an active
-subscription. For clients in any country, an international SWIFT wire
+subscription.
+
+One plan, no tiers. India: Rs 999/month or Rs 9,990/year via UPI.
+International: USD 15 / GBP 12 / EUR 14 per month, or USD 150 / GBP 120 /
+EUR 140 per year, via SWIFT wire. Annual is charged for ten months, so two
+months are free. Live prices come from `GET /v1/billing/upi/pricing` and
+`GET /v1/billing/wire/pricing` (both public and unauthenticated) -- those,
+not this file, are authoritative if the two disagree.
+
+Annual is recommended for international customers, and not as a discount: a
+SWIFT wire costs the sender roughly USD 15-40 in bank fees, which is more
+than a single month of the subscription, so paying monthly by wire means a
+surcharge larger than the product.
+
+For clients in any country, an international SWIFT wire
 (USD/GBP/EUR) or UPI (India) works today: a signed-in client can request
 the real account details (UPI ID, wire account number) be emailed
 directly to their own registered address -- self-serve, no need to
