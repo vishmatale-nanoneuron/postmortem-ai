@@ -207,8 +207,9 @@ export default function DocsPage() {
         <>
           <h2 className={h2}>Payments</h2>
           <p className={p}>
-            Recording evidence, AI extraction, drafting, publishing, and creating incidents all require an active
-            subscription. For clients anywhere in the world, an international SWIFT wire (USD/GBP/EUR) or UPI (India)
+            Your first incident is free: record evidence on it, draft a grounded postmortem, and see the real output
+            before paying anything. Creating a second incident, and publishing, require an active subscription. For
+            clients anywhere in the world, an international SWIFT wire (USD/GBP/EUR) or UPI (India)
             works today -- submit the
             transaction reference and the founder reviews and approves it personally, usually quickly. Self-serve
             card checkout via Stripe is built but not switched on for real payments yet; when it is, it&apos;ll

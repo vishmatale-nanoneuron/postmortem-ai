@@ -125,9 +125,12 @@ configured.
 
 ## Payments
 
-Creating an incident, recording evidence, AI extraction, drafting,
-publishing, and creating a second incident all require an active
-subscription.
+Every account gets one free incident: record evidence on it, generate a
+grounded draft, and see the real output before paying anything. Creating a
+SECOND incident, and publishing, require an active subscription. The allowance
+lives in one place (has_free_incident_available) and is honoured identically by
+the REST API, the MCP tools and webhook ingestion, so it can't be bypassed by
+picking a different entry point.
 
 One plan, no tiers. India: Rs 999/month or Rs 9,990/year via UPI.
 International: USD 15 / GBP 12 / EUR 14 per month, or USD 150 / GBP 120 /

@@ -35,7 +35,7 @@ const FAQ: { question: string; answer: string }[] = [
   {
     question: "Is there a free trial?",
     answer:
-      "Not for new accounts -- an active subscription is required from your first incident. (A small number of legacy accounts that used a free incident before this policy took effect keep what they already had.)",
+      "Yes -- your first incident is free. Record evidence, generate a grounded draft, and see exactly what the output looks like before paying anything. A subscription is required to create a second incident, and to publish.",
   },
   {
     question: "Can I pay annually?",
@@ -128,8 +128,8 @@ export default async function PricingPage() {
         <div className="text-xs font-medium tracking-widest text-muted uppercase">Pricing</div>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">One plan, monthly or annual</h1>
         <p className="mx-auto mt-2 max-w-md text-sm text-muted">
-          Full access: unlimited incidents, evidence-grounded AI drafting, and publishing. No trial gimmicks, no
-          hidden tiers. Pay annually and two months are free.
+          Your first incident is free -- see the real output before paying. After that: unlimited incidents,
+          evidence-grounded AI drafting, and publishing. No hidden tiers. Pay annually and two months are free.
         </p>
       </div>
 

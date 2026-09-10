@@ -359,19 +359,29 @@ async def test_an_unpaid_account_with_no_free_slot_left_is_blocked_from_the_webh
 async def test_an_unpaid_account_cannot_create_an_incident_via_webhook(context) -> None:
     """The webhook path's own paywall mirrors the authenticated REST
     endpoints exactly -- both gate incident *creation* on
-    has_active_subscription or has_free_incident_available (auth.py). The
-    free-incident trial is retired for new grants (see
-    test_free_incident.py), so a brand-new signup (subscription_status
-    'none', free_incident_id never set) is blocked here too, the same as
-    POST /v1/postmortems/incidents."""
+    has_active_subscription or has_free_incident_available (auth.py). An
+    unpaid account gets exactly one free incident (restored 2026-09-10), and
+    the webhook honours that same allowance -- so the FIRST create succeeds
+    and the second is blocked, identically to POST /v1/postmortems/incidents.
+
+    The second half is the one that must never regress: an unpaid account that
+    could keep creating incidents through the webhook would make the paywall
+    bypassable by anyone holding a token."""
     client, database, token = context
     await database.execute("UPDATE users SET subscription_status='none' WHERE email=%s", (CLIENT_EMAIL,))
 
-    create = await client.post(
+    free = await client.post(
+        f"/v1/webhooks/incidents/{token}",
+        json={"source": "alert", "summary": "The one free incident"},
+    )
+    assert free.status_code == 201, free.text
+    assert free.json()["created_incident"] is True
+
+    blocked = await client.post(
         f"/v1/webhooks/incidents/{token}",
         json={"source": "alert", "summary": "Should be blocked"},
     )
-    assert create.status_code == 402
+    assert blocked.status_code == 402
 
 
 @pytest.mark.asyncio
