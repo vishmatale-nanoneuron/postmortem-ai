@@ -74,7 +74,29 @@ export default async function PublicPostmortemsIndex() {
       {result.status === "unreachable" ? (
         <p className="text-sm text-muted">Couldn&apos;t load postmortems just now -- try refreshing.</p>
       ) : postmortems.length === 0 ? (
-        <p className="text-sm text-muted">No public postmortems yet.</p>
+        // A prospect evaluating this product lands here to judge output quality,
+        // and a bare "none yet" is a dead end at exactly the wrong moment.
+        // Nothing is invented to fill the gap: this points at the worked example
+        // that genuinely exists (/blog/github-outage-demo, "What our tool
+        // drafted from a real public outage") and says plainly WHY the list is
+        // empty -- publishing is opt-in -- rather than letting it read as
+        // "nobody uses this".
+        <div className="rounded-lg border border-line bg-white p-6 shadow-sm">
+          <p className="text-sm text-ink">No client has published one publicly yet.</p>
+          <p className="mt-2 text-sm text-muted">
+            Publishing here is opt-in, and every postmortem is a real incident from a real account -- so this list
+            stays empty until someone chooses to share theirs. In the meantime, read{" "}
+            <Link className="underline underline-offset-2 hover:text-ink" href="/blog/github-outage-demo">
+              a full postmortem this tool drafted from a real public outage
+            </Link>
+            , or{" "}
+            <Link className="underline underline-offset-2 hover:text-ink" href="/blog/grounding-mechanism">
+              how the grounding works
+            </Link>{" "}
+            -- why a claim with no citation is removed rather than kept.
+          </p>
+          <p className="mt-2 text-sm text-muted">Your first incident is free, so you can also try it on one of your own.</p>
+        </div>
       ) : (
         <ul className="space-y-3">
           {postmortems.map((item, i) => (
