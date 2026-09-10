@@ -92,3 +92,61 @@ small proxy that holds per-Datadog-monitor state, or Datadog gaining a
 way to template a value back into a *stored* variable across calls to the
 same monitor — neither exists today, so it isn't claimed anywhere in this
 app's docs or landing copy.
+
+## Slack (`POST /v1/webhooks/slack/{token}`)
+
+The competitive gap this closes: Rootly, incident.io and FireHydrant are all
+Slack-first and assemble the incident timeline from the channel as it happens.
+Until this existed, evidence here had to be pasted in afterwards — even with
+`POST /v1/postmortems/incidents/{id}/evidence/extract` doing the parsing, a
+human still had to go and fetch the thread.
+
+**A Slack thread maps to one incident.** `external_id` is
+`slack:{channel}:{thread_root_ts}`, so the first message opens an incident and
+every reply appends evidence to that same one, reusing the exact `external_id`
+lookup PagerDuty already relies on. A message posted outside a thread keys on
+its own `ts`, so unrelated channel chatter is never absorbed into someone
+else's incident.
+
+### Setup
+
+1. Create a Slack app → **Event Subscriptions** → enable.
+2. Request URL: `https://<your-api-host>/v1/webhooks/slack/<your-webhook-token>`
+   (the same per-account token as the other endpoints — `GET /v1/webhooks/token`,
+   rotatable via `POST /v1/webhooks/token/rotate`).
+   Slack immediately sends a `url_verification` challenge; the endpoint echoes
+   it back, which is why that case is handled *before* the token lookup.
+3. Subscribe to bot events: `message.channels` (public channels) and/or
+   `message.groups` (private channels).
+4. Install the app to the workspace and invite it to your incident channel.
+
+### Deliberate behaviours
+
+- **Bot messages are dropped, and this is load-bearing.** This app posts its
+  own notifications into Slack (`integrations.py`'s `slack_webhook_url`).
+  Ingesting bot output would feed those notifications back in as evidence and
+  the product would end up citing text it wrote itself. Both `bot_id` and the
+  `bot_message` subtype are filtered, and
+  `test_slack_bot_messages_are_ignored_so_our_own_notifications_cannot_become_evidence`
+  asserts the evidence count is unchanged rather than merely that the response
+  said "ignored".
+- **Edits and deletions never mutate recorded evidence.** `message_changed` /
+  `message_deleted` are ignored outright — evidence is append-only and
+  provenance-preserving, so a later edit must not rewrite a row already cited.
+- **No auto-resolve from chat.** Someone typing "ok we're resolved" is not an
+  authenticated status change, and treating it as one would let a stray message
+  trigger a real AI spend and a postmortem draft. PagerDuty resolves *do*
+  auto-draft, because there the resolve is a real state transition in a system
+  of record.
+- **Evidence `source` is `human_note`**, which is both accurate and one of the
+  six values `incident_evidence`'s CHECK constraint permits
+  (`0002_incident_postmortems.sql`). A made-up `slack` source would be rejected
+  by the database.
+- **Unrecognised payloads return an ignored 200, not a 4xx/5xx** — Slack
+  disables an Event Subscription that keeps failing.
+
+**Known limitation**: authentication is the URL token only, matching the other
+webhook endpoints. Slack also signs requests (`X-Slack-Signature` /
+`X-Slack-Request-Timestamp`), which would be strictly better, but the signing
+secret is per-Slack-app and would need a per-account column to verify in a
+multi-tenant setting. Rotate the token if a URL leaks.

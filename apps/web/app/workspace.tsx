@@ -2014,6 +2014,7 @@ function WebhookSettings() {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
   const genericUrl = token ? `${apiBase}/v1/webhooks/incidents/${token}` : "";
   const pagerdutyUrl = token ? `${apiBase}/v1/webhooks/pagerduty/${token}` : "";
+  const slackUrl = token ? `${apiBase}/v1/webhooks/slack/${token}` : "";
 
   async function rotate() {
     setBusy(true);
@@ -2035,13 +2036,14 @@ function WebhookSettings() {
       <h2 className="mb-1 text-base font-semibold">Webhook</h2>
       <p className="mb-3 text-xs text-muted">
         Let evidence arrive automatically instead of typing it in by hand. Rotating below invalidates every URL
-        built with the old token immediately, across all three tabs -- they all share one token.
+        built with the old token immediately, across all four tabs -- they all share one token.
       </p>
       <Tabs defaultValue="generic">
         <TabsList>
           <TabsTrigger value="generic">Generic</TabsTrigger>
           <TabsTrigger value="pagerduty">PagerDuty</TabsTrigger>
           <TabsTrigger value="datadog">Datadog</TabsTrigger>
+          <TabsTrigger value="slack">Slack</TabsTrigger>
         </TabsList>
         <TabsContent value="generic" className="mt-3">
           <p className="mb-2 text-xs text-muted">
@@ -2091,6 +2093,29 @@ function WebhookSettings() {
             />
           </div>
           <CopyField id="webhook-generic-url-datadog-tab" value={genericUrl} ariaLabel="Generic webhook URL" />
+        </TabsContent>
+        <TabsContent value="slack" className="mt-3">
+          <p className="mb-2 text-xs text-muted">
+            Record the incident channel as it happens, instead of pasting the thread in afterwards. Paste this as a
+            Slack app&apos;s{" "}
+            <a
+              className="underline underline-offset-2 hover:text-ink"
+              href="https://api.slack.com/apis/events-api"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Event Subscriptions
+            </a>{" "}
+            Request URL, subscribe to <code className="font-mono">message.channels</code>, then invite the app to your
+            incident channel. One thread becomes one incident -- the first message opens it and every reply is recorded
+            as further evidence on it.
+          </p>
+          <p className="mb-2 text-xs text-muted">
+            Messages from bots are ignored on purpose, so the notifications this app posts back into Slack can never
+            return as evidence. Edited and deleted messages never rewrite evidence already recorded, and nothing here
+            resolves an incident or drafts a postmortem on its own -- you still do that.
+          </p>
+          <CopyField id="webhook-slack-url" value={slackUrl} ariaLabel="Slack webhook URL" />
         </TabsContent>
       </Tabs>
       <AlertDialog>

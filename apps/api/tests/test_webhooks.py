@@ -525,6 +525,160 @@ async def test_pagerduty_resolved_event_finds_and_resolves_the_same_incident_by_
     assert postmortem["status"] == "draft"
 
 
+def _slack_message_payload(
+    text: str,
+    *,
+    ts: str,
+    channel: str = "C0INCIDENTS",
+    thread_ts: str | None = None,
+    **event_extra: object,
+) -> dict:
+    event: dict = {"type": "message", "channel": channel, "user": "U0ONCALL", "text": text, "ts": ts}
+    if thread_ts is not None:
+        event["thread_ts"] = thread_ts
+    event.update(event_extra)
+    return {"type": "event_callback", "event": event}
+
+
+@pytest.mark.asyncio
+async def test_slack_url_verification_echoes_the_challenge(context) -> None:
+    client, _database, token = context
+    response = await client.post(
+        f"/v1/webhooks/slack/{token}",
+        json={"type": "url_verification", "challenge": "3eZbrw1aB1o2SUw5ZFwzMg"},
+    )
+    assert response.status_code == 200, response.text
+    # Slack will not enable the subscription until this is echoed back.
+    assert response.json() == {"challenge": "3eZbrw1aB1o2SUw5ZFwzMg"}
+
+
+@pytest.mark.asyncio
+async def test_slack_message_creates_an_incident(context) -> None:
+    client, database, token = context
+    response = await client.post(
+        f"/v1/webhooks/slack/{token}",
+        json=_slack_message_payload("Checkout p99 just jumped to 4s", ts="1699999999.000100"),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["created_incident"] is True
+
+    incident = await database.fetch_one(
+        "SELECT title, severity, status, external_id FROM incidents WHERE id=%s", (body["incident_id"],)
+    )
+    assert incident is not None
+    assert incident["title"] == "Checkout p99 just jumped to 4s"
+    assert incident["status"] == "open"
+    # Keyed on the thread root so replies can find this same incident.
+    assert incident["external_id"] == "slack:C0INCIDENTS:1699999999.000100"
+
+    evidence = await database.fetch_one(
+        "SELECT source, authorized_by, summary, occurred_at FROM incident_evidence WHERE id=%s",
+        (body["evidence_id"],),
+    )
+    assert evidence is not None
+    # Must be one of the six values incident_evidence's CHECK constraint allows.
+    assert evidence["source"] == "human_note"
+    assert evidence["authorized_by"] == "webhook:slack"
+    assert evidence["summary"] == "Checkout p99 just jumped to 4s"
+    # Slack's seconds-with-microseconds string, converted to epoch millis.
+    assert evidence["occurred_at"] == 1699999999000
+
+
+@pytest.mark.asyncio
+async def test_slack_thread_replies_append_to_the_same_incident(context) -> None:
+    client, database, token = context
+    root = await client.post(
+        f"/v1/webhooks/slack/{token}",
+        json=_slack_message_payload("Payments API returning 503s", ts="1700000000.000100"),
+    )
+    incident_id = root.json()["incident_id"]
+
+    reply = await client.post(
+        f"/v1/webhooks/slack/{token}",
+        json=_slack_message_payload(
+            "Rolled back deploy 1f4a9c, errors dropping",
+            ts="1700000060.000200",
+            thread_ts="1700000000.000100",
+        ),
+    )
+    assert reply.status_code == 200, reply.text
+    body = reply.json()
+    # The whole point: one Slack thread is one incident, so the timeline
+    # assembles itself instead of being pasted in afterwards.
+    assert body["created_incident"] is False
+    assert body["incident_id"] == incident_id
+
+    count = await database.fetch_one(
+        "SELECT count(*) AS n FROM incident_evidence WHERE incident_id=%s", (incident_id,)
+    )
+    assert count is not None and count["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_slack_bot_messages_are_ignored_so_our_own_notifications_cannot_become_evidence(context) -> None:
+    """The load-bearing one. This app posts its own notifications into Slack
+    (integrations.py's slack_webhook_url). If bot messages were ingested, those
+    notifications would come back in as evidence and the product would end up
+    citing text it wrote itself."""
+    client, database, token = context
+    before = await database.fetch_one("SELECT count(*) AS n FROM incident_evidence WHERE client_email=%s", (CLIENT_EMAIL,))
+
+    by_bot_id = await client.post(
+        f"/v1/webhooks/slack/{token}",
+        json=_slack_message_payload("PostMortem AI: incident opened", ts="1700000100.000100", bot_id="B0SELF"),
+    )
+    assert by_bot_id.status_code == 200
+    assert by_bot_id.json()["status"] == "ignored"
+
+    by_subtype = await client.post(
+        f"/v1/webhooks/slack/{token}",
+        json=_slack_message_payload("PostMortem AI: incident opened", ts="1700000101.000100", subtype="bot_message"),
+    )
+    assert by_subtype.status_code == 200
+    assert by_subtype.json()["status"] == "ignored"
+
+    after = await database.fetch_one("SELECT count(*) AS n FROM incident_evidence WHERE client_email=%s", (CLIENT_EMAIL,))
+    assert before is not None and after is not None
+    assert after["n"] == before["n"], "a bot message was recorded as evidence"
+
+
+@pytest.mark.asyncio
+async def test_slack_edits_and_deletions_never_mutate_recorded_evidence(context) -> None:
+    """Evidence is append-only and provenance-preserving, so an edited or
+    deleted Slack message must not rewrite a row already recorded."""
+    client, database, token = context
+    original = await client.post(
+        f"/v1/webhooks/slack/{token}",
+        json=_slack_message_payload("Disk at 91% on db-01", ts="1700000200.000100"),
+    )
+    evidence_id = original.json()["evidence_id"]
+
+    for subtype in ("message_changed", "message_deleted", "channel_join"):
+        ignored = await client.post(
+            f"/v1/webhooks/slack/{token}",
+            json=_slack_message_payload("edited text", ts="1700000201.000100", subtype=subtype),
+        )
+        assert ignored.status_code == 200, ignored.text
+        assert ignored.json()["status"] == "ignored", subtype
+
+    unchanged = await database.fetch_one(
+        "SELECT summary FROM incident_evidence WHERE id=%s", (evidence_id,)
+    )
+    assert unchanged is not None
+    assert unchanged["summary"] == "Disk at 91% on db-01"
+
+
+@pytest.mark.asyncio
+async def test_slack_event_with_an_unknown_token_is_rejected(context) -> None:
+    client, _database, _token = context
+    response = await client.post(
+        "/v1/webhooks/slack/not-a-real-token",
+        json=_slack_message_payload("should not be recorded", ts="1700000300.000100"),
+    )
+    assert response.status_code == 404
+
+
 @pytest.mark.asyncio
 async def test_pagerduty_unhandled_event_type_is_ignored_not_acted_on(context) -> None:
     client, database, token = context
