@@ -151,11 +151,39 @@ async def try_record_password_reset_attempt(database: Database, ip: str) -> bool
 # email/IP-based limiter (a different threat model: this bounds how often
 # an already-authenticated account can call a specific action, regardless
 # of who's calling it or from where).
+# A second, much longer ceiling for the actions that spend real Gemini
+# credit. The hourly limits bound a *burst*; they do nothing about an account
+# that simply sits at the cap forever. At 20 drafts/hour an account can run
+# ~14,400 drafts a month, which at Gemini 2.5 Flash's rates (USD 0.30/M input,
+# USD 2.50/M output, against this app's own 40,000-char input and 2,048-token
+# output bounds -- about USD 0.008 a draft) is roughly USD 115 of API spend
+# against a USD 15 subscription. Normal use is nowhere near this: a heavy real
+# user writes tens of postmortems a month, costing cents, so the ceiling below
+# is set ~25x above any plausible legitimate usage. It exists to stop runaway
+# automation and deliberate abuse from turning a 99%-margin account into a
+# loss, not to meter honest customers.
+MONTH_MS = 30 * 24 * 60 * 60 * 1000
+
+
 async def try_record_action(
-    database: Database, user_id: str, action: str, max_per_window: int, window_ms: int
+    database: Database,
+    user_id: str,
+    action: str,
+    max_per_window: int,
+    window_ms: int,
+    *,
+    max_per_month: int | None = None,
 ) -> bool:
     """Atomically check-and-record. Returns True if allowed (and recorded),
     False if the caller is currently rate-limited.
+
+    `max_per_month`, when given, adds a second ceiling over MONTH_MS checked
+    inside the same advisory lock and transaction as the short window. It
+    counts the *same* api_action_events rows -- no extra table, no second
+    INSERT -- which is only sound because nothing prunes that table (verified:
+    no DELETE against it anywhere in the codebase or migrations) and
+    0010_action_rate_limits.sql already indexes (user_id, action, created_at),
+    so the longer count uses the same index as the short one.
 
     This used to be two separate calls -- a SELECT count() to check, then a
     separate INSERT to record -- with real daylight between them (a route
@@ -182,6 +210,13 @@ async def try_record_action(
         )
         if row and row["n"] >= max_per_window:
             return False
+        if max_per_month is not None:
+            monthly = await tx.fetch_one(
+                "SELECT count(*) AS n FROM api_action_events WHERE user_id=%s AND action=%s AND created_at > %s",
+                (user_id, action, now - MONTH_MS),
+            )
+            if monthly and monthly["n"] >= max_per_month:
+                return False
         await tx.execute(
             "INSERT INTO api_action_events (user_id, action, created_at) VALUES (%s, %s, %s)",
             (user_id, action, now),

@@ -206,3 +206,69 @@ async def test_a_concurrent_burst_cannot_exceed_the_limit(database, action_user)
         ]
     )
     assert sum(1 for allowed in results if allowed) == 5
+
+
+@pytest.mark.asyncio
+async def test_a_monthly_ceiling_stops_an_account_that_stays_under_the_hourly_limit(database, action_user) -> None:
+    """The gap the monthly cap closes. The hourly limit bounds a burst but not
+    an account that simply sits at the cap forever: 20 drafts/hour sustained is
+    ~14,400 drafts a month, roughly USD 115 of Gemini spend against a USD 15
+    subscription. Here every call is comfortably inside a generous hourly
+    window, so only the monthly ceiling can be what refuses the 4th."""
+    from app.security.rate_limit import try_record_action
+
+    for _ in range(3):
+        assert await try_record_action(
+            database, action_user, "draft_postmortem", max_per_window=1000, window_ms=60_000, max_per_month=3
+        )
+
+    assert not await try_record_action(
+        database, action_user, "draft_postmortem", max_per_window=1000, window_ms=60_000, max_per_month=3
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_monthly_ceiling_is_per_action_not_shared(database, action_user) -> None:
+    """Drafting and extraction each spend their own Gemini credit and each get
+    their own ceiling -- exhausting one must not lock the other out."""
+    from app.security.rate_limit import try_record_action
+
+    for _ in range(2):
+        assert await try_record_action(
+            database, action_user, "draft_postmortem", max_per_window=1000, window_ms=60_000, max_per_month=2
+        )
+    assert not await try_record_action(
+        database, action_user, "draft_postmortem", max_per_window=1000, window_ms=60_000, max_per_month=2
+    )
+
+    assert await try_record_action(
+        database, action_user, "extract_evidence", max_per_window=1000, window_ms=60_000, max_per_month=2
+    )
+
+
+@pytest.mark.asyncio
+async def test_omitting_max_per_month_leaves_existing_callers_unbounded_monthly(database, action_user) -> None:
+    """Every other call site passes no max_per_month and must keep behaving
+    exactly as before -- hourly-bounded only, with no new monthly refusal."""
+    from app.security.rate_limit import try_record_action
+
+    for _ in range(25):
+        assert await try_record_action(
+            database, action_user, "record_evidence", max_per_window=1000, window_ms=60_000
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_hourly_limit_still_bites_first_when_it_is_the_tighter_one(database, action_user) -> None:
+    """Both ceilings apply; the tighter one wins. A generous monthly allowance
+    must not let a burst through the hourly limit."""
+    from app.security.rate_limit import try_record_action
+
+    for _ in range(3):
+        assert await try_record_action(
+            database, action_user, "draft_postmortem", max_per_window=3, window_ms=60_000, max_per_month=500
+        )
+
+    assert not await try_record_action(
+        database, action_user, "draft_postmortem", max_per_window=3, window_ms=60_000, max_per_month=500
+    )

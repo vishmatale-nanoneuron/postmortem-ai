@@ -19,6 +19,19 @@
 #   # the matching step in .github/workflows/ci.yml.
 #   docker compose run --rm api pytest -q tests/test_mcp_server.py
 #
+# IMPORTANT -- reset the database before trusting a full-suite run:
+#   docker compose down -v && docker compose run --rm migrate
+#
+# The db-data volume below persists between runs, which is what you want for
+# development and wrong for tests. Most tests clean up their own rows, but
+# test_a_published_postmortem_surfaces_as_rag_context_for_a_later_draft does a
+# similarity search across ALL published postmortems, so leftovers from earlier
+# runs make it match a stale incident and fail. Seen for real: 365 incidents and
+# 9 postmortems accumulated over a session, producing exactly one failure that
+# reproduced with the working tree stashed -- i.e. not a code regression. After
+# a reset: 321 passed, 0 failed. CI never hits this; it gets a fresh service
+# container per run.
+#
 # Postgres image and credentials deliberately mirror .github/workflows/ci.yml
 # so a green run here means the same thing a green run in CI does.
 

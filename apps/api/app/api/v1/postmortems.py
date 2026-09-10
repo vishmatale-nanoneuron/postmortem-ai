@@ -72,6 +72,18 @@ MAX_EVIDENCE_PER_HOUR = 100
 MAX_STATUS_CHANGES_PER_HOUR = 60
 MAX_DRAFTS_PER_HOUR = 20
 MAX_EXTRACTIONS_PER_HOUR = 20
+
+# Monthly ceilings on the two actions that spend real Gemini credit. The hourly
+# limits above bound a burst but not an account that sits at the cap
+# indefinitely: 20 drafts/hour sustained is ~14,400 drafts a month, roughly
+# USD 115 of API spend against a USD 15 subscription (see MONTH_MS in
+# security/rate_limit.py for the full arithmetic). These are set ~25x above any
+# plausible real usage -- a heavy customer writes tens of postmortems a month,
+# costing cents -- so they are invisible to honest accounts and only bite
+# runaway automation or deliberate abuse. Worst-case exposure with these in
+# place is about USD 4 of spend per account per month.
+MAX_DRAFTS_PER_MONTH = 500
+MAX_EXTRACTIONS_PER_MONTH = 500
 # Same shape/cost as extraction's own limit -- one model call, same budget
 # reasoning, distinct action name so the two don't share one bucket.
 MAX_TITLE_SUGGESTIONS_PER_HOUR = 20
@@ -631,7 +643,10 @@ async def extract_evidence(
     existing POST .../evidence endpoint, unchanged by this feature -- same
     reason ground_draft only ever filters the drafting model's output
     rather than trusting it directly."""
-    if not await try_record_action(database, user.id, "extract_evidence", MAX_EXTRACTIONS_PER_HOUR, 60 * 60 * 1000):
+    if not await try_record_action(
+        database, user.id, "extract_evidence", MAX_EXTRACTIONS_PER_HOUR, 60 * 60 * 1000,
+        max_per_month=MAX_EXTRACTIONS_PER_MONTH,
+    ):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
 
     await require_incident(database, incident_id, user.email)
@@ -760,7 +775,10 @@ async def _draft_postmortem_for_incident(
     webhooks.py's _ingest_event already confirmed entitlement earlier in
     the same request via the same has_active_subscription/free_incident_id
     condition)."""
-    if not await try_record_action(database, user.id, "draft_postmortem", MAX_DRAFTS_PER_HOUR, 60 * 60 * 1000):
+    if not await try_record_action(
+        database, user.id, "draft_postmortem", MAX_DRAFTS_PER_HOUR, 60 * 60 * 1000,
+        max_per_month=MAX_DRAFTS_PER_MONTH,
+    ):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
 
     incident = await require_incident(database, incident_id, user.email)
