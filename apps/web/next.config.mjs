@@ -68,9 +68,31 @@ const SECURITY_HEADERS = [
 const repoRoot = path.join(__dirname, "..", "..");
 const isWorkspaceBuild = existsSync(path.join(repoRoot, "bun.lock"));
 
+// The bare domain redirects to www. Until 2026-09-11, nanoneuron.ai (no
+// www) was aliased to an unrelated 74-day-old deployment of a different
+// product, while www.nanoneuron.ai served this one -- so the domain's own
+// front door showed something other than what was being sold, and search
+// engines (which fold apex and www into one site) indexed the domain as
+// that other product. Kept in the app config rather than in the Vercel
+// dashboard so it is in git, reviewable, and survives a project re-link.
+// Host-matched so it only fires for the apex: preview URLs and localhost
+// are untouched. `permanent` is a 308, which preserves method and body.
+const APEX_HOST = "nanoneuron.ai";
+const CANONICAL_ORIGIN = "https://www.nanoneuron.ai";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   outputFileTracingRoot: isWorkspaceBuild ? repoRoot : __dirname,
+  async redirects() {
+    return [
+      {
+        source: "/:path*",
+        has: [{ type: "host", value: APEX_HOST }],
+        destination: `${CANONICAL_ORIGIN}/:path*`,
+        permanent: true,
+      },
+    ];
+  },
   async headers() {
     return [{ source: "/:path*", headers: SECURITY_HEADERS }];
   },
