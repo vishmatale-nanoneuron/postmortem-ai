@@ -82,8 +82,14 @@ export function Hero() {
           >
             Get started
           </a>
-          <Link href="/postmortems" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
-            See real examples
+          {/* Points at the demo post, not /postmortems: Web Analytics for
+              28 Aug - 10 Sep showed 8 visitors following this link to
+              /postmortems and landing on its empty state (no client has
+              published publicly yet), while the one page that actually
+              shows real, unedited output got a single visitor from the
+              footer. Switch back to /postmortems once it has entries. */}
+          <Link href="/blog/github-outage-demo" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
+            See real output
           </Link>
           <Link href="/docs" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
             How it works
