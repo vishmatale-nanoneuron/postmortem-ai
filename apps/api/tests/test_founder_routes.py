@@ -393,3 +393,72 @@ async def test_the_platform_wide_activity_log_paginates_with_a_real_cursor(conte
     assert second_body["entries"][0]["created_at"] != first_body["entries"][0]["created_at"] or (
         second_body["entries"][0]["action"] != first_body["entries"][0]["action"]
     )
+
+
+@pytest.mark.asyncio
+async def test_unit_economics_prices_every_token_as_an_upper_bound_and_counts_unpriced_runs(context) -> None:
+    """The margin card is the one place the founder sees AI spend against
+    revenue. Two properties matter: the spend is a strict upper bound (every
+    token at the output rate, because ai_runs.output_tokens is really the
+    total token count and the split is unknown), and runs that recorded no
+    token count are reported, not silently dropped by sum()."""
+    from app.api.v1.founder import GEMINI_FLASH_OUTPUT_USD_PER_MILLION_TOKENS, _utc_month_start_ms
+
+    client, database = context
+    await client.post("/v1/auth/register", json={"email": FOUNDER_EMAIL, "password": "correct-horse-battery"})
+    incident = await client.post(
+        "/v1/postmortems/incidents", json={"title": "Unit economics test incident", "severity": "sev3"}
+    )
+    incident_id = incident.json()["id"]
+
+    # ai_runs and payment_claims are global tables shared with other test
+    # files -- baseline first, assert deltas.
+    baseline = (await client.get("/v1/founder/summary")).json()["unit_economics"]
+
+    now = int(time.time() * 1000)
+    month_start = _utc_month_start_ms()
+    assert baseline["month_start"] == month_start
+    # Just inside last month: must count all-time, must not count this month.
+    last_month = month_start - 1
+
+    async def insert_run(tokens: int | None, created_at: int) -> None:
+        await database.execute(
+            """INSERT INTO ai_runs
+                 (id,incident_id,provider,model,prompt_version,input_chars,
+                  output_tokens,latency_ms,status,error_type,created_at)
+               VALUES (gen_random_uuid(),%s,'fake','fake-model','v2',10,%s,100,%s,%s,%s)""",
+            (incident_id, tokens, "succeeded" if tokens is not None else "failed", None if tokens else "test_error", created_at),
+        )
+
+    await insert_run(400_000, now)  # this month, priced
+    await insert_run(None, now)  # this month, no usage reported -- must be counted as unpriced
+    await insert_run(200_000, last_month)  # last month, priced
+
+    founder = await database.fetch_one("SELECT id::text FROM users WHERE email=%s", (FOUNDER_EMAIL,))
+    await database.execute(
+        """INSERT INTO payment_claims (user_id, amount_inr, reference, status, reviewed_by, reviewed_at, created_at)
+           VALUES (%s, 999, 'unit-economics-this-month', 'approved', %s, %s, %s),
+                  (%s, 999, 'unit-economics-last-month', 'approved', %s, %s, %s),
+                  (%s, 999, 'unit-economics-rejected', 'rejected', %s, %s, %s)""",
+        (founder["id"], FOUNDER_EMAIL, now, now, founder["id"], FOUNDER_EMAIL, last_month, last_month, founder["id"], FOUNDER_EMAIL, now, now),
+    )
+
+    body = (await client.get("/v1/founder/summary")).json()["unit_economics"]
+    month, all_time = body["month"], body["all_time"]
+    b_month, b_all = baseline["month"], baseline["all_time"]
+
+    assert month["ai_runs"] - b_month["ai_runs"] == 2
+    assert month["ai_runs_without_token_data"] - b_month["ai_runs_without_token_data"] == 1
+    assert month["ai_tokens"] - b_month["ai_tokens"] == 400_000
+    assert month["revenue_inr"] - b_month["revenue_inr"] == 999  # the rejected claim is not revenue
+
+    assert all_time["ai_runs"] - b_all["ai_runs"] == 3
+    assert all_time["ai_tokens"] - b_all["ai_tokens"] == 600_000
+    assert all_time["revenue_inr"] - b_all["revenue_inr"] == 1998
+
+    # 400k tokens at USD 2.50/M is exactly USD 1.00 -- and it is the ceiling,
+    # never an estimate below it.
+    assert body["ai_price_usd_per_million_tokens"] == GEMINI_FLASH_OUTPUT_USD_PER_MILLION_TOKENS == 2.50
+    assert round(month["ai_cost_usd_max"] - b_month["ai_cost_usd_max"], 4) == 1.0
+    assert round(all_time["ai_cost_usd_max"] - b_all["ai_cost_usd_max"], 4) == 1.5
+    assert "upper" in body["ai_price_basis"].lower() or "output rate" in body["ai_price_basis"].lower()

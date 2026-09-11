@@ -94,6 +94,17 @@ export type DashboardSummary = {
   recent_incidents: Incident[];
 };
 
+// One window of the founder's margin view. ai_cost_usd_max is a ceiling,
+// not an estimate: every token priced at the model's output rate, because
+// the backend doesn't record the prompt/completion split (see founder.py).
+export type EconomicsWindow = {
+  ai_runs: number;
+  ai_runs_without_token_data: number;
+  ai_tokens: number;
+  ai_cost_usd_max: number;
+  revenue_inr: number;
+};
+
 export type FounderSummary = {
   total_users: number;
   total_incidents: number;
@@ -118,6 +129,13 @@ export type FounderSummary = {
     avg_latency_ms: number | null;
   }[];
   pending_payment_claims: number;
+  unit_economics: {
+    month_start: number;
+    month: EconomicsWindow;
+    all_time: EconomicsWindow;
+    ai_price_usd_per_million_tokens: number;
+    ai_price_basis: string;
+  };
   conversion_funnel: {
     signups: number;
     tried_free_incident: number;
