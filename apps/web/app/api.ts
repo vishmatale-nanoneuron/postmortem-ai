@@ -375,6 +375,21 @@ export const api = {
     request<PreviousDraft | null>(`/v1/postmortems/incidents/${incidentId}/previous-draft`),
   qualitySummary: () => request<EvidenceQualitySummary>("/v1/postmortems/quality-summary"),
   exportData: () => request<ExportedData>("/v1/postmortems/export"),
+  // Raw text, not JSON -- the one route that returns a file. A 404 here
+  // most likely means the API deployment behind this frontend predates
+  // the route (the API does not auto-deploy with the web app), so the
+  // message says that instead of a bare status code.
+  postmortemMarkdown: async (incidentId: string): Promise<string> => {
+    const response = await fetch(`${API_BASE}/v1/postmortems/incidents/${incidentId}/postmortem.md`, {
+      credentials: "include",
+    });
+    if (response.status === 404) throw new Error("Markdown export isn't available on this API version yet.");
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(readableDetail(body.detail) ?? `Request failed: ${response.status}`);
+    }
+    return response.text();
+  },
   activityLog: () => request<ActivityLogEntry[]>("/v1/postmortems/activity-log"),
   updateStatusPageVisibility: (incidentId: string, isPublic: boolean) =>
     request<Incident>(`/v1/postmortems/incidents/${incidentId}/status-page`, {

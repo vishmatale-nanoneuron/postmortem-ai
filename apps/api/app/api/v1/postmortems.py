@@ -7,6 +7,7 @@ import time
 import anthropic
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import Response
 from google.genai import errors as genai_errors
 from pydantic import BaseModel, Field
 
@@ -33,6 +34,7 @@ from ...dependencies import get_database
 from ...integrations.linear import create_linear_issue
 from ...integrations.slack import notify_slack
 from ...security.rate_limit import try_record_action
+from ...services.postmortem_markdown import render_postmortem_markdown
 from ...services.postmortem import (
     EXTRACTION_PROMPT_VERSION,
     PROMPT_VERSION,
@@ -1073,6 +1075,43 @@ async def get_postmortem(
 ) -> dict[str, object]:
     await require_incident(database, incident_id, user.email)
     return await _load_postmortem(database, incident_id)
+
+
+@router.get("/incidents/{incident_id}/postmortem.md")
+async def export_postmortem_markdown(
+    incident_id: str,
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> Response:
+    """The postmortem as a Markdown file, in the same shape as the public
+    /postmortem-template page. Its real destination is the team wiki --
+    every tool this competes with exports for that reason, and until this
+    existed the only way out was the whole-account JSON export.
+
+    Owner-only, same as GET /incidents/{id}: a draft is exportable too --
+    it is the client's own data, not a paywalled feature -- so this
+    depends on current_user, not require_active_subscription. Rendering is
+    a pure function (services/postmortem_markdown.py) so its citation
+    mapping is tested without a database."""
+    incident = await database.fetch_one(
+        "SELECT id, title, severity, status, impact FROM incidents WHERE id=%s AND client_email=%s",
+        (incident_id, user.email),
+    )
+    if not incident:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
+    postmortem = await _load_postmortem(database, incident_id)
+    evidence = await database.fetch_all(
+        """SELECT id::text, occurred_at, source, summary, detail
+           FROM incident_evidence WHERE incident_id=%s ORDER BY occurred_at, id""",
+        (incident_id,),
+    )
+    body = render_postmortem_markdown(incident=incident, postmortem=postmortem, evidence=evidence)
+    await log_activity(database, user.email, "postmortem_exported", incident_id=incident_id)
+    return Response(
+        content=body,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="postmortem-{incident_id}.md"'},
+    )
 
 
 @router.post("/incidents/{incident_id}/publish")

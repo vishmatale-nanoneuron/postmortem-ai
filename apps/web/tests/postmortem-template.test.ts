@@ -13,9 +13,11 @@ describe("postmortem template", () => {
     }
   });
 
-  it("tags exactly the five fields the backend drafter returns", () => {
+  it("tags exactly the six things the backend drafter returns", () => {
+    // summary, root_cause, detection, resolution, contributing_factors,
+    // actions -- see the JSON schema in services/postmortem.py.
     expect([...DRAFTED_SECTIONS].sort()).toEqual(
-      ["Contributing factors", "Detection", "Resolution", "Root cause", "Summary"].sort(),
+      ["Action items", "Contributing factors", "Detection", "Resolution", "Root cause", "Summary"].sort(),
     );
   });
 
@@ -25,7 +27,7 @@ describe("postmortem template", () => {
   });
 
   it("keeps the author-owned sections the tool never fills", () => {
-    for (const name of ["Impact", "Timeline (UTC)", "Action items", "What went well", "Lessons"]) {
+    for (const name of ["Impact", "Timeline (UTC)", "What went well", "Lessons"]) {
       expect(TEMPLATE_MARKDOWN).toContain(`## ${name}\n`);
     }
   });

@@ -7,6 +7,11 @@
 # one command.
 #
 #   docker compose up --build          # full stack on :3000 / :8000
+#
+# The api container runs gunicorn supervising one uvicorn worker per CPU
+# (apps/api/gunicorn.conf.py: request timeout, graceful shutdown, worker
+# recycling, all env-overridable -- WEB_CONCURRENCY=2 for a small box).
+# Production on Vercel does not use gunicorn; Vercel invokes the ASGI app.
 #   docker compose run --rm migrate    # apply migrations (idempotent, safe to rerun)
 #
 #   # Backend tests, the way CI runs them (311 pass):

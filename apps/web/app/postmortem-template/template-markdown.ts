@@ -7,14 +7,24 @@
 // tried to render this module as one -- "Element type is invalid: got
 // object" on every request to the page.
 //
-// The five sections marked "drafted" are exactly the five fields the
+// The six sections marked "drafted" are exactly the six things the
 // production drafter returns (apps/api/app/services/postmortem.py: summary,
-// root_cause, detection, resolution, contributing_factors). The rest --
-// impact, timeline, action items, what went well, lessons -- are the
-// author's own. That split is asserted by tests/postmortem-template.test.ts so the page's
-// claim about which sections the tool fills can't drift from the backend.
+// root_cause, detection, resolution, contributing_factors, and actions --
+// each action a cited title, rationale and owner; the due date is not
+// drafted). The rest -- impact, timeline, what went well, lessons -- are
+// the author's own. That split is asserted by
+// tests/postmortem-template.test.ts so the page's claim about which
+// sections the tool fills can't drift from the backend. (The first version
+// of this page left action items off the list; the code said otherwise.)
 
-export const DRAFTED_SECTIONS = ["Summary", "Detection", "Root cause", "Contributing factors", "Resolution"] as const;
+export const DRAFTED_SECTIONS = [
+  "Summary",
+  "Detection",
+  "Root cause",
+  "Contributing factors",
+  "Resolution",
+  "Action items",
+] as const;
 
 export const TEMPLATE_MARKDOWN = `# Incident postmortem: <one-line title>
 

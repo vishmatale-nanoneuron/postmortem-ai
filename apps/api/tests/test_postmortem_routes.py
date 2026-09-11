@@ -407,6 +407,41 @@ async def test_a_grounded_draft_is_stored_with_its_citations(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_drafted_postmortem_exports_as_markdown_with_resolvable_citations(context) -> None:
+    """The wiki-bound copy: the document a team actually keeps. The model
+    cited evidence by number ([1], [2]); the stored rows hold ids; the
+    export must number the evidence again and map every reference back to
+    those numbers, and carry the dropped-claim count out with the text."""
+    client, _, _, _ = context
+    await seed_two_entries(client)
+    assert (await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")).status_code == 201
+    listed = (await client.get(f"/v1/postmortems/incidents/{INCIDENT}/evidence")).json()
+    assert [row["summary"] for row in listed] == ["Checkout p99 latency crossed 4s", "Release 1.2 shipped"]
+
+    response = await client.get(f"/v1/postmortems/incidents/{INCIDENT}/postmortem.md")
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/markdown")
+    assert response.headers["content-disposition"] == f'attachment; filename="postmortem-{INCIDENT}.md"'
+    text = response.text
+
+    assert text.startswith("# Postmortem: Checkout outage\n")
+    assert "| Severity | Sev 1 |" in text
+    assert "| Impact | All checkouts |" in text
+    assert "## Summary\n\nCheckout latency rose after release 1.2." in text
+    assert "- The release changed the payment client." in text
+    # GOOD_RESPONSE's one action cites entry [2] = the deploy row; the
+    # export resolves the stored evidence_id back to that same number.
+    assert "| Load-test the payment client before release | ops@example.com | open | [2] |" in text
+    assert "| 2 | 1970-01-01 00:00 UTC | deploy | Release 1.2 shipped |  | yes |" in text
+    assert "**0** dropped" in text
+    assert "[None]" not in text
+
+    # Recorded in the account's own activity log like the JSON export is.
+    log = (await client.get("/v1/postmortems/activity-log")).json()
+    assert any(entry["action"] == "postmortem_exported" for entry in log)
+
+
+@pytest.mark.asyncio
 async def test_no_previous_draft_before_the_first_ever_draft(context) -> None:
     client, _, _, _ = context
     await seed_two_entries(client)
@@ -945,6 +980,7 @@ async def test_a_different_user_cannot_see_or_act_on_this_incident(context) -> N
         assert (await other.get(f"/v1/postmortems/incidents/{INCIDENT}/evidence")).status_code == 404
         assert (await other.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")).status_code == 404
         assert (await other.get(f"/v1/postmortems/incidents/{INCIDENT}")).status_code == 404
+        assert (await other.get(f"/v1/postmortems/incidents/{INCIDENT}/postmortem.md")).status_code == 404
         assert (await other.post(f"/v1/postmortems/incidents/{INCIDENT}/publish")).status_code == 404
 
         listing = await other.get("/v1/postmortems/incidents")

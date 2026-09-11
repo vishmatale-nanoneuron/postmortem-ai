@@ -2916,6 +2916,30 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
     }
   }
 
+  // The wiki-bound copy. Same object-URL download as the account export
+  // (AccountSettings.exportData): a bare <a href> to the API origin
+  // wouldn't carry the session cookie.
+  async function downloadMarkdown() {
+    if (!selectedId) return;
+    setBusy(true);
+    try {
+      const text = await api.postmortemMarkdown(selectedId);
+      const url = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `postmortem-${selectedId}.md`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setMessage("Markdown downloaded.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not export the postmortem.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function publish() {
     if (!selectedId) return;
     setBusy(true);
@@ -3144,9 +3168,14 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
             {postmortem && previousDraft && <DraftComparison postmortem={postmortem} previous={previousDraft} />}
             {postmortem && (
               <div className="mt-4 space-y-2 text-sm">
-                <p>
-                  <span className="font-medium">Status:</span> {postmortem.status}
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p>
+                    <span className="font-medium">Status:</span> {postmortem.status}
+                  </p>
+                  <Button variant="line" size="app" disabled={busy} onClick={() => void downloadMarkdown()} type="button">
+                    Download as Markdown
+                  </Button>
+                </div>
                 <p>
                   <span className="font-medium">Summary:</span> {postmortem.summary}
                 </p>
