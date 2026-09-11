@@ -100,7 +100,7 @@ const GUIDE: { name: string; what: string; avoid: string }[] = [
   },
   {
     name: "Action items",
-    what: "Concrete changes, each with one owner and a date.",
+    what: "Concrete changes, each with one owner and a date. The tool drafts the item, its rationale and a suggested owner, each cited; the date is yours.",
     avoid: "\"Team to consider improving monitoring.\" No owner, no date, no verb anyone can be asked about in a month.",
   },
 ];
@@ -217,10 +217,10 @@ export default function PostmortemTemplatePage() {
           <>
             <h2 className={h2}>Where the tool fits</h2>
             <p className={p}>
-              The five sections tagged &ldquo;drafted by the tool&rdquo; above are what PostMortem AI writes from
+              The six sections tagged &ldquo;drafted by the tool&rdquo; above are what PostMortem AI writes from
               your recorded evidence, each sentence cited to a timeline row, and any sentence it can&apos;t cite
-              is dropped rather than kept. The rest -- impact, action items, lessons -- stay yours, because they
-              need judgment the evidence doesn&apos;t contain.
+              is dropped rather than kept. The rest -- impact, what went well, lessons, and the dates on action
+              items -- stay yours, because they need judgment the evidence doesn&apos;t contain.
             </p>
             <p className={p}>
               Your first incident is free.{" "}

@@ -1,5 +1,11 @@
 fastapi==0.140.13
 uvicorn[standard]==0.34.0
+# Container / self-hosted path only (apps/api/Dockerfile, gunicorn.conf.py);
+# Vercel invokes the ASGI app directly and ignores both.
+gunicorn==26.2.0
+# 0.3.0, not 0.4.0: 0.4.0 requires uvicorn>=0.36 and uvicorn is pinned at 0.34
+# above for the Vercel path; bumping it there is a separate, deliberate change.
+uvicorn-worker==0.3.0
 pydantic==2.13.4
 pydantic-settings==2.7.1
 email-validator==2.2.0

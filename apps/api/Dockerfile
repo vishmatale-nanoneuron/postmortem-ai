@@ -24,9 +24,12 @@ COPY apps/api/app ./app
 # compose provides.
 COPY apps/api/tests ./tests
 COPY apps/api/pytest.ini ./
+COPY apps/api/gunicorn.conf.py ./
 
 EXPOSE 8000
 
 # No --reload here: this is the image a container host would run. Compose
 # overrides the command for local development where reload is wanted.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Gunicorn supervising uvicorn workers -- see gunicorn.conf.py for every
+# knob and why. A bare `uvicorn` here was one process with no timeout.
+CMD ["gunicorn", "app.main:app", "-c", "gunicorn.conf.py"]
