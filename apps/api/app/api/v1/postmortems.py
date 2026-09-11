@@ -3,6 +3,7 @@ import logging
 import re
 import secrets
 import time
+import uuid
 
 import anthropic
 import httpx
@@ -507,6 +508,17 @@ async def dashboard_summary(
            WHERE i.client_email=%s""",
         (user.email,),
     )
+    # Follow-ups still owed across every incident -- the number a client
+    # should see on landing, since a postmortem whose actions never close
+    # changed nothing.
+    action_counts = await database.fetch_one(
+        """SELECT count(*) FILTER (WHERE a.status IN ('open', 'in_progress')) AS open_actions
+           FROM postmortem_actions a
+           JOIN incident_postmortems p ON p.id = a.postmortem_id
+           JOIN incidents i ON i.id = p.incident_id
+           WHERE i.client_email=%s""",
+        (user.email,),
+    )
     recent_incidents = await database.fetch_all(
         """SELECT id, title, severity, status,
                   CASE WHEN status = 'resolved' THEN updated_at - created_at END AS resolution_ms
@@ -520,6 +532,7 @@ async def dashboard_summary(
         "resolved_incidents": (incident_counts or {}).get("resolved", 0),
         "drafted_postmortems": (postmortem_counts or {}).get("drafted", 0),
         "published_postmortems": (postmortem_counts or {}).get("published", 0),
+        "open_actions": (action_counts or {}).get("open_actions", 0),
         "avg_resolution_ms": round(float(avg_resolution_ms)) if avg_resolution_ms is not None else None,
         "recent_incidents": recent_incidents,
     }
@@ -1216,6 +1229,59 @@ def slugify(title: str, incident_id: str) -> str:
 
 class PublicVisibilityUpdate(BaseModel):
     is_public: bool
+
+
+# Mirrors the CHECK constraint on postmortem_actions.status (migration
+# 0002). Validated here so a bad value is a 422 with a readable message
+# rather than a 500 from the database.
+ACTION_STATUSES = ("open", "in_progress", "done", "dropped")
+
+
+class ActionStatusUpdate(BaseModel):
+    status: str = Field(pattern="^(open|in_progress|done|dropped)$")
+
+
+@router.patch("/incidents/{incident_id}/actions/{action_id}")
+async def update_action_status(
+    incident_id: str,
+    action_id: str,
+    payload: ActionStatusUpdate,
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> dict[str, object]:
+    """Follow-up tracking. postmortem_actions has carried a four-state
+    status column since migration 0002, and until this route existed
+    nothing could move an action off 'open' -- the drafted follow-ups were
+    write-once, which made the part of a postmortem that pays off
+    afterwards (did the fix actually happen?) unanswerable in-product.
+
+    Owner-scoped through the incident, like every other route here; not
+    behind the subscription gate, because changing the state of your own
+    already-drafted content is not the paywalled action. Re-drafting
+    replaces AI-drafted actions (see draft_postmortem), so a status set
+    here survives only until the next draft -- the same trade the
+    citations already make."""
+    await require_incident(database, incident_id, user.email)
+    try:
+        uuid.UUID(action_id)
+    except ValueError:
+        # A non-uuid id can't be an action; answer 404 rather than letting
+        # Postgres reject the cast with a 500.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Action not found") from None
+    now = int(time.time() * 1000)
+    row = await database.fetch_one(
+        """UPDATE postmortem_actions a SET status=%s, updated_at=%s
+           FROM incident_postmortems p
+           WHERE a.id=%s AND a.postmortem_id=p.id AND p.incident_id=%s
+           RETURNING a.id::text, a.title, a.rationale, a.owner, a.evidence_id::text, a.status""",
+        (payload.status, now, action_id, incident_id),
+    )
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Action not found")
+    await log_activity(
+        database, user.email, "action_status_changed", incident_id=incident_id, detail=f"{row['title']}: {payload.status}"
+    )
+    return row
 
 
 @router.patch("/incidents/{incident_id}/public")

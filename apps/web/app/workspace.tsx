@@ -14,6 +14,8 @@ import {
   type EvidenceQualitySummary,
   type ExtractedEvidence,
   type FounderActivityLogEntry,
+  ACTION_STATUSES,
+  type ActionStatus,
   type EconomicsWindow,
   type FounderSummary,
   type Incident,
@@ -2940,6 +2942,20 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
     }
   }
 
+  // Follow-up tracking: the drafted action items were write-once until
+  // the PATCH route existed. Optimistic on success only -- the server's
+  // returned row replaces the local one, so a rejected change never shows.
+  async function setActionStatus(actionId: string, status: ActionStatus) {
+    if (!selectedId || !postmortem) return;
+    try {
+      const updated = await api.updateActionStatus(selectedId, actionId, status);
+      setPostmortem({ ...postmortem, actions: postmortem.actions.map((a) => (a.id === actionId ? updated : a)) });
+      void api.summary().then(setSummary).catch(() => undefined);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not update the action item.");
+    }
+  }
+
   async function publish() {
     if (!selectedId) return;
     setBusy(true);
@@ -2995,6 +3011,7 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
                 ["Avg time to resolve", summary.avg_resolution_ms != null ? formatDuration(summary.avg_resolution_ms) : "--"],
                 ["Drafted", summary.drafted_postmortems],
                 ["Published", summary.published_postmortems],
+                ["Open action items", summary.open_actions ?? 0],
               ] as [string, number | string][]
             ).map(([label, value]) => (
               <div key={label} className="rounded-md bg-paper px-3 py-2">
@@ -3201,10 +3218,29 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
                 {postmortem.actions.length > 0 && (
                   <div>
                     <span className="font-medium">Actions:</span>
-                    <ul className="mt-1 list-disc space-y-1 pl-5">
+                    <ul className="mt-1 space-y-1.5">
                       {postmortem.actions.map((action) => (
-                        <li key={action.id}>
-                          {action.title} -- {action.owner} ({action.rationale})
+                        <li key={action.id} className="flex flex-wrap items-center gap-2">
+                          <label className="sr-only" htmlFor={`action-status-${action.id}`}>
+                            Status of {action.title}
+                          </label>
+                          <select
+                            id={`action-status-${action.id}`}
+                            className={cn(fieldInput, "mb-0 w-auto text-xs")}
+                            value={action.status}
+                            disabled={busy}
+                            onChange={(e) => void setActionStatus(action.id, e.target.value as ActionStatus)}
+                          >
+                            {ACTION_STATUSES.map((value) => (
+                              <option key={value} value={value}>
+                                {value.replace("_", " ")}
+                              </option>
+                            ))}
+                          </select>
+                          <span className={action.status === "done" || action.status === "dropped" ? "text-muted line-through" : ""}>
+                            {action.title} -- {action.owner}
+                          </span>
+                          <span className="text-xs text-muted">({action.rationale})</span>
                         </li>
                       ))}
                     </ul>

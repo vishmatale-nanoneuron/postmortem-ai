@@ -217,6 +217,12 @@ pre-fill -- suggestion only, creates nothing), `POST /incidents`,
 `GET /incidents/{id}/evidence`, `POST /incidents/{id}/evidence/extract`
 (AI-assisted extraction from pasted raw text), `POST /incidents/{id}/draft`,
 `POST /incidents/{id}/publish`, `PATCH /incidents/{id}/public`,
+`GET /incidents/{id}/postmortem.md` (the postmortem as a Markdown file in the
+same shape as /postmortem-template: evidence numbered, every citation
+resolved to a number, the dropped-claim count included),
+`PATCH /incidents/{id}/actions/{action_id}` (follow-up tracking: move a
+drafted action item through open / in_progress / done / dropped; `GET
+/summary` reports `open_actions` still owed across all incidents),
 `GET /public` (list published+public postmortems), `GET /public/{slug}`,
 `GET /export` (the caller's own full data as JSON), `GET /activity-log`
 (the caller's own account_activity_log rows, source-tagged web vs.
