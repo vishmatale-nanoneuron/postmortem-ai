@@ -32,6 +32,8 @@ const LAST_MODIFIED = {
   pricing: new Date("2026-09-05T18:08:04+00:00"), // FAQ section + FAQPage structured data added
   groundingMechanism: new Date("2026-09-04T13:23:04+00:00"),
   githubOutageDemo: new Date("2026-09-04T13:23:04+00:00"),
+  cloudflareOutages: new Date("2026-09-11T00:00:00+00:00"), // worked example added
+  postmortemTemplate: new Date("2026-09-11T00:00:00+00:00"), // template page added
   postmortems: new Date("2026-09-01T22:56:32+05:30"),
   status: new Date("2026-09-01T20:53:02+05:30"),
   privacy: new Date("2026-09-01T20:53:02+05:30"),
@@ -55,6 +57,20 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       lastModified: LAST_MODIFIED.githubOutageDemo,
       changeFrequency: "yearly",
       priority: 0.6,
+    },
+    {
+      url: `${SITE_URL}/blog/cloudflare-outages-2025`,
+      lastModified: LAST_MODIFIED.cloudflareOutages,
+      changeFrequency: "yearly",
+      priority: 0.6,
+    },
+    // The one page here written for a search someone actually types
+    // ("postmortem template"), so it outranks the posts in priority.
+    {
+      url: `${SITE_URL}/postmortem-template`,
+      lastModified: LAST_MODIFIED.postmortemTemplate,
+      changeFrequency: "monthly",
+      priority: 0.7,
     },
     { url: `${SITE_URL}/postmortems`, lastModified: LAST_MODIFIED.postmortems, changeFrequency: "daily", priority: 0.6 },
     { url: `${SITE_URL}/status`, lastModified: LAST_MODIFIED.status, changeFrequency: "daily", priority: 0.3 },

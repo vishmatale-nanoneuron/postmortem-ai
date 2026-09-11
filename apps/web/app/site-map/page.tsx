@@ -54,6 +54,16 @@ const GROUPS: { heading: string; links: { label: string; href: string; note: str
         href: "/blog/github-outage-demo",
         note: "A worked postmortem built from a real public incident",
       },
+      {
+        label: "Two Cloudflare outages, in postmortem form",
+        href: "/blog/cloudflare-outages-2025",
+        note: "The template filled from Cloudflare's own reports, every line quoted and linked",
+      },
+      {
+        label: "Blameless postmortem template",
+        href: "/postmortem-template",
+        note: "Free Markdown template with section-by-section guidance",
+      },
     ],
   },
   {

@@ -4,10 +4,13 @@ Canonical product: [https://www.nanoneuron.ai/](https://www.nanoneuron.ai/)
 [Short index](https://www.nanoneuron.ai/llms.txt)
 [Docs](https://www.nanoneuron.ai/docs)
 [Grounding mechanism](https://www.nanoneuron.ai/blog/grounding-mechanism) (long form)
+[Blameless postmortem template](https://www.nanoneuron.ai/postmortem-template) (free Markdown, no signup)
+[Two Cloudflare outages, in postmortem form](https://www.nanoneuron.ai/blog/cloudflare-outages-2025) (the template filled from Cloudflare's own reports, every line quoted verbatim -- assembled by hand, not tool output)
+[GitHub outage demo](https://www.nanoneuron.ai/blog/github-outage-demo) (the tool's own unedited output on a real public incident)
 [Published postmortems](https://www.nanoneuron.ai/postmortems)
 [Pricing](https://www.nanoneuron.ai/pricing)
 Contact: vish.matale@gmail.com
-Last factual review: 2026-09-10
+Last factual review: 2026-09-11
 
 This file is the complete reference; llms.txt above is the short index. Every
 claim here is checked against the running code and, where practical, against
