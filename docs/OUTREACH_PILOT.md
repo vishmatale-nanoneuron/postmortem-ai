@@ -23,6 +23,10 @@ about *their* incident instead of about us.
 
 Where public postmortems come from, in order of yield:
 
+0. **https://postmortem.io** -- a public library of real postmortems,
+   browsable by company and date. Filter to the last year, skip the
+   hyperscalers, keep the ones with a named author. Ten minutes gets ten
+   rows.
 1. **Company engineering blogs** -- search `site:<company>.com postmortem`
    or `incident report` for any SaaS company you have heard of. The author
    byline is the prospect.
