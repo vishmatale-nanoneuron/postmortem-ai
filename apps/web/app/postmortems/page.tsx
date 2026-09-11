@@ -93,7 +93,16 @@ export default async function PublicPostmortemsIndex() {
             <Link className="underline underline-offset-2 hover:text-ink" href="/blog/grounding-mechanism">
               how the grounding works
             </Link>{" "}
-            -- why a claim with no citation is removed rather than kept.
+            -- why a claim with no citation is removed rather than kept. For the shape of the document itself, there
+            is{" "}
+            <Link className="underline underline-offset-2 hover:text-ink" href="/postmortem-template">
+              a free template
+            </Link>{" "}
+            and{" "}
+            <Link className="underline underline-offset-2 hover:text-ink" href="/blog/cloudflare-outages-2025">
+              that template filled from two of Cloudflare&apos;s own outage reports
+            </Link>
+            .
           </p>
           <p className="mt-2 text-sm text-muted">Your first incident is free, so you can also try it on one of your own.</p>
         </div>

@@ -375,8 +375,10 @@ export function SiteFooter() {
   // /docs -- unreachable from the footer that appears on every page,
   // meaning the site's only real long-form content had no path in from
   // the nav most crawlers and visitors actually use. Real content, real
-  // links: not adding a "/blog" index page for two posts, just surfacing
-  // the two that exist.
+  // links: not adding a "/blog" index page for three posts, just surfacing
+  // them. The Cloudflare worked example is reached from the template page
+  // and /postmortems rather than here, to keep this row from growing into
+  // a second nav.
   const links: [string, string][] = [
     ["Docs", "/docs"],
     ["Pricing", "/pricing"],
@@ -384,6 +386,7 @@ export function SiteFooter() {
     ["Status", "/status"],
     ["How grounding works", "/blog/grounding-mechanism"],
     ["Real outage demo", "/blog/github-outage-demo"],
+    ["Postmortem template", "/postmortem-template"],
     // "Sales and Refunds" points at the refund block on /pricing rather than a
     // page of its own, so the terms exist in exactly one place and two copies
     // can never disagree. "Site Map" is /site-map (the human list), not
