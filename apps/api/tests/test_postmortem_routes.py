@@ -442,6 +442,58 @@ async def test_a_drafted_postmortem_exports_as_markdown_with_resolvable_citation
 
 
 @pytest.mark.asyncio
+async def test_a_drafted_action_item_can_be_tracked_to_done(context) -> None:
+    """Follow-up tracking. The status column existed since 0002 with four
+    states and nothing could ever change it; drafted actions were
+    write-once. The summary's open_actions is the landing-page number."""
+    client, _, _, _ = context
+    await seed_two_entries(client)
+    draft = (await client.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")).json()
+    action = draft["actions"][0]
+    assert action["status"] == "open"
+
+    before = (await client.get("/v1/postmortems/summary")).json()
+    assert before["open_actions"] == 1
+    # account_activity_log survives account deletion by design and this
+    # database is shared across runs -- baseline, then assert the delta.
+    log_before = len(
+        [e for e in (await client.get("/v1/postmortems/activity-log")).json() if e["action"] == "action_status_changed"]
+    )
+
+    moved = await client.patch(
+        f"/v1/postmortems/incidents/{INCIDENT}/actions/{action['id']}", json={"status": "in_progress"}
+    )
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["status"] == "in_progress"
+    assert moved.json()["title"] == action["title"]
+    assert (await client.get("/v1/postmortems/summary")).json()["open_actions"] == 1  # still owed
+
+    done = await client.patch(f"/v1/postmortems/incidents/{INCIDENT}/actions/{action['id']}", json={"status": "done"})
+    assert done.status_code == 200
+    assert (await client.get(f"/v1/postmortems/incidents/{INCIDENT}")).json()["actions"][0]["status"] == "done"
+    assert (await client.get("/v1/postmortems/summary")).json()["open_actions"] == 0
+
+    # The export carries the new state out with the document.
+    exported = (await client.get(f"/v1/postmortems/incidents/{INCIDENT}/postmortem.md")).text
+    assert "| ops@example.com | done |" in exported
+
+    # Bad inputs are readable errors, never 500s.
+    bad = await client.patch(f"/v1/postmortems/incidents/{INCIDENT}/actions/{action['id']}", json={"status": "finished"})
+    assert bad.status_code == 422
+    not_uuid = await client.patch(f"/v1/postmortems/incidents/{INCIDENT}/actions/not-a-uuid", json={"status": "done"})
+    assert not_uuid.status_code == 404
+    missing = await client.patch(
+        f"/v1/postmortems/incidents/{INCIDENT}/actions/00000000-0000-0000-0000-000000000000", json={"status": "done"}
+    )
+    assert missing.status_code == 404
+
+    log = (await client.get("/v1/postmortems/activity-log")).json()
+    changes = [entry for entry in log if entry["action"] == "action_status_changed"]
+    assert len(changes) - log_before == 2
+    assert any(entry["detail"].endswith(": done") for entry in changes)
+
+
+@pytest.mark.asyncio
 async def test_no_previous_draft_before_the_first_ever_draft(context) -> None:
     client, _, _, _ = context
     await seed_two_entries(client)
@@ -981,6 +1033,12 @@ async def test_a_different_user_cannot_see_or_act_on_this_incident(context) -> N
         assert (await other.post(f"/v1/postmortems/incidents/{INCIDENT}/draft")).status_code == 404
         assert (await other.get(f"/v1/postmortems/incidents/{INCIDENT}")).status_code == 404
         assert (await other.get(f"/v1/postmortems/incidents/{INCIDENT}/postmortem.md")).status_code == 404
+        assert (
+            await other.patch(
+                f"/v1/postmortems/incidents/{INCIDENT}/actions/00000000-0000-0000-0000-000000000000",
+                json={"status": "done"},
+            )
+        ).status_code == 404
         assert (await other.post(f"/v1/postmortems/incidents/{INCIDENT}/publish")).status_code == 404
 
         listing = await other.get("/v1/postmortems/incidents")

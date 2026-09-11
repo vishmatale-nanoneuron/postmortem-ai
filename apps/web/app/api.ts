@@ -90,9 +90,14 @@ export type DashboardSummary = {
   resolved_incidents: number;
   drafted_postmortems: number;
   published_postmortems: number;
+  // Follow-ups still owed (open or in progress) across every incident.
+  open_actions: number;
   avg_resolution_ms: number | null;
   recent_incidents: Incident[];
 };
+
+export type ActionStatus = "open" | "in_progress" | "done" | "dropped";
+export const ACTION_STATUSES: ActionStatus[] = ["open", "in_progress", "done", "dropped"];
 
 // One window of the founder's margin view. ai_cost_usd_max is a ceiling,
 // not an estimate: every token priced at the model's output rate, because
@@ -391,6 +396,11 @@ export const api = {
     return response.text();
   },
   activityLog: () => request<ActivityLogEntry[]>("/v1/postmortems/activity-log"),
+  updateActionStatus: (incidentId: string, actionId: string, status: ActionStatus) =>
+    request<PostmortemAction>(`/v1/postmortems/incidents/${incidentId}/actions/${actionId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
   updateStatusPageVisibility: (incidentId: string, isPublic: boolean) =>
     request<Incident>(`/v1/postmortems/incidents/${incidentId}/status-page`, {
       method: "PATCH",
