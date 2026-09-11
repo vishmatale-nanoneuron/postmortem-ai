@@ -14,6 +14,7 @@ import {
   type EvidenceQualitySummary,
   type ExtractedEvidence,
   type FounderActivityLogEntry,
+  type EconomicsWindow,
   type FounderSummary,
   type Incident,
   type Integrations,
@@ -290,6 +291,7 @@ function FounderDashboard() {
   const nav: [string, string][] = [
     ["AI health", "#founder-ai-health"],
     ["Stats", "#founder-stats"],
+    ["Margin", "#founder-margin"],
     ["Funnel", "#founder-funnel"],
     ["Signups", "#founder-signups"],
     ["AI runs", "#founder-ai-runs"],
@@ -358,6 +360,9 @@ function FounderDashboard() {
             <div className="text-xs text-muted">{label}</div>
           </div>
         ))}
+      </div>
+      <div id="founder-margin" className="scroll-mt-16">
+        <UnitEconomicsPanel economics={summary.unit_economics} />
       </div>
       <div id="founder-funnel" className="scroll-mt-16">
         <ConversionFunnelPanel funnel={summary.conversion_funnel} />
@@ -590,6 +595,60 @@ function AgentActivityPanel() {
           {loadingMore ? "Loading…" : "Load more"}
         </button>
       )}
+    </div>
+  );
+}
+
+// The one question every other number on this page dances around: is the
+// model spend covered by what came in? Spend is shown as a ceiling ("at
+// most"), never an estimate -- see EconomicsWindow in api.ts -- and revenue
+// stays in INR next to spend in USD rather than being blended through a
+// made-up exchange rate. Runs that reported no token count are called out
+// because sum() drops them silently and a spend figure that quietly skips
+// calls is exactly the reassuring-but-wrong number this dashboard avoids.
+function UnitEconomicsPanel({ economics }: { economics: FounderSummary["unit_economics"] }) {
+  const monthLabel = new Date(economics.month_start).toLocaleString(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
+  const windows: [string, EconomicsWindow][] = [
+    [`This month (${monthLabel}, UTC)`, economics.month],
+    ["All time", economics.all_time],
+  ];
+  const usd = (n: number) => `$${n.toFixed(2)}`;
+  const inr = (n: number) => `\u20B9${n.toLocaleString("en-IN")}`;
+  return (
+    <div className="mb-4">
+      <h3 className="mb-2 text-sm font-semibold text-ink">Margin</h3>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {windows.map(([label, w]) => (
+          <div key={label} className="rounded-md bg-paper px-3 py-2">
+            <div className="text-xs text-muted">{label}</div>
+            <div className="mt-1 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+              <div>
+                <span className="text-lg font-semibold text-ink">{usd(w.ai_cost_usd_max)}</span>
+                <span className="ml-1 text-xs text-muted">AI spend, at most</span>
+              </div>
+              <div>
+                <span className="text-lg font-semibold text-ink">{inr(w.revenue_inr)}</span>
+                <span className="ml-1 text-xs text-muted">revenue</span>
+              </div>
+            </div>
+            <div className="mt-1 text-xs text-muted">
+              {w.ai_runs} AI {w.ai_runs === 1 ? "call" : "calls"}, {w.ai_tokens.toLocaleString("en-IN")} tokens
+              {w.ai_runs_without_token_data > 0 && (
+                <span className="text-red-700">
+                  {" "}
+                  -- {w.ai_runs_without_token_data} recorded no token count and {w.ai_runs_without_token_data === 1 ? "is" : "are"} not
+                  in the spend figure
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 text-xs text-muted">
+        Spend is a ceiling: every token priced at ${economics.ai_price_usd_per_million_tokens.toFixed(2)} per million ({economics.ai_price_basis}); the
+        long evidence prompt is most of the tokens and bills lower, so the real figure is under this. Revenue is approved UPI and
+        wire claims by approval date; Stripe amounts are not stored here and are not included.
+      </p>
     </div>
   );
 }

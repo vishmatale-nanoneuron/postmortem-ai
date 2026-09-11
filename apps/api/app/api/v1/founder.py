@@ -1,3 +1,4 @@
+import calendar
 import logging
 import time
 
@@ -18,6 +19,43 @@ from ...services.email import (
 from ...settings import Settings, get_settings
 
 logger = logging.getLogger("postmortem_ai")
+
+# What one token costs at the most expensive rate the drafting model
+# charges. Gemini 2.5 Flash, list price as of 2026-09: USD 0.30 per million
+# input tokens, USD 2.50 per million output tokens. ai_runs.output_tokens
+# holds usage_metadata.total_token_count -- prompt AND completion together,
+# despite the column name (see gemini_provider.py) -- and the split is not
+# recorded. Rather than estimate it, every token is priced at the output
+# rate, which makes the figure a strict upper bound: the true spend is
+# lower, because for this workload the long evidence prompt is most of the
+# tokens and it bills at the cheaper rate. An upper bound the founder can
+# trust beats an estimate that might be under.
+GEMINI_FLASH_OUTPUT_USD_PER_MILLION_TOKENS = 2.50
+AI_PRICE_BASIS = "gemini-2.5-flash output rate, list price 2026-09"
+
+
+def _utc_month_start_ms(now_seconds: float | None = None) -> int:
+    """Epoch-ms of 00:00:00 UTC on the 1st of the current month. Every
+    timestamp in this schema is an epoch-ms bigint, so the boundary is
+    computed here and passed as a parameter rather than date_trunc'd in SQL."""
+    t = time.gmtime(time.time() if now_seconds is None else now_seconds)
+    return int(calendar.timegm((t.tm_year, t.tm_mon, 1, 0, 0, 0, 0, 0, 0)) * 1000)
+
+
+def _ai_cost_usd_max(tokens: int) -> float:
+    return round(tokens * GEMINI_FLASH_OUTPUT_USD_PER_MILLION_TOKENS / 1_000_000, 4)
+
+
+def _economics_window(usage: dict | None, revenue: dict | None) -> dict:
+    tokens = int((usage or {}).get("tokens", 0) or 0)
+    return {
+        "ai_runs": int((usage or {}).get("runs", 0) or 0),
+        "ai_runs_without_token_data": int((usage or {}).get("runs_without_token_data", 0) or 0),
+        "ai_tokens": tokens,
+        "ai_cost_usd_max": _ai_cost_usd_max(tokens),
+        "revenue_inr": int((revenue or {}).get("inr", 0) or 0),
+    }
+
 
 router = APIRouter(prefix="/v1/founder", tags=["founder"])
 
@@ -108,6 +146,39 @@ async def founder_summary(
                   avg(latency_ms) FILTER (WHERE status = 'succeeded') AS avg_latency_ms
            FROM ai_runs GROUP BY prompt_version ORDER BY count(*) DESC"""
     )
+    # Unit economics. Everything above measures whether the model calls
+    # work; nothing measured what they cost against what came in. Two
+    # windows: this calendar month (UTC) -- the one that answers "are we
+    # losing money right now" -- and all time. Revenue is approved manual
+    # claims only, attributed to the day the founder approved them; Stripe
+    # amounts are not stored locally, so they are not included and the
+    # card says so. NULL token counts (a failed call before the model
+    # answered, or a provider that reported no usage) are skipped by
+    # sum() silently, so the number of such runs is returned alongside --
+    # a spend figure that quietly excludes some calls is the same kind of
+    # reassuring-but-wrong the 24h split above exists to prevent.
+    month_start_ms = _utc_month_start_ms()
+    ai_usage_month = await database.fetch_one(
+        """SELECT count(*) AS runs,
+                  count(*) FILTER (WHERE output_tokens IS NULL) AS runs_without_token_data,
+                  coalesce(sum(output_tokens), 0) AS tokens
+           FROM ai_runs WHERE created_at >= %s""",
+        (month_start_ms,),
+    )
+    ai_usage_all_time = await database.fetch_one(
+        """SELECT count(*) AS runs,
+                  count(*) FILTER (WHERE output_tokens IS NULL) AS runs_without_token_data,
+                  coalesce(sum(output_tokens), 0) AS tokens
+           FROM ai_runs"""
+    )
+    revenue_month = await database.fetch_one(
+        """SELECT coalesce(sum(amount_inr), 0) AS inr FROM payment_claims
+           WHERE status = 'approved' AND reviewed_at >= %s""",
+        (month_start_ms,),
+    )
+    revenue_all_time = await database.fetch_one(
+        "SELECT coalesce(sum(amount_inr), 0) AS inr FROM payment_claims WHERE status = 'approved'"
+    )
     pending_claims = await database.fetch_one(
         "SELECT count(*) AS total FROM payment_claims WHERE status='pending'"
     )
@@ -150,6 +221,13 @@ async def founder_summary(
             }
             for row in ai_runs_by_feature
         ],
+        "unit_economics": {
+            "month_start": month_start_ms,
+            "month": _economics_window(ai_usage_month, revenue_month),
+            "all_time": _economics_window(ai_usage_all_time, revenue_all_time),
+            "ai_price_usd_per_million_tokens": GEMINI_FLASH_OUTPUT_USD_PER_MILLION_TOKENS,
+            "ai_price_basis": AI_PRICE_BASIS,
+        },
         "pending_payment_claims": (pending_claims or {}).get("total", 0),
         "conversion_funnel": {
             "signups": (funnel or {}).get("signups", 0),
