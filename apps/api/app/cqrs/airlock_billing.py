@@ -234,21 +234,38 @@ async def handle_debit_credit(database: Database, command: DebitCreditCommand) -
     if command.credits <= 0:
         raise ValueError("credits must be positive")
     now = _now_ms()
-    async with database.transaction() as tx:
-        row = await tx.fetch_one(
-            """UPDATE airlock_credit_balances SET balance = balance - %s, updated_at = %s
+    # One statement, one round trip. The debit and its ledger line are a
+    # data-modifying CTE: the INSERT only happens when the UPDATE matched
+    # (balance was sufficient), and both are atomic as a single statement
+    # under autocommit -- no BEGIN/COMMIT round trips. This was four round
+    # trips as an explicit transaction; with the database on another
+    # continent from the function (Mumbai vs US East, ~200 ms each) that
+    # was most of a scan's latency.
+    row = await database.fetch_one(
+        """WITH debited AS (
+               UPDATE airlock_credit_balances SET balance = balance - %s, updated_at = %s
                WHERE user_id = %s AND balance >= %s
-               RETURNING balance""",
-            (command.credits, now, command.user_id, command.credits),
-        )
-        if row is None:
-            raise InsufficientCredits()
-        await tx.execute(
-            """INSERT INTO airlock_credit_ledger (user_id, api_key_id, delta, reason, reference, created_at)
-               VALUES (%s, %s, %s, %s, NULL, %s)""",
-            (command.user_id, command.api_key_id, -command.credits, command.reason, now),
-        )
-        return int(row["balance"])
+               RETURNING user_id, balance
+           ),
+           logged AS (
+               INSERT INTO airlock_credit_ledger (user_id, api_key_id, delta, reason, reference, created_at)
+               SELECT user_id, %s, %s, %s, NULL, %s FROM debited
+           )
+           SELECT balance FROM debited""",
+        (
+            command.credits,
+            now,
+            command.user_id,
+            command.credits,
+            command.api_key_id,
+            -command.credits,
+            command.reason,
+            now,
+        ),
+    )
+    if row is None:
+        raise InsufficientCredits()
+    return int(row["balance"])
 
 
 @dataclass(frozen=True)
