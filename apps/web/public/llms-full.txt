@@ -9,9 +9,9 @@ Canonical product: [https://www.nanoneuron.ai/](https://www.nanoneuron.ai/)
 [GitHub outage demo](https://www.nanoneuron.ai/blog/github-outage-demo) (the tool's own unedited output on a real public incident)
 [Published postmortems](https://www.nanoneuron.ai/postmortems)
 [Pricing](https://www.nanoneuron.ai/pricing)
-[Airlock](https://www.nanoneuron.ai/airlock) (free prompt-injection scanner, live -- see "Airlock" below)
+[Airlock](https://www.nanoneuron.ai/airlock) (paid prompt-injection and exfiltration guard, live -- see "Airlock" below)
 Contact: vish.matale@gmail.com
-Last factual review: 2026-09-12
+Last factual review: 2026-09-13
 
 This file is the complete reference; llms.txt above is the short index. Every
 claim here is checked against the running code and, where practical, against
@@ -205,13 +205,28 @@ drift apart.
 
 ## REST API surface (all under `/v1`)
 
-Airlock (`/v1/airlock`): `POST /scan` (public, unauthenticated, free;
-scores content for prompt injection and returns verdict, score, matched rule
-ids with their descriptions, and the normalisation signals; per-IP limited),
-`POST /egress` (public; checks an outbound payload and destination, returns
-the payload redacted), `GET /stats` (public; aggregate counts and the
-most-fired rules -- no content, ever), `POST /waitlist` (public; records an
-early-access signup for the hosted version, answers 202 identically whether
+Airlock (`/v1/airlock`): `POST /scan` (paid; authenticated by an API key in
+`X-Airlock-Key` or `Authorization: Bearer alk_...`, or by the dashboard
+session cookie; spends 1 prepaid credit, or 5 with `"deep": true`; scores
+content for prompt injection and returns verdict, score, matched rule ids
+with their descriptions, the normalisation signals, `credits_remaining`,
+`credits_charged` and -- on a deep scan -- the Gemini opinion; 401 without
+a key or session, 402 with nothing scanned when the balance is short),
+`POST /egress` (paid, same authentication, 1 credit; checks an outbound
+payload and destination, returns the payload redacted), `GET /pricing`
+(public; pack size and price per currency, credits per scan and per deep
+scan, which manual rail takes each currency), `GET /stats` (public;
+aggregate counts and the most-fired rules -- no content, ever),
+`POST/GET /keys` and `DELETE /keys/{id}` (session; mint a key -- the secret
+is returned once and only its SHA-256 is stored -- list, revoke),
+`GET /credits` (session; balance, totals, and a statement rolled up per
+key per day), `POST /credits/claim` (session; "I have paid for N packs in
+this currency, here is the reference" -- amount and credit count are
+server-derived, lands as a pending payment claim the founder approves),
+`GET /credits/claims`, `POST /credits/email-details` (session; the payee
+details for a pack, sent to the caller's own registered address),
+`POST /waitlist` (public; records early-access interest in a self-hosted
+build, answers 202 identically whether
 the address is new or already on the list so the response cannot be used to
 enumerate it), `GET /waitlist` (founder-only; the list itself).
 
@@ -375,10 +390,10 @@ every account-scoped page requires authentication and is not meant to be
 crawled as public data. No API keys, credentials, or account-specific data
 are ever exposed in this file or any public page.
 
-## Airlock (second product)
+## Airlock (main product)
 
-Airlock is a guard that sits between an AI agent and untrusted content. Two
-directions:
+Airlock is a paid guard that sits between an AI agent and untrusted
+content. Two directions:
 
 - **Inbound.** Text is normalised first -- Unicode tag-block characters
   decoded, invisible characters stripped, HTML comments and hidden elements
@@ -396,33 +411,63 @@ directions:
 
 Audit: one append-only entry per decision, holding a SHA-256 of the scanned
 content, its byte count, the verdict and the rules that fired. The raw
-content is never stored, and the public scanner stores no excerpt either.
-Rows carry no account or IP, deliberately: an append-only table cannot take
-part in an account erasure, so it holds nothing about a person to erase.
+content is never stored, and the hosted scanner stores no excerpt either.
+Rows carry no account, key or IP, deliberately: an append-only table cannot
+take part in an account erasure, so it holds nothing about a person to
+erase. Attribution and metering live in a separate credit ledger (migration
+0032) that cascades with the account.
 
 Append-only is enforced by two Postgres triggers (migration 0031) -- a
 row-level one rejecting UPDATE and DELETE, and a statement-level one
 rejecting TRUNCATE. The second is not redundant: TRUNCATE fires no row-level
 trigger, and was verified to empty the table silently before it was added.
 
-There is no model call and no network request in the decision path, so the
-scanner has no undecided state; a failure is a 5xx carrying no verdict,
-which a caller must treat as block. There is no CSV export endpoint yet --
-`GET /v1/airlock/stats` returns aggregates only.
+By default there is no model call and no network request in the decision
+path, so the scanner has no undecided state; a failure is a 5xx carrying no
+verdict and no charge, which a caller must treat as block. There is no CSV
+export endpoint yet -- `GET /v1/airlock/stats` returns aggregates only.
+
+**Deep scan (opt-in per call, `"deep": true`, 5 credits).** After the rules
+run, the same Gemini provider that drafts postmortems (app/airlock/
+semantic.py) classifies the content and its answer enters the same noisy-OR
+as one more weighted term, capped at 0.85 -- below the strongest single
+rule. It can only raise a verdict, never lower one: its weight is zero
+unless it says "injection". If Gemini is unavailable or answers
+unparseably, the response says `semantic.status: "unavailable"`, the rule
+verdict stands, and the 4 extra credits are refunded as a ledger line. A
+deep scan sends the content to Google's Gemini API; the audit row still
+holds only the hash. The classifier's contribution is recorded as rule id
+`AI-001`.
+
+**Pricing and metering.** Airlock is paid and has no free tier. Prepaid
+packs of 10,000 scan credits: INR 999 by UPI, or USD 15 / GBP 12 / EUR 14 by
+international SWIFT wire, up to 10 packs per payment; one credit per scan or
+egress check, five per deep scan; credits do not expire. Buying is a
+payment claim on the same manual rails as the PostMortem AI subscription:
+the customer has the payee details emailed to their own address, pays,
+submits the transaction reference, and the founder approves it from the
+dashboard -- approval is what grants the credits, in the same transaction
+that marks the claim approved. The debit is a conditional UPDATE on a
+balance row with `CHECK (balance >= 0)`, so concurrent scans cannot
+double-spend (tested: 50 concurrent scans against 10 credits yield exactly
+10 successes and 40 402s). Card payments are not available. The founder's
+own account is the only one not metered.
 
 **Status, stated precisely because it is the thing most likely to be
 misreported.** Two halves, and they differ:
 
-RUNNING NOW -- the detection engine, the egress check and the append-only
-audit log are served from this site's own FastAPI backend at
-`POST /v1/airlock/scan` and `POST /v1/airlock/egress`. Free,
-unauthenticated, no signup, bounded per IP. The playground at
-https://www.nanoneuron.ai/airlock calls them for real.
+RUNNING NOW -- the detection engine, the egress check, the Gemini deep
+scan, the append-only audit log, API keys (hashed, revocable), prepaid
+credits with an atomic per-call meter, a readable ledger, pack purchase via
+UPI/wire claims, and the dashboard to buy, mint and revoke -- all served
+from this site's own FastAPI backend under `/v1/airlock`. The playground at
+https://www.nanoneuron.ai/airlock calls the real endpoint from the
+signed-in account's credits.
 
-NOT BUILT -- API keys, per-tenant thresholds and egress allowlists, usage
-metering, billing, a customer dashboard, and any support commitment.
-Airlock therefore cannot be purchased and has no price; the early-access
-list on that page is for the hosted version, not for the scanner.
+NOT BUILT -- card payments, server-side per-tenant thresholds and egress
+allowlists (both are per-call parameters today), any support or uptime
+commitment, and a self-hosted build; the early-access list on that page is
+for the self-hosted build only.
 
 **On accuracy claims:** the repository contains a 43-case corpus written by
 us -- 30 attacks (at least one per rule, including payloads hidden in

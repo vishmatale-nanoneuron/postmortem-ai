@@ -27,7 +27,7 @@ async function fetchPublicSlugs(): Promise<PublicPostmortem[]> {
 // than one that silently reads "today" on every request regardless of
 // whether anything changed.
 const LAST_MODIFIED = {
-  home: new Date("2026-09-12T00:00:00+00:00"), // Airlock became the front door
+  home: new Date("2026-09-13T00:00:00+00:00"), // Airlock became the front door
   docs: new Date("2026-09-05T18:08:04+00:00"), // MCP section rewritten with agent-accountability behavior
   pricing: new Date("2026-09-05T18:08:04+00:00"), // FAQ section + FAQPage structured data added
   groundingMechanism: new Date("2026-09-04T13:23:04+00:00"),
@@ -39,7 +39,7 @@ const LAST_MODIFIED = {
   privacy: new Date("2026-09-01T20:53:02+05:30"),
   terms: new Date("2026-09-04T01:19:04+05:30"),
   siteMap: new Date("2026-09-12T00:00:00+00:00"), // Airlock added to the list
-  airlock: new Date("2026-09-12T00:00:00+00:00"), // second product page added
+  airlock: new Date("2026-09-13T00:00:00+00:00"), // paid: pricing, keys, deep scan
 } as const;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {

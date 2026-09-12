@@ -3,34 +3,55 @@ import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { SiteFooter, SiteHeader } from "../landing";
+import type { AirlockPricing } from "../api";
 import { AirlockMark } from "./airlock-mark";
 import { Playground } from "./playground";
+import { AIRLOCK_PRICING_DEFAULTS, formatMoney } from "./pricing-defaults";
 import { ScanTheatre } from "./scan-theatre";
 import { WaitlistForm } from "./waitlist-form";
 
-// The second product. Rules for this page, which matter more here than on
+// The main product. Rules for this page, which matter more here than on
 // any other page on the site:
 //
-// 1. Nothing is sold, and the line between what runs and what doesn't is
-//    drawn explicitly. The scanner IS live: POST /v1/airlock/scan and
-//    /v1/airlock/egress run the engine in this repo's FastAPI backend, free
-//    and unauthenticated, and the playground on this page really calls them.
-//    What does not exist is the commercial product around it -- API keys,
-//    per-tenant policy, metering, billing, an SLA. So there is still no
-//    price and no buy button, and the waitlist is for that hosted version,
-//    not for the scanner (which needs no waiting).
+// 1. It is sold, and the line between what runs and what doesn't is drawn
+//    explicitly. The scanner IS live and IS paid: POST /v1/airlock/scan and
+//    /v1/airlock/egress run the engine in this repo's FastAPI backend behind
+//    an API key and a prepaid credit balance (migration 0032), and the
+//    playground on this page really calls them from the signed-in account's
+//    balance. There is no free tier. The price quoted below is fetched from
+//    the backend's own /v1/airlock/pricing at render time and falls back to
+//    pricing-defaults.ts, which a test pins to the backend's settings.
+//    What does not exist yet: card payments (the rails are UPI and wire,
+//    approved by hand), an SLA, and a self-hosted build -- the waitlist is
+//    for that last one.
 // 2. Every number below was produced by running the code, not taken from a
-//    description of it: 30 rules across 8 families (backend/app/engine/
-//    rules.py), block at 0.75 / flag at 0.40 (engine/detector.py), 11
-//    credential and 7 PII patterns (engine/egress.py), and the 18-case
-//    result from backend/tests/test_detector.py.
-// 3. The 18 cases are OUR OWN and the page says so in the same sentence as
+//    description of it: 30 rules across 8 families (apps/api/app/airlock/
+//    rules.py), block at 0.75 / flag at 0.40 (airlock/detector.py), 11
+//    credential and 7 PII patterns (airlock/egress.py), the 43-case corpus
+//    (airlock/corpus/rule_coverage.jsonl), and 5 credits for a deep scan
+//    (airlock/semantic.py).
+// 3. The 43 cases are OUR OWN and the page says so in the same sentence as
 //    the result. It is a smoke test, not a benchmark; publishing it as a
 //    precision/recall figure would be the exact dressing-an-estimate-as-a-
 //    measurement move /postmortem-template tells readers not to make.
 const TITLE = "Airlock — prompt injection and exfiltration guard for AI agents";
 const DESCRIPTION =
-  "A guard that sits between an AI agent and untrusted content: scores inbound text for prompt injection before it reaches the context window, and checks outbound calls for credentials and PII before they leave. Free scanner, no signup. Append-only audit log.";
+  "A paid guard that sits between an AI agent and untrusted content: scores inbound text for prompt injection before it reaches the context window, and checks outbound calls for credentials and PII before they leave. Prepaid scan credits, API keys, an optional Gemini second opinion, and an append-only audit log that never holds your content.";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
+
+// Same shape and reasoning as /pricing's fetchJson: a transient failure to
+// reach the backend must not render as "no price". The fallback is the
+// backend's own defaults, pinned by a test.
+async function fetchPricing(): Promise<{ pricing: AirlockPricing; live: boolean }> {
+  try {
+    const response = await fetch(`${API_BASE}/v1/airlock/pricing`, { next: { revalidate: 300 } });
+    if (!response.ok) return { pricing: AIRLOCK_PRICING_DEFAULTS as unknown as AirlockPricing, live: false };
+    return { pricing: (await response.json()) as AirlockPricing, live: true };
+  } catch {
+    return { pricing: AIRLOCK_PRICING_DEFAULTS as unknown as AirlockPricing, live: false };
+  }
+}
 
 export const metadata: Metadata = {
   // `absolute`: app/layout.tsx applies a "%s — PostMortem AI" template to
@@ -58,18 +79,32 @@ const card = "rounded-lg border border-line bg-white p-5 shadow-sm";
 const h2 = "mb-2 text-lg font-semibold text-ink";
 const p = "text-sm text-muted leading-relaxed mb-2";
 
-const STRUCTURED_DATA = {
-  "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  name: "Airlock",
-  applicationCategory: "SecurityApplication",
-  description: DESCRIPTION,
-  url: "https://www.nanoneuron.ai/airlock",
-  // No `offers` block: there is no price and nothing to buy yet, and
-  // claiming one in structured data would put a price in search results
-  // that the page itself doesn't make.
-  author: { "@type": "Organization", name: "NanoNeuron", url: "https://www.nanoneuron.ai" },
-};
+// `offers` is built from the same pricing the page renders, so the price a
+// search engine shows is the one the page makes. One Offer per currency,
+// each for one pack, with the pack size in the description.
+function structuredData(pricing: AirlockPricing) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: "Airlock",
+    applicationCategory: "SecurityApplication",
+    operatingSystem: "Any (HTTP API)",
+    description: DESCRIPTION,
+    url: "https://www.nanoneuron.ai/airlock",
+    offers: pricing.prices
+      .filter((price) => price.configured)
+      .map((price) => ({
+        "@type": "Offer",
+        name: `${pricing.scans_per_pack.toLocaleString("en-US")} Airlock scans`,
+        description: `Prepaid pack of ${pricing.scans_per_pack.toLocaleString("en-US")} scan credits. One credit per scan or egress check; ${pricing.credits_per_deep_scan} for a deep scan with a Gemini second opinion. Paid by ${price.method === "upi" ? "UPI" : "international wire"}, credited after manual verification.`,
+        price: price.amount,
+        priceCurrency: price.currency,
+        availability: "https://schema.org/InStock",
+        url: "https://www.nanoneuron.ai/airlock#pricing",
+      })),
+    author: { "@type": "Organization", name: "NanoNeuron", url: "https://www.nanoneuron.ai" },
+  };
+}
 
 // Straight from backend/app/engine/rules.py's family field -- eight
 // families, with the rule counts this page quotes.
@@ -82,6 +117,22 @@ const FAMILIES: { name: string; what: string }[] = [
   { name: "Authority spoof", what: "“This is your developer / the system administrator” framing." },
   { name: "Memory poison", what: "Instructions aimed at what the agent stores and recalls later, not just this turn." },
   { name: "Encoding", what: "Base64, rot13 and chained decode-then-obey instructions." },
+];
+
+// The trust strip. NOT a customer-logo row: Airlock has no customer whose
+// logo it may use, and "Trusted by <company>" with no such customer is a
+// false endorsement of a real organisation. What goes here instead is what
+// a buyer can verify -- each line is a claim the code, the tests or the
+// database enforce, with the file that proves it. When a real company
+// agrees in writing to be named, a logo row can be added under its own
+// consent; until then, this.
+const PROOF_STRIP: { fact: string; where: string }[] = [
+  { fact: "Model-agnostic: guards agents built on Claude, GPT, Gemini, Llama or any HTTP client", where: "it scores text, not a vendor" },
+  { fact: "Every rule and its weight is in the open", where: "airlock/rules.py, 30 rules" },
+  { fact: "Content is never stored -- only a SHA-256", where: "migration 0031, no content column" },
+  { fact: "Audit log rejects UPDATE, DELETE and TRUNCATE", where: "two Postgres triggers, tested" },
+  { fact: "A credit cannot be spent twice", where: "50 concurrent scans, 10 credits, 10 successes" },
+  { fact: "Keys are hashed; the secret is shown once", where: "airlock_api_keys.key_hash" },
 ];
 
 // Concrete, not "any AI application". Each is a shape someone has actually
@@ -114,19 +165,23 @@ const AGENT_SHAPES: { name: string; reads: string; guard: string }[] = [
 // would call it. Plain strings so a copy-paste from the page works without
 // editing.
 const CURL_SNIPPET = `curl -s https://postmortem-ai-api.vercel.app/v1/airlock/scan \\
+  -H 'X-Airlock-Key: alk_...' \\
   -H 'content-type: application/json' \\
   -d '{"content": "<the untrusted text>", "source": "support_ticket"}'
 
-# -> {"verdict": "block", "score": 0.8, "matches": [{"rule_id": "IO-001", ...}], ...}`;
+# -> {"verdict": "block", "score": 0.8, "matches": [{"rule_id": "IO-001", ...}],
+#     "credits_remaining": 9998, "credits_charged": 1, ...}
+# add "deep": true to the body for a Gemini second opinion (5 credits)`;
 
-const PYTHON_SNIPPET = `import requests
+const PYTHON_SNIPPET = `import os, requests
 
 AIRLOCK = "https://postmortem-ai-api.vercel.app/v1/airlock"
+HEADERS = {"X-Airlock-Key": os.environ["AIRLOCK_KEY"]}
 
 def guard(text: str, source: str) -> str:
-    r = requests.post(f"{AIRLOCK}/scan", json={"content": text, "source": source}, timeout=5)
+    r = requests.post(f"{AIRLOCK}/scan", json={"content": text, "source": source}, headers=HEADERS, timeout=5)
     if r.status_code != 200:
-        return "block"          # a guard that cannot answer is a block, not a pass
+        return "block"          # a guard that cannot answer (or a 402) is a block, not a pass
     return r.json()["verdict"]  # "allow" | "flag" | "block"
 
 for doc in documents:
@@ -140,11 +195,11 @@ for doc in documents:
 const FAQ: { q: string; a: string }[] = [
   {
     q: "Does it call a model to decide?",
-    a: "No. The decision path is 30 regular expressions over normalised text and nothing else \u2014 no model, no network. That is why a scan takes milliseconds and why there is no \u201cundecided\u201d state to fail open from.",
+    a: "Not by default. The standard scan is 30 regular expressions over normalised text and nothing else \u2014 no model, no network \u2014 which is why it takes milliseconds and has no \u201cundecided\u201d state to fail open from. A deep scan (opt-in per call, 5 credits) additionally asks Google\u2019s Gemini for a second opinion; it can raise a verdict but never lower one, and if Gemini is unavailable the rule verdict stands and the extra credits are refunded.",
   },
   {
     q: "Do you store what I scan?",
-    a: "No. The audit row holds a SHA-256 of the content, its byte count, the verdict and the rule ids. There is no column for the content, and the public scanner stores no excerpt either.",
+    a: "No. The audit row holds a SHA-256 of the content, its byte count, the verdict and the rule ids. There is no column for the content and no column for the account. A deep scan sends the content to Google\u2019s Gemini API for classification; we still keep only the hash.",
   },
   {
     q: "What does \u201cflag\u201d mean?",
@@ -155,12 +210,16 @@ const FAQ: { q: string; a: string }[] = [
     a: "We publish the only number we have and say exactly what it is: a 43-case corpus we wrote ourselves, every rule exercised, no false alarms on 13 ordinary documents. That is a smoke test. A benchmark on public injection datasets is the next thing to build, and it will be published with the misses.",
   },
   {
-    q: "Can I buy it?",
-    a: "Not yet. The scanner is free. The hosted version \u2014 your own API key, thresholds, allowlist and exportable log \u2014 is what the early-access list is for, and it has no price until it exists.",
+    q: "How much does it cost?",
+    a: "Prepaid packs of 10,000 scan credits: \u20b9999 by UPI in India, or $15 / \u00a312 / \u20ac14 by international wire. One credit per scan or egress check, five for a deep scan. Credits do not expire. There is no free tier and no monthly fee; buy a pack, mint a key, call the API.",
+  },
+  {
+    q: "How do I pay?",
+    a: "From your dashboard: choose a currency and how many packs, have the payee details emailed to your own address, pay, and submit the transaction reference. The founder verifies the payment by hand \u2014 usually within the day \u2014 and the credits land on your account the moment it is approved, with an email to say so. Card payments are not available yet.",
   },
   {
     q: "What happens if the scanner is down?",
-    a: "You get a non-200 with no verdict. Treat it as block. A security check that defaults to \u201callow\u201d when it breaks is not a security check.",
+    a: "You get a non-200 with no verdict and you are not charged. Treat it as block. A security check that defaults to \u201callow\u201d when it breaks is not a security check.",
   },
 ];
 
@@ -190,13 +249,17 @@ function Section({
   );
 }
 
-export default function AirlockPage() {
+export default async function AirlockPage() {
+  const { pricing, live } = await fetchPricing();
+  const inr = pricing.prices.find((price) => price.currency === "INR");
+  const usd = pricing.prices.find((price) => price.currency === "USD");
   return (
     <>
       <script
         type="application/ld+json"
-        // Static, hardcoded JSON, no user input -- safe despite dangerouslySetInnerHTML.
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(STRUCTURED_DATA) }}
+        // Built from the backend's own pricing plus hardcoded strings, no
+        // user input -- safe despite dangerouslySetInnerHTML.
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData(pricing)) }}
       />
       <script
         type="application/ld+json"
@@ -210,7 +273,7 @@ export default function AirlockPage() {
             <AirlockMark size={26} />
             <span className="text-sm font-semibold tracking-tight text-ink">Airlock</span>
             <span className="rounded-full border border-line px-2 py-0.5 text-[10px] tracking-wide text-muted uppercase">
-              Free scanner · live
+              Paid API · live
             </span>
           </div>
           <h1 className="mt-4 text-3xl leading-[1.15] font-semibold tracking-tight text-ink sm:text-4xl">
@@ -231,6 +294,9 @@ export default function AirlockPage() {
               )}
             >
               Scan your own text
+            </a>
+            <a href="#pricing" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
+              {inr && usd ? `${formatMoney("INR", inr.amount)} / ${formatMoney("USD", usd.amount)} per ${pricing.scans_per_pack.toLocaleString("en-IN")} scans` : "Pricing"}
             </a>
             <a href="#how" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
               How it decides
@@ -256,19 +322,80 @@ export default function AirlockPage() {
           and will run on whatever you paste into it.
         </p>
 
+        {/* Verifiable trust, in place of a logo row -- see PROOF_STRIP. */}
+        <div className="mb-8 rounded-lg border border-line bg-white px-4 py-3 shadow-sm">
+          <p className="mb-2 text-[11px] font-medium tracking-wide text-muted uppercase">
+            What you can check, not who we say uses it
+          </p>
+          <ul className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
+            {PROOF_STRIP.map((item) => (
+              <li key={item.fact} className="text-xs leading-relaxed">
+                <span className="text-ink">{item.fact}</span>{" "}
+                <span className="font-mono text-[10.5px] text-muted">· {item.where}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
         <Section className="border-accent/40" id="try-it">
           <h2 className={h2}>Try it on your own text</h2>
           <p className={p}>
             This is the real scanner, not a demo of one. It posts to{" "}
             <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">POST /v1/airlock/scan</code> and
-            shows exactly what the engine returned — including when it disagrees with what you expected. Free, no
-            signup, bounded per address.
+            shows exactly what the engine returned — including when it disagrees with what you expected. It spends
+            credits from your signed-in account, one per scan, the same balance your API key draws on.
           </p>
           <div className="mt-4">
             <Playground />
           </div>
         </Section>
 
+
+        <Section id="pricing" className="border-accent/40">
+          <h2 className={h2}>Pricing</h2>
+          <p className={p}>
+            Prepaid packs of{" "}
+            <span className="font-medium text-ink">{pricing.scans_per_pack.toLocaleString("en-IN")} scan credits</span>.
+            One credit per scan or egress check; {pricing.credits_per_deep_scan} for a deep scan with a Gemini second
+            opinion. Credits do not expire. No monthly fee, no minimum, no free tier.
+          </p>
+          <div className="grid gap-2 sm:grid-cols-4">
+            {pricing.prices.map((price) => (
+              <div
+                key={price.currency}
+                className={cn("rounded-md bg-paper px-3.5 py-3", !price.configured && "opacity-50")}
+              >
+                <p className="font-mono text-xl text-ink">{formatMoney(price.currency, price.amount)}</p>
+                <p className="mt-0.5 text-xs text-muted">
+                  per pack · {price.method === "upi" ? "UPI" : "SWIFT wire"}
+                  {!price.configured && " · not available yet"}
+                </p>
+              </div>
+            ))}
+          </div>
+          <p className={cn(p, "mt-3")}>
+            Up to {pricing.max_packs_per_claim} packs per payment. Paying by wire? Larger orders make sense there:
+            a SWIFT transfer costs the sender roughly USD 15–40 in bank fees regardless of amount.
+          </p>
+          <p className={cn(p, "mb-0")}>
+            <span className="font-medium text-ink">How buying works:</span> create an account, open the Airlock
+            section of your dashboard, pick a currency and pack count, have the payee details emailed to your own
+            address, pay, and submit the transaction reference. The founder verifies it by hand &mdash; usually
+            within the day &mdash; and the credits appear the moment it is approved, with an email to say so. Card
+            payments are not available yet.
+            {!live && (
+              <span className="text-muted"> (Prices shown are the configured defaults; the live pricing endpoint was unreachable when this page rendered.)</span>
+            )}
+          </p>
+          <div className="mt-4">
+            <Link
+              href="/"
+              className={cn(buttonVariants({ size: "lg" }), "h-auto px-6 py-2.5 text-sm")}
+            >
+              Create an account and buy a pack
+            </Link>
+          </div>
+        </Section>
 
         <Section>
           <h2 className={h2}>Where it goes</h2>
@@ -360,8 +487,11 @@ export default function AirlockPage() {
         <Section id="integrate">
           <h2 className={h2}>Integrate in one call</h2>
           <p className={p}>
-            Two endpoints, JSON in and JSON out, no key. Put the inbound check where content enters your agent&apos;s
-            context and the outbound check where it makes a call. Treat any non-200 as block.
+            Two endpoints, JSON in and JSON out, one header. Mint a key in your dashboard and send it as{" "}
+            <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">X-Airlock-Key</code>. Put the
+            inbound check where content enters your agent&apos;s context and the outbound check where it makes a
+            call. Treat any non-200 as block &mdash; including a 402, which means the balance ran out and nothing
+            was scanned.
           </p>
           <pre className="overflow-x-auto rounded-md bg-ink px-3.5 py-3 font-mono text-[12px] leading-relaxed text-paper">
             {CURL_SNIPPET}
@@ -371,8 +501,10 @@ export default function AirlockPage() {
             {PYTHON_SNIPPET}
           </pre>
           <p className={cn(p, "mt-3 mb-0")}>
-            Free and bounded per address. If you need it unmetered, keyed and under your own policy, that is the
-            hosted version &mdash; see the early-access list at the bottom.
+            Every response carries <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">credits_remaining</code>{" "}
+            and <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">credits_charged</code>, so an
+            integration can alert before it runs dry. Keys can be revoked from the dashboard at any time; a revoked
+            key gets 401 on its next call.
           </p>
         </Section>
 
@@ -383,7 +515,9 @@ export default function AirlockPage() {
             <span className="font-medium text-ink">the raw content is not stored.</span> An audit entry keeps a
             SHA-256 of what was scanned, the byte count, the verdict and the rules that fired &mdash; enough to
             prove later what the guard saw and decided, without keeping the thing itself. The table has a column
-            for a redacted excerpt; the free public scanner leaves it empty.
+            for a redacted excerpt; the hosted scanner leaves it empty. It also has no column for your account:
+            attribution lives in your credit ledger, which is deleted with your account, while the audit log stays
+            append-only.
           </p>
           <p className={p}>
             The log is append-only, and that is enforced by database triggers that reject UPDATE, DELETE{" "}
@@ -393,27 +527,37 @@ export default function AirlockPage() {
             before adding the second trigger.
           </p>
           <p className={p}>
-            There is no model call and no network request in the decision path &mdash; 30 regexes over normalised
-            text, and nothing else &mdash; so the scanner has no &ldquo;undecided&rdquo; state to fail open into. If
-            it breaks it returns a 5xx with no verdict at all, which a caller must treat as block. A security check
-            that defaults to &ldquo;allow&rdquo; when it breaks is not a security check.
+            By default there is no model call and no network request in the decision path &mdash; 30 regexes over
+            normalised text, and nothing else &mdash; so the scanner has no &ldquo;undecided&rdquo; state to fail
+            open into. If it breaks it returns a 5xx with no verdict at all and no charge, which a caller must treat
+            as block. A security check that defaults to &ldquo;allow&rdquo; when it breaks is not a security check.
+          </p>
+          <p className={p}>
+            <span className="font-medium text-ink">Deep scan</span> is the one exception, and you choose it per
+            call: <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">&quot;deep&quot;: true</code>{" "}
+            sends the content to Google&apos;s Gemini API and folds its answer into the same noisy-OR the rules use,
+            capped below the strongest single rule. The model can raise a verdict &mdash; a paraphrased injection no
+            rule matches becomes a block when it is confident &mdash; but never lower one; a rule that fired stays
+            fired. If Gemini is unavailable the response says so, the rule verdict stands, and the extra credits are
+            refunded as a line in your ledger.
           </p>
         </Section>
 
         <Section>
           <h2 className={h2}>What runs, and what doesn&apos;t</h2>
           <p className={p}>
-            <span className="font-medium text-ink">Running now:</span> the detection engine, the egress check and
-            the append-only audit log, served free and unauthenticated from this site&apos;s own backend at{" "}
+            <span className="font-medium text-ink">Running now:</span> the detection engine, the egress check, the
+            Gemini deep scan, the append-only audit log, API keys, prepaid credits with a per-call meter that
+            cannot double-spend, a ledger you can read back, and the dashboard to buy, mint and revoke &mdash; all
+            served from this site&apos;s own backend at{" "}
             <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">/v1/airlock/scan</code> and{" "}
-            <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">/v1/airlock/egress</code>. Point a
-            script at them today if you want to.
+            <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">/v1/airlock/egress</code>.
           </p>
           <p className={p}>
-            <span className="font-medium text-ink">Not built yet:</span> API keys, per-tenant thresholds and
-            allowlists, usage metering, billing, a customer dashboard, and any kind of support commitment. That is
-            the commercial product, and it is what the early-access list below is for — not the scanner, which
-            needs no waiting.
+            <span className="font-medium text-ink">Not built yet:</span> card payments (the rails are UPI and
+            international wire, verified by hand), server-side per-tenant thresholds and allowlists (both are
+            per-call parameters today), any support or uptime commitment, and a self-hosted build. That last one is
+            what the early-access list below is for.
           </p>
           <p className={p}>
             The next thing worth building is not features either, it is the corpus: 30 hand-written rules is a
@@ -435,12 +579,12 @@ export default function AirlockPage() {
         </Section>
 
         <Section className="border-accent/40">
-          <h2 className={h2}>Early access</h2>
+          <h2 className={h2}>Self-hosted: early access</h2>
           <p className={p}>
-            The scanner above is already free and needs no account. This list is for the hosted version — your own
-            API key, your own thresholds and egress allowlist, and a log you can export. One email when that
-            exists. If you describe what you&apos;d point it at, that shapes which attack families get seeded
-            first.
+            The hosted API above is live and paid. This list is for a self-hosted build &mdash; the same engine,
+            rules and audit log running inside your own network, for content that must not leave it. One email
+            when that exists. If you describe what you&apos;d point it at, that shapes which attack families get
+            seeded first.
           </p>
           <div className="mt-4">
             <WaitlistForm />
@@ -448,7 +592,7 @@ export default function AirlockPage() {
         </Section>
 
         <p className="mt-6 text-xs text-muted">
-          Airlock is the second product from NanoNeuron. The first is{" "}
+          Airlock is the main product from NanoNeuron. The other is{" "}
           <Link className="underline underline-offset-2" href="/">
             PostMortem AI
           </Link>
