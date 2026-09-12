@@ -366,8 +366,12 @@ export function ScanTheatre() {
             the last frame of every case, because it is the product. */}
         <div
           className={cn(
-            "flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line pt-2.5 font-mono text-[10.5px] text-muted transition-opacity duration-700",
-            settled ? "opacity-100" : "opacity-0",
+            // Revealed with visibility + a small rise rather than an opacity
+            // fade: an accessibility audit that samples mid-fade sees muted
+            // text at half strength and reports a contrast failure that
+            // no reader ever experiences. Hidden is hidden; shown is full.
+            "flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line pt-2.5 font-mono text-[11px] text-muted transition-[transform,visibility] duration-500",
+            settled ? "visible translate-y-0" : "invisible translate-y-1",
           )}
         >
           <span>append-only entry written</span>

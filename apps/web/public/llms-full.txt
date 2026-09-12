@@ -457,7 +457,9 @@ carries `X-Request-ID` (a caller-supplied id is echoed) and `Server-Timing`
 (app-side duration); a 500 body includes the same request id. Responses
 over 1 KB are gzip-compressed when accepted. `/v1/airlock/pricing` and
 `/stats` are the only cacheable responses; everything authenticated is
-`private, no-store`.
+`private, no-store`. Every 429 carries `Retry-After`. The customer is
+emailed once when the balance first drops below 1,000 credits and once
+when it reaches zero (stateless: sent on the call that crosses the line).
 
 **Geography and language.** The API is global (HTTPS from anywhere, no
 region restriction) and model-agnostic. Payment from any country by SWIFT

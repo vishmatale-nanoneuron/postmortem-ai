@@ -528,8 +528,11 @@ export default async function AirlockPage() {
           <p className={cn(p, "mt-3 mb-0")}>
             Every response carries <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">credits_remaining</code>{" "}
             and <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">credits_charged</code>, so an
-            integration can alert before it runs dry. Keys can be revoked from the dashboard at any time; a revoked
-            key gets 401 on its next call.
+            integration can alert before it runs dry &mdash; and we email you once when the balance drops below
+            1,000 and once when it reaches zero. Every 429 carries a{" "}
+            <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">Retry-After</code>, every response an{" "}
+            <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">X-Request-ID</code> you can quote.
+            Keys can be revoked from the dashboard at any time; a revoked key gets 401 on its next call.
           </p>
         </Section>
 

@@ -463,3 +463,45 @@ def send_airlock_credits_approved_email(settings: Settings, claim_id: str, to_em
         {"idempotency_key": f"airlock-approved/{claim_id}"},
     )
     logger.info("airlock_credits_approved_sent", extra={"claim_id": claim_id, "method": method})
+
+
+def send_airlock_balance_email(settings: Settings, to_email: str, remaining: int, *, empty: bool) -> None:
+    """Sent on the call that takes the balance below the low-water mark, and
+    again on the call that empties it. A prepaid service that goes quiet
+    when the money runs out fails the customer at the worst moment -- their
+    agent starts getting 402s in production with no warning."""
+    if not settings.resend_api_key or not settings.resend_email_domain:
+        raise EmailNotConfiguredError("RESEND_API_KEY/RESEND_EMAIL_DOMAIN are not configured")
+
+    resend.api_key = settings.resend_api_key
+    if empty:
+        subject = "Airlock: your credits are used up -- scans are now refused"
+        lead = (
+            "<p>Your Airlock balance is <strong>0</strong>. Every scan and egress check now answers "
+            "<code>402</code> until you buy another pack; nothing is scanned and nothing is charged in the meantime.</p>"
+        )
+    else:
+        subject = f"Airlock: {remaining:,} credits left"
+        lead = (
+            f"<p>Your Airlock balance has dropped to <strong>{remaining:,}</strong> credits. At your current rate "
+            "it is worth buying the next pack before it runs out, so your agents never see a 402.</p>"
+        )
+    resend.Emails.send(
+        {
+            "from": f"Airlock by NanoNeuron <noreply@{settings.resend_email_domain}>",
+            "to": [to_email],
+            "subject": subject,
+            "html": (
+                lead
+                + "<p>Buy a pack from the Airlock section of your dashboard: pick a currency and pack count, have the "
+                "payee details emailed to you, pay by UPI or wire, and submit the reference. Credits land the moment "
+                "the payment is verified.</p>"
+                "<p>Every API response carries <code>credits_remaining</code>, so an integration can alert on this "
+                "too.</p>"
+            ),
+        },
+        # One send per crossing per balance value: a retried request for
+        # the same crossing collapses, a later crossing does not.
+        {"idempotency_key": f"airlock-balance/{to_email}/{'empty' if empty else 'low'}/{remaining}"},
+    )
+    logger.info("airlock_balance_email_sent", extra={"remaining": remaining, "empty": empty})
