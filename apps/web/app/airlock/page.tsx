@@ -3,7 +3,7 @@ import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { SiteFooter, SiteHeader } from "../landing";
-import type { AirlockPricing } from "../api";
+import type { AirlockPricing, AirlockStats } from "../api";
 import { AirlockMark } from "./airlock-mark";
 import { Playground } from "./playground";
 import { AIRLOCK_PRICING_DEFAULTS, formatMoney } from "./pricing-defaults";
@@ -43,6 +43,18 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 // Same shape and reasoning as /pricing's fetchJson: a transient failure to
 // reach the backend must not render as "no price". The fallback is the
 // backend's own defaults, pinned by a test.
+// Real usage, from the public aggregate endpoint. Shown only once there is
+// something to show; a "0 scans" counter is worse than none.
+async function fetchStats(): Promise<AirlockStats | null> {
+  try {
+    const response = await fetch(`${API_BASE}/v1/airlock/stats`, { next: { revalidate: 300 } });
+    if (!response.ok) return null;
+    return (await response.json()) as AirlockStats;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchPricing(): Promise<{ pricing: AirlockPricing; live: boolean }> {
   try {
     const response = await fetch(`${API_BASE}/v1/airlock/pricing`, { next: { revalidate: 300 } });
@@ -254,7 +266,7 @@ function Section({
 }
 
 export default async function AirlockPage() {
-  const { pricing, live } = await fetchPricing();
+  const [{ pricing, live }, stats] = await Promise.all([fetchPricing(), fetchStats()]);
   const inr = pricing.prices.find((price) => price.currency === "INR");
   const usd = pricing.prices.find((price) => price.currency === "USD");
   return (
@@ -331,6 +343,14 @@ export default async function AirlockPage() {
           <p className="mb-2 text-[11px] font-medium tracking-wide text-muted uppercase">
             What you can check, not who we say uses it
           </p>
+          {stats && stats.total > 0 && (
+            // Live, from the same public /v1/airlock/stats anyone can call.
+            <p className="mb-2 font-mono text-xs text-ink">
+              {stats.total.toLocaleString("en-US")} decisions recorded · {stats.blocked.toLocaleString("en-US")}{" "}
+              blocked · {stats.flagged.toLocaleString("en-US")} flagged · {stats.last_7d.toLocaleString("en-US")} in
+              the last 7 days
+            </p>
+          )}
           <ul className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
             {PROOF_STRIP.map((item) => (
               <li key={item.fact} className="text-xs leading-relaxed">
