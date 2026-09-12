@@ -65,9 +65,19 @@ async def _sign_in_as(client: AsyncClient, email: str) -> None:
     """Auth here is a session cookie, not a bearer token (see auth.py's
     _resolve_user_from_cookie) -- httpx's client stores it, so registering
     IS signing in. Cleared first so a previous identity can't leak into the
-    next assertion."""
+    next assertion.
+
+    Registers on first use and logs in afterwards: a test that signs in as
+    the same address twice (to read a value before and after an
+    unauthenticated action) would otherwise hit register's deliberate 409.
+    """
     client.cookies.clear()
-    response = await client.post("/v1/auth/register", json={"email": email, "password": "test-password-123"})
+    credentials = {"email": email, "password": "test-password-123"}
+    response = await client.post("/v1/auth/register", json=credentials)
+    if response.status_code == 409:
+        response = await client.post("/v1/auth/login", json=credentials)
+        assert response.status_code == 200, response.text
+        return
     assert response.status_code == 201, response.text
 
 
@@ -142,9 +152,21 @@ async def test_one_source_cannot_fill_the_list(context):
 @pytest.mark.asyncio
 async def test_the_founder_summary_counts_the_waitlist(context):
     client, _database = context
-    await client.post("/v1/airlock/waitlist", json={"email": WAITLIST_EMAIL})
+    # A delta, not an absolute count. Nothing prunes airlock_waitlist, and
+    # the fixture only clears @example.com rows -- a row from any other
+    # source (a real signup, on a database shared with anything else) would
+    # make an "== 1" assertion fail for a reason that has nothing to do with
+    # what this test is about. Same fix as the activity-log count test.
     await _sign_in_as(client, FOUNDER_EMAIL)
+    before = (await client.get("/v1/founder/summary")).json()["airlock_waitlist"]
 
+    client.cookies.clear()
+    joined = await client.post("/v1/airlock/waitlist", json={"email": WAITLIST_EMAIL})
+    assert joined.status_code == 202
+
+    await _sign_in_as(client, FOUNDER_EMAIL)
     summary = await client.get("/v1/founder/summary")
     assert summary.status_code == 200, summary.text
-    assert summary.json()["airlock_waitlist"] == {"total": 1, "last_7d": 1}
+    after = summary.json()["airlock_waitlist"]
+    assert after["total"] - before["total"] == 1
+    assert after["last_7d"] - before["last_7d"] == 1
