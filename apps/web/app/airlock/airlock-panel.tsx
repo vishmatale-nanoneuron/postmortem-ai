@@ -14,7 +14,7 @@ import {
 } from "../api";
 import { firstError, paymentReferenceSchema } from "../validation";
 import { AirlockMark } from "./airlock-mark";
-import { PendingClaim } from "../workspace";
+import { PendingClaim } from "../pending-claim";
 
 // The Airlock section of the client dashboard: balance, keys, buying more,
 // and the statement. Everything that spends or grants money lives behind
@@ -86,7 +86,8 @@ export function AirlockPanel({ isFounder }: { isFounder: boolean }) {
         )}
 
         <Keys />
-        <BuyCredits onChanged={refresh} />
+        {/* The founder is not metered, so there is nothing for them to buy. */}
+        {!isFounder && <BuyCredits onChanged={refresh} />}
         {credits && credits.statement.length > 0 && <Statement entries={credits.statement} />}
       </Card>
     </section>
