@@ -1,7 +1,7 @@
 fastapi==0.140.13
 uvicorn[standard]==0.34.0
 # Default response class (main.py): faster JSON encoding than the stdlib.
-orjson==3.10.15
+orjson==3.11.6
 # Container / self-hosted path only (apps/api/Dockerfile, gunicorn.conf.py);
 # Vercel invokes the ASGI app directly and ignores both.
 gunicorn==26.2.0
