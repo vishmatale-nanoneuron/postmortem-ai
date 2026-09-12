@@ -267,10 +267,16 @@ async def handle_credit_balance_query(database: Database, user_id: str, *, now_m
     balance_row = await database.fetch_one(
         "SELECT balance FROM airlock_credit_balances WHERE user_id=%s", (user_id,)
     )
+    # A refund is not a purchase and a refunded charge was not a use: the
+    # deep-scan refund (+4 after a -5 when Gemini was unavailable) nets
+    # against usage, so "used" is what the customer actually consumed and
+    # "purchased" is what they actually bought or were granted. Seen in the
+    # first end-to-end run as "bought 10,004, used 6" for one refunded call.
     totals = await database.fetch_one(
-        """SELECT coalesce(sum(delta) FILTER (WHERE delta > 0), 0) AS purchased,
-                  coalesce(-sum(delta) FILTER (WHERE delta < 0), 0) AS used,
-                  coalesce(-sum(delta) FILTER (WHERE delta < 0 AND created_at >= %s), 0) AS used_30d
+        """SELECT coalesce(sum(delta) FILTER (WHERE delta > 0 AND reason <> 'refund'), 0) AS purchased,
+                  coalesce(-sum(delta) FILTER (WHERE delta < 0 OR reason = 'refund'), 0) AS used,
+                  coalesce(-sum(delta) FILTER (WHERE (delta < 0 OR reason = 'refund') AND created_at >= %s), 0)
+                    AS used_30d
            FROM airlock_credit_ledger WHERE user_id=%s""",
         (cutoff, user_id),
     )

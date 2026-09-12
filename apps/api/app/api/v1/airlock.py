@@ -31,6 +31,7 @@ import hashlib
 import logging
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -182,10 +183,14 @@ async def _charge(database: Database, principal: AirlockPrincipal, reason: str, 
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=NO_CREDITS_DETAIL) from None
 
 
-def get_model_provider(settings: Settings = Depends(get_settings)) -> ModelProvider:
+def get_model_provider(settings: Settings = Depends(get_settings)) -> Callable[[], ModelProvider]:
     """The same Gemini provider (with the same circuit breaker and optional
-    fallback) that drafts postmortems. A dependency so tests can swap it."""
-    return create_model_provider(settings)
+    fallback) that drafts postmortems -- returned as a zero-argument factory,
+    not an instance, so a plain scan never constructs the model client at
+    all. Found the hard way: constructing it eagerly made every ordinary
+    scan 500 in an environment with no Gemini key, when the ordinary scan
+    does not need Gemini. A dependency so tests can swap it."""
+    return lambda: create_model_provider(settings)
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +340,7 @@ async def scan(
     payload: ScanIn,
     database: Database = Depends(get_database),
     principal: AirlockPrincipal = Depends(airlock_principal),
-    provider: ModelProvider = Depends(get_model_provider),
+    model_provider: Callable[[], ModelProvider] = Depends(get_model_provider),
 ) -> ScanOut:
     """Score untrusted content for prompt injection, before it reaches an
     agent's context window. One credit per call (five with `deep`); 402
@@ -367,7 +372,7 @@ async def scan(
     semantic: dict | None = None
 
     if payload.deep:
-        opinion = await semantic_opinion(provider, payload.content)
+        opinion = await semantic_opinion(model_provider, payload.content)
         semantic = opinion.as_dict()
         if opinion.status == "ok":
             score, verdict = combine(detection.score, opinion)

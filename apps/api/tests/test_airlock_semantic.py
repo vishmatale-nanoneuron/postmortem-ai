@@ -86,7 +86,9 @@ async def context(monkeypatch: pytest.MonkeyPatch):
     application = create_app()
     application.state.database = database
     provider = ScriptedProvider()
-    application.dependency_overrides[get_model_provider] = lambda: provider
+    # The dependency yields a factory, not an instance (see
+    # get_model_provider); the override must have the same shape.
+    application.dependency_overrides[get_model_provider] = lambda: (lambda: provider)
     async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as client:
         yield client, database, provider
 
@@ -120,6 +122,24 @@ async def test_a_default_scan_never_calls_the_model(context):
     assert provider.calls == 0
     assert response.json()["semantic"] is None
     assert response.json()["credits_charged"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_default_scan_does_not_even_construct_the_model_client(context):
+    """Caught by a local end-to-end run, not by the suite: with the real
+    provider dependency and no Gemini key in the environment, every plain
+    scan was a 500, because the client was built per request whether or not
+    `deep` was set. The factory must not be called on the ordinary path."""
+    client, database, _provider = context
+    from app.api.v1.airlock import get_model_provider
+
+    def explode():
+        raise AssertionError("model client constructed for a plain scan")
+
+    client._transport.app.dependency_overrides[get_model_provider] = lambda: explode  # type: ignore[attr-defined]
+    await _funded(client, database, 2)
+    response = await client.post("/v1/airlock/scan", json={"content": BENIGN})
+    assert response.status_code == 200, response.text
 
 
 @pytest.mark.asyncio
@@ -218,6 +238,12 @@ async def test_an_unavailable_model_refunds_the_extra_and_says_so(context):
     assert body["credits_charged"] == 1
     assert body["credits_remaining"] == 9
     assert await _balance(database, user_id) == 9
+    # The statement nets the refund against usage: one credit used, ten
+    # granted -- not "fourteen bought, five used".
+    from app.cqrs.airlock_billing import handle_credit_balance_query
+
+    balance = await handle_credit_balance_query(database, user_id)
+    assert (balance.purchased_total, balance.used_total, balance.used_last_30d) == (10, 1, 1)
     # The statement shows both movements: -5 then +4, reason refund.
     lines = await database.fetch_all(
         "SELECT delta, reason FROM airlock_credit_ledger WHERE user_id=%s ORDER BY created_at, delta", (user_id,)
@@ -226,6 +252,22 @@ async def test_an_unavailable_model_refunds_the_extra_and_says_so(context):
         (-(1 + DEEP_SCAN_EXTRA_CREDITS), "deep_scan"),
         (DEEP_SCAN_EXTRA_CREDITS, "refund"),
     ]
+
+    # A provider that cannot even be constructed (no Gemini key configured)
+    # is the same case: unavailable, refunded, never a 500. Found by the
+    # first end-to-end run, which charged five credits and then crashed.
+    from app.api.v1.airlock import get_model_provider
+
+    def cannot_construct():
+        raise ValueError("No API key was provided.")
+
+    client._transport.app.dependency_overrides[get_model_provider] = lambda: cannot_construct  # type: ignore[attr-defined]
+    deep = await client.post("/v1/airlock/scan", json={"content": BENIGN, "deep": True})
+    assert deep.status_code == 200, deep.text
+    assert deep.json()["semantic"]["status"] == "unavailable"
+    assert deep.json()["credits_charged"] == 1
+    assert await _balance(database, user_id) == 8
+    client._transport.app.dependency_overrides[get_model_provider] = lambda: (lambda: provider)  # type: ignore[attr-defined]
 
     # Garbage from the model is treated the same as no model.
     provider.fail = False

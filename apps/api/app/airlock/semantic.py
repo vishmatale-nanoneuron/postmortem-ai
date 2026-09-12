@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..ai.provider import ModelMessage, ModelProvider, ModelRequest
@@ -131,9 +132,14 @@ def _parse(text: str) -> tuple[bool, float, str | None, str] | None:
     return bool(data["injection"]), confidence, family, reason
 
 
-async def semantic_opinion(provider: ModelProvider, content: str) -> SemanticOpinion:
-    """Never raises. A provider failure or an unparseable answer is an
-    'unavailable' opinion with weight 0, and the caller reports it as such."""
+async def semantic_opinion(provider_factory: Callable[[], ModelProvider], content: str) -> SemanticOpinion:
+    """Never raises. A provider failure -- including failing to construct the
+    provider at all, which is what an unset Gemini key looks like -- or an
+    unparseable answer is an 'unavailable' opinion with weight 0, and the
+    caller reports it as such and refunds. Takes a factory rather than an
+    instance so that construction happens inside this try: the first
+    end-to-end run charged a customer five credits and then 500ed on
+    exactly that path."""
     excerpt = content[:MAX_SEMANTIC_CHARS]
     request = ModelRequest(
         system=SYSTEM_PROMPT,
@@ -141,7 +147,9 @@ async def semantic_opinion(provider: ModelProvider, content: str) -> SemanticOpi
         max_tokens=256,
         temperature=0.0,
     )
+    provider: ModelProvider | None = None
     try:
+        provider = provider_factory()
         response = await provider.complete(request)
     except Exception:
         logger.warning("airlock_semantic_unavailable", exc_info=True)
