@@ -2,17 +2,22 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { SiteFooter, SiteHeader } from "../landing";
+import { AirlockMark } from "./airlock-mark";
+import { Playground } from "./playground";
+import { ScanTheatre } from "./scan-theatre";
 import { WaitlistForm } from "./waitlist-form";
 
 // The second product. Rules for this page, which matter more here than on
 // any other page on the site:
 //
-// 1. Nothing is sold. Airlock's code exists and its detector runs, but it
-//    is not hosted: no scan endpoint a customer can call, no metering, no
-//    checkout. A price and a buy button would be advertising something
-//    nobody can buy, on a site whose entire pitch is that its claims are
-//    checkable. So the only call to action is the waitlist, which is real
-//    and writes a row (see apps/api/app/api/v1/airlock.py).
+// 1. Nothing is sold, and the line between what runs and what doesn't is
+//    drawn explicitly. The scanner IS live: POST /v1/airlock/scan and
+//    /v1/airlock/egress run the engine in this repo's FastAPI backend, free
+//    and unauthenticated, and the playground on this page really calls them.
+//    What does not exist is the commercial product around it -- API keys,
+//    per-tenant policy, metering, billing, an SLA. So there is still no
+//    price and no buy button, and the waitlist is for that hosted version,
+//    not for the scanner (which needs no waiting).
 // 2. Every number below was produced by running the code, not taken from a
 //    description of it: 30 rules across 8 families (backend/app/engine/
 //    rules.py), block at 0.75 / flag at 0.40 (engine/detector.py), 11
@@ -24,7 +29,7 @@ import { WaitlistForm } from "./waitlist-form";
 //    measurement move /postmortem-template tells readers not to make.
 const TITLE = "Airlock — prompt injection and exfiltration guard for AI agents";
 const DESCRIPTION =
-  "A guard that sits between an AI agent and untrusted content: scores inbound text for prompt injection before it reaches the context window, and checks outbound calls for credentials and PII before they leave. Append-only audit log. Early access.";
+  "A guard that sits between an AI agent and untrusted content: scores inbound text for prompt injection before it reaches the context window, and checks outbound calls for credentials and PII before they leave. Free scanner, no signup. Append-only audit log.";
 
 export const metadata: Metadata = {
   title: "Airlock — prompt injection guard for AI agents",
@@ -74,8 +79,20 @@ const FAMILIES: { name: string; what: string }[] = [
   { name: "Encoding", what: "Base64, rot13 and chained decode-then-obey instructions." },
 ];
 
-function Section({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <section className={cn(card, "mb-4", className)}>{children}</section>;
+function Section({
+  children,
+  className,
+  id,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  id?: string;
+}) {
+  return (
+    <section id={id} className={cn(card, "mb-4", className)}>
+      {children}
+    </section>
+  );
 }
 
 export default function AirlockPage() {
@@ -89,10 +106,14 @@ export default function AirlockPage() {
       <SiteHeader />
       <main className="mx-auto max-w-2xl px-4 py-10">
         <div className="mb-8">
-          <div className="text-xs font-medium tracking-widest text-muted uppercase">
-            NanoNeuron · second product · early access
+          <div className="flex items-center gap-2.5">
+            <AirlockMark size={26} />
+            <span className="text-sm font-semibold tracking-tight text-ink">Airlock</span>
+            <span className="rounded-full border border-line px-2 py-0.5 text-[10px] tracking-wide text-muted uppercase">
+              Free scanner · live
+            </span>
           </div>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">
+          <h1 className="mt-4 text-3xl leading-[1.15] font-semibold tracking-tight text-ink sm:text-4xl">
             Your agent reads things you didn&apos;t write.
           </h1>
           <p className="mt-3 text-sm text-muted leading-relaxed">
@@ -102,6 +123,21 @@ export default function AirlockPage() {
             before they leave.
           </p>
         </div>
+
+        {/* The demonstration, where a product video would go. Every verdict,
+            score and rule id in it is real output from the engine -- see
+            scan-theatre.tsx. */}
+        <div className="mb-3">
+          <ScanTheatre />
+        </div>
+        <p className="mb-8 text-xs text-muted">
+          Recorded output from Airlock&apos;s detector, replayed &mdash; scores, rule ids and verdicts are what the
+          engine actually returned for exactly this content. This panel is a replay;{" "}
+          <a className="underline underline-offset-2" href="#try-it">
+            the scanner further down is live
+          </a>{" "}
+          and will run on whatever you paste into it.
+        </p>
 
         <Section>
           <h2 className={h2}>Two checks, in opposite directions</h2>
@@ -162,36 +198,62 @@ export default function AirlockPage() {
             &mdash; enough to prove later what the guard saw and decided, without keeping the thing itself.
           </p>
           <p className={p}>
-            The log is append-only, and that is enforced by a database trigger that rejects UPDATE and DELETE on
-            the table &mdash; not by application code that could be bypassed by anything else holding the same
-            connection. It exports as CSV, because the reason to keep it is an auditor, and auditors want a file.
+            The log is append-only, and that is enforced by database triggers that reject UPDATE, DELETE{" "}
+            <em>and TRUNCATE</em> on the table &mdash; not by application code that could be bypassed by anything
+            else holding the same connection. The TRUNCATE guard matters more than it sounds: a row-level trigger
+            alone leaves it open, because TRUNCATE deletes no rows, and we confirmed it emptied the table silently
+            before adding the second trigger.
           </p>
           <p className={p}>
-            If the guard itself cannot make a decision, it fails closed: the response is an error and the verdict is
-            block. A security check that defaults to &ldquo;allow&rdquo; when it breaks is not a security check.
+            There is no model call and no network request in the decision path &mdash; 30 regexes over normalised
+            text, and nothing else &mdash; so the scanner has no &ldquo;undecided&rdquo; state to fail open into. If
+            it breaks it returns a 5xx with no verdict at all, which a caller must treat as block. A security check
+            that defaults to &ldquo;allow&rdquo; when it breaks is not a security check.
           </p>
         </Section>
 
-        <Section>
-          <h2 className={h2}>Where it actually is</h2>
+        <Section className="border-accent/40" id="try-it">
+          <h2 className={h2}>Try it on your own text</h2>
           <p className={p}>
-            The backend (FastAPI, Postgres), the dashboard (Next.js) and the Python and TypeScript SDKs are written
-            and run locally under Docker Compose. It is <span className="font-medium text-ink">not hosted yet</span>
-            : there is no endpoint you can call, no billing and no signup. That is precisely why this page has no
-            price on it.
+            This is the real scanner, not a demo of one. It posts to{" "}
+            <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">POST /v1/airlock/scan</code> and
+            shows exactly what the engine returned — including when it disagrees with what you expected. Free, no
+            signup, bounded per address.
+          </p>
+          <div className="mt-4">
+            <Playground />
+          </div>
+        </Section>
+
+        <Section>
+          <h2 className={h2}>What runs, and what doesn&apos;t</h2>
+          <p className={p}>
+            <span className="font-medium text-ink">Running now:</span> the detection engine, the egress check and
+            the append-only audit log, served free and unauthenticated from this site&apos;s own backend at{" "}
+            <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">/v1/airlock/scan</code> and{" "}
+            <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">/v1/airlock/egress</code>. Point a
+            script at them today if you want to.
           </p>
           <p className={p}>
-            The next thing to build is not features, it is the corpus: 30 hand-written rules is a starting point,
-            not a defence. Public injection payloads go in first, the benchmark is published, and the hosted
-            scanner comes after that.
+            <span className="font-medium text-ink">Not built yet:</span> API keys, per-tenant thresholds and
+            allowlists, usage metering, billing, a customer dashboard, and any kind of support commitment. That is
+            the commercial product, and it is what the early-access list below is for — not the scanner, which
+            needs no waiting.
+          </p>
+          <p className={p}>
+            The next thing worth building is not features either, it is the corpus: 30 hand-written rules is a
+            starting point, not a defence. Public injection payloads go in first, and the benchmark gets published
+            with them.
           </p>
         </Section>
 
         <Section className="border-accent/40">
           <h2 className={h2}>Early access</h2>
           <p className={p}>
-            One email when the scanner is callable. If you describe what you&apos;d point it at, that shapes which
-            attack families get seeded first.
+            The scanner above is already free and needs no account. This list is for the hosted version — your own
+            API key, your own thresholds and egress allowlist, and a log you can export. One email when that
+            exists. If you describe what you&apos;d point it at, that shapes which attack families get seeded
+            first.
           </p>
           <div className="mt-4">
             <WaitlistForm />

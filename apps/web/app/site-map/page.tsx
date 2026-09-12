@@ -47,7 +47,7 @@ const GROUPS: { heading: string; links: { label: string; href: string; note: str
       {
         label: "Airlock — agent security",
         href: "/airlock",
-        note: "Prompt-injection and exfiltration guard for AI agents. Early access, not hosted yet",
+        note: "Prompt-injection and exfiltration guard for AI agents. Free scanner, no signup",
       },
     ],
   },

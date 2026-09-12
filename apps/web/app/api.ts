@@ -472,3 +472,39 @@ export async function joinAirlockWaitlist(input: AirlockWaitlistInput): Promise<
     body: JSON.stringify(input),
   });
 }
+
+// Airlock's scanner. Free, unauthenticated, bounded per IP -- see
+// apps/api/app/api/v1/airlock.py. This one really does scan: unlike the
+// waitlist, there is a running engine behind it.
+export type AirlockMatch = { rule_id: string; family: string; weight: number; description: string };
+
+export type AirlockScan = {
+  verdict: "allow" | "flag" | "block";
+  score: number;
+  matches: AirlockMatch[];
+  families: string[];
+  signals: Record<string, unknown>;
+  content_sha256: string;
+  content_bytes: number;
+  latency_ms: number;
+};
+
+export async function airlockScan(content: string, source?: string): Promise<AirlockScan> {
+  return request<AirlockScan>("/v1/airlock/scan", {
+    method: "POST",
+    body: JSON.stringify({ content, source: source ?? null }),
+  });
+}
+
+export type AirlockStats = {
+  total: number;
+  blocked: number;
+  flagged: number;
+  allowed: number;
+  last_7d: number;
+  top_rules: { rule: string; count: number }[];
+};
+
+export async function airlockStats(): Promise<AirlockStats> {
+  return request<AirlockStats>("/v1/airlock/stats");
+}

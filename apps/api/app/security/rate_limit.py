@@ -248,3 +248,27 @@ async def try_record_airlock_waitlist_attempt(database: Database, ip: str) -> bo
             return False
         await tx.execute("INSERT INTO airlock_waitlist_attempts (ip, created_at) VALUES (%s, %s)", (ip, now))
         return True
+
+
+# The free public scanner. Unauthenticated and CPU-bound (30 regex rules
+# over up to MAX_SCAN_CHARS of text), so the bound here is about protecting
+# the function, not about metering a customer -- the scanner is free and
+# meant to be used. Set well above what a person evaluating the product
+# would do by hand and well below what a script could cost.
+MAX_AIRLOCK_SCANS_PER_IP = 60
+AIRLOCK_SCAN_WINDOW_MS = 60 * 60 * 1000
+
+
+async def try_record_airlock_scan_attempt(database: Database, ip: str) -> bool:
+    """Atomically check-and-record, same shape as the limiters above."""
+    now = int(time.time() * 1000)
+    async with database.transaction() as tx:
+        await tx.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"airlock_scan:{ip}",))
+        row = await tx.fetch_one(
+            "SELECT count(*) AS n FROM airlock_scan_attempts WHERE ip=%s AND created_at > %s",
+            (ip, now - AIRLOCK_SCAN_WINDOW_MS),
+        )
+        if row and row["n"] >= MAX_AIRLOCK_SCANS_PER_IP:
+            return False
+        await tx.execute("INSERT INTO airlock_scan_attempts (ip, created_at) VALUES (%s, %s)", (ip, now))
+        return True

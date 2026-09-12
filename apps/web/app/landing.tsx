@@ -12,13 +12,14 @@
 // and avoids any Base UI render-prop friction for what's fundamentally
 // navigation.
 
-import { CheckCircle2, ClipboardList, ShieldAlert, ShieldCheck, Sparkles, UserCheck, XCircle } from "lucide-react";
+import { CheckCircle2, ClipboardList, ShieldCheck, Sparkles, UserCheck, XCircle } from "lucide-react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { LogoMark } from "./logo-mark";
+import { AirlockMark } from "./airlock/airlock-mark";
 import { GeminiLogo, LinearLogo, StripeLogo } from "./brand-icons";
 import { HeroParticles } from "./hero-particles";
 import { ScrollReveal } from "./scroll-reveal";
@@ -344,7 +345,7 @@ export function SecondProduct() {
           )}
         >
           <div className="flex items-start gap-3">
-            <ShieldAlert className="mt-0.5 size-4 shrink-0 text-accent" />
+            <AirlockMark size={20} className="mt-0.5 shrink-0" />
             <div>
               <div className="text-xs font-medium tracking-widest text-muted uppercase">
                 Also from NanoNeuron
@@ -356,14 +357,14 @@ export function SecondProduct() {
                 If you run an AI agent that reads tickets, pages, PDFs or email, some of that text is written at the
                 model rather than at you. Airlock scores inbound content for prompt injection before it reaches the
                 context window, and checks outbound calls for credentials and personal data before they leave — with
-                an append-only log of every decision. The code is written and the detector runs; it isn&apos;t hosted
-                yet, so there&apos;s nothing to buy — just an early-access list.
+                an append-only log of every decision. The scanner is live and free — paste your own text into it,
+                no signup.
               </p>
               <Link
                 href="/airlock"
                 className={cn(buttonVariants({ variant: "line", size: "app" }), "mt-3.5 text-sm")}
               >
-                See how it works
+                Scan something
               </Link>
             </div>
           </div>
@@ -397,7 +398,15 @@ export function SiteHeader() {
           <LogoMark size={22} />
           PostMortem AI
         </Link>
-        <nav className="flex items-center gap-4 text-sm text-muted">
+        {/* gap-3 below sm: adding a fifth item (Airlock) pushed the row
+            past 390px-wide viewports and clipped "Get started" off the
+            right edge -- measured at 419px of content in a 358px row, not
+            guessed. The gap reduction plus hiding MCP (the one item that
+            is a deep link into a /docs section rather than a page of its
+            own) brings it back under, and keeps the header one line: a
+            wrapping sticky header would eat scarce vertical space on
+            exactly the devices that have least of it. */}
+        <nav className="flex items-center gap-2.5 text-sm text-muted sm:gap-4">
           <Link className="hover:text-ink hover:underline underline-offset-2" href="/docs">
             Docs
           </Link>
@@ -406,17 +415,18 @@ export function SiteHeader() {
               describes (every agent tool call recorded, denials included)
               is real and already shipped, but doesn't carry enough of its
               own distinct content yet to justify a standalone route. */}
-          <Link className="hover:text-ink hover:underline underline-offset-2" href="/docs#mcp">
+          <Link className="hidden hover:text-ink hover:underline underline-offset-2 sm:inline" href="/docs#mcp">
             MCP
           </Link>
           <Link className="hover:text-ink hover:underline underline-offset-2" href="/pricing">
             Pricing
           </Link>
-          {/* The second product, and the only nav item that leaves the
-              postmortem story -- so it is labelled by name rather than by
-              category, which is what someone who heard about it will
-              actually look for. */}
-          <Link className="hover:text-ink hover:underline underline-offset-2" href="/airlock">
+          {/* Airlock by name, not by category: it is the thing someone who
+              heard about it will look for, and it is the only nav item that
+              leaves the postmortem story. Carries its own mark so it reads
+              as a product rather than another section of this one. */}
+          <Link className="flex items-center gap-1.5 hover:text-ink hover:underline underline-offset-2" href="/airlock">
+            <AirlockMark size={15} />
             Airlock
           </Link>
           <Link
@@ -452,7 +462,7 @@ export function SiteFooter() {
     // the homepage: it is the one route that isn't about postmortems at
     // all, so a visitor who lands deep in the site has no other way to
     // discover it exists.
-    ["Airlock (agent security)", "/airlock"],
+    ["Airlock — free injection scanner", "/airlock"],
     // "Sales and Refunds" points at the refund block on /pricing rather than a
     // page of its own, so the terms exist in exactly one place and two copies
     // can never disagree. "Site Map" is /site-map (the human list), not

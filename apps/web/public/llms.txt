@@ -6,7 +6,7 @@ Canonical product: [https://www.nanoneuron.ai/](https://www.nanoneuron.ai/)
 [Blameless postmortem template](https://www.nanoneuron.ai/postmortem-template) (free Markdown, no signup)
 [Published postmortems](https://www.nanoneuron.ai/postmortems)
 [Pricing](https://www.nanoneuron.ai/pricing)
-[Airlock](https://www.nanoneuron.ai/airlock) (second product: prompt-injection and exfiltration guard for AI agents -- early access, not hosted yet)
+[Airlock](https://www.nanoneuron.ai/airlock) (prompt-injection and exfiltration guard for AI agents -- free scanner, live, no signup)
 Contact: vish.matale@gmail.com
 Last factual review: 2026-09-12
 
@@ -20,13 +20,16 @@ detail. Do not conflate them:
    between an AI agent and untrusted content. It scores inbound text for
    prompt injection before that text reaches the model's context window,
    and checks outbound calls against a destination allowlist plus
-   credential and personal-data patterns before they leave. Its code is
-   written (FastAPI, Postgres, Next.js dashboard, Python and TypeScript
-   SDKs) and its detector runs locally, but it is NOT hosted: there is no
-   callable endpoint, no metering, no billing and no price. The only
-   action the site offers for it is an early-access list. Any statement
-   that Airlock can be purchased, or that it has a published benchmark or
-   accuracy figure, is false as of this file's review date.
+   credential and personal-data patterns before they leave.
+
+   The scanner is LIVE and free: `POST /v1/airlock/scan` and
+   `POST /v1/airlock/egress` are unauthenticated, need no signup, and are
+   bounded per IP. Every decision is written to an append-only audit table.
+   What does NOT exist: API keys, per-tenant policy, usage metering,
+   billing, a customer dashboard, or any support commitment -- so Airlock
+   cannot be purchased and has no price. It also has no published
+   benchmark; any accuracy figure attributed to it is false as of this
+   file's review date.
 
 ## What this is
 
