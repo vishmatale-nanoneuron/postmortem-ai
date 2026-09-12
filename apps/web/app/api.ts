@@ -454,3 +454,21 @@ export type EvidenceQualitySummary = {
   drafts_with_any_unsupported_section: number;
   unsupported_by_section: Record<string, number>;
 };
+
+// Airlock's early-access list. The second product has no hosted scanner
+// yet, so this is the only Airlock call the site can make -- deliberately
+// not a "try a scan" endpoint, which would imply an API that isn't running.
+// The backend answers 202 for a new address and for one already on the
+// list, identically; callers must not try to tell them apart.
+export type AirlockWaitlistInput = {
+  email: string;
+  company?: string | null;
+  use_case?: string | null;
+};
+
+export async function joinAirlockWaitlist(input: AirlockWaitlistInput): Promise<{ status: string }> {
+  return request<{ status: string }>("/v1/airlock/waitlist", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}

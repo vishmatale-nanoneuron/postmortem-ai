@@ -38,7 +38,8 @@ const LAST_MODIFIED = {
   status: new Date("2026-09-01T20:53:02+05:30"),
   privacy: new Date("2026-09-01T20:53:02+05:30"),
   terms: new Date("2026-09-04T01:19:04+05:30"),
-  siteMap: new Date("2026-09-10T00:00:00+00:00"), // human-readable page added
+  siteMap: new Date("2026-09-12T00:00:00+00:00"), // Airlock added to the list
+  airlock: new Date("2026-09-12T00:00:00+00:00"), // second product page added
 } as const;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
@@ -72,6 +73,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: "monthly",
       priority: 0.7,
     },
+    // The second product's only page. High priority for the same reason
+    // /postmortem-template is: it is written for a search someone types
+    // ("prompt injection guard", "agent exfiltration"), and it is the one
+    // page on this domain about anything other than postmortems.
+    { url: `${SITE_URL}/airlock`, lastModified: LAST_MODIFIED.airlock, changeFrequency: "weekly", priority: 0.9 },
     { url: `${SITE_URL}/postmortems`, lastModified: LAST_MODIFIED.postmortems, changeFrequency: "daily", priority: 0.6 },
     { url: `${SITE_URL}/status`, lastModified: LAST_MODIFIED.status, changeFrequency: "daily", priority: 0.3 },
     { url: `${SITE_URL}/privacy`, lastModified: LAST_MODIFIED.privacy, changeFrequency: "monthly", priority: 0.3 },

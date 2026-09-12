@@ -222,3 +222,29 @@ async def try_record_action(
             (user_id, action, now),
         )
         return True
+
+
+# Airlock early-access signups per IP. The endpoint is unauthenticated and
+# writes a row, so it needs the same bound registration does. Looser than a
+# registration (a waitlist row costs nothing and grants nothing) but still
+# finite, so one source cannot fill the list with invented addresses.
+MAX_AIRLOCK_WAITLIST_PER_IP = 10
+AIRLOCK_WAITLIST_WINDOW_MS = 60 * 60 * 1000
+
+
+async def try_record_airlock_waitlist_attempt(database: Database, ip: str) -> bool:
+    """Atomically check-and-record, same shape as
+    try_record_password_reset_attempt above. Counts *attempts*, not list
+    rows: the insert into airlock_waitlist is ON CONFLICT DO NOTHING, so a
+    caller re-posting one address would otherwise never be counted."""
+    now = int(time.time() * 1000)
+    async with database.transaction() as tx:
+        await tx.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"airlock_waitlist:{ip}",))
+        row = await tx.fetch_one(
+            "SELECT count(*) AS n FROM airlock_waitlist_attempts WHERE ip=%s AND created_at > %s",
+            (ip, now - AIRLOCK_WAITLIST_WINDOW_MS),
+        )
+        if row and row["n"] >= MAX_AIRLOCK_WAITLIST_PER_IP:
+            return False
+        await tx.execute("INSERT INTO airlock_waitlist_attempts (ip, created_at) VALUES (%s, %s)", (ip, now))
+        return True

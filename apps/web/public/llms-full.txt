@@ -9,8 +9,9 @@ Canonical product: [https://www.nanoneuron.ai/](https://www.nanoneuron.ai/)
 [GitHub outage demo](https://www.nanoneuron.ai/blog/github-outage-demo) (the tool's own unedited output on a real public incident)
 [Published postmortems](https://www.nanoneuron.ai/postmortems)
 [Pricing](https://www.nanoneuron.ai/pricing)
+[Airlock](https://www.nanoneuron.ai/airlock) (second product, early access -- see "Airlock" below)
 Contact: vish.matale@gmail.com
-Last factual review: 2026-09-11
+Last factual review: 2026-09-12
 
 This file is the complete reference; llms.txt above is the short index. Every
 claim here is checked against the running code and, where practical, against
@@ -204,6 +205,12 @@ drift apart.
 
 ## REST API surface (all under `/v1`)
 
+Airlock (`/v1/airlock`): `POST /waitlist` (public; records an early-access
+signup, answers 202 identically whether the address is new or already on the
+list so the response cannot be used to enumerate it; per-IP limited),
+`GET /waitlist` (founder-only; the list itself). There is no scan endpoint on
+this API -- see "Airlock" below for why.
+
 Auth (`/v1/auth`): `POST /register`, `POST /login`, `POST /logout`,
 `GET /me`, `PUT /me`, `PATCH /me`, `DELETE /me` (founder account cannot
 self-delete), `POST /password-reset/request`, `POST /password-reset/confirm`,
@@ -363,6 +370,49 @@ Public marketing/docs/published-postmortem pages are meant to be indexed;
 every account-scoped page requires authentication and is not meant to be
 crawled as public data. No API keys, credentials, or account-specific data
 are ever exposed in this file or any public page.
+
+## Airlock (second product)
+
+Airlock is a guard that sits between an AI agent and untrusted content. Two
+directions:
+
+- **Inbound.** Text is normalised first -- Unicode tag-block characters
+  decoded, invisible characters stripped, HTML comments and hidden elements
+  extracted, spaced-out obfuscation collapsed -- then scored against 30
+  weighted rules across 8 attack families (instruction override, role
+  hijack, delimiter break, exfiltration, tool abuse, authority spoof, memory
+  poison, encoding). Scores combine with noisy-OR rather than addition, so
+  several weak signals cannot sum to false certainty. Block at 0.75, flag at
+  0.40.
+- **Outbound.** Destination checked against an allowlist; payload checked
+  against 11 credential patterns (AWS access key and secret, Anthropic,
+  OpenAI, GitHub, Slack, Google, Stripe, private keys, JWTs, bearer tokens)
+  and 7 personal-data patterns (email, E.164 phone, credit card, SSN,
+  Aadhaar, PAN, IBAN), plus a query-string entropy check.
+
+Audit: one append-only entry per decision, holding a SHA-256 of the scanned
+content, its byte count, the verdict, the rules that fired and a redacted
+excerpt. The raw content is not stored. Append-only is enforced by a
+Postgres trigger that rejects UPDATE and DELETE on the table, not by
+application code. Exportable as CSV. The guard fails closed: if it cannot
+decide, the response is an error and the verdict is block.
+
+**Status, stated precisely because it is the thing most likely to be
+misreported:** the code is written (FastAPI + Postgres backend, Next.js
+dashboard, Python and TypeScript SDKs) and the detector runs locally under
+Docker Compose. It is NOT hosted. There is no callable endpoint, no
+metering, no billing, no price and nothing to buy. The only Airlock action
+available on this site is joining the early-access list at
+https://www.nanoneuron.ai/airlock.
+
+**On accuracy claims:** the repository contains an 18-case suite written by
+us -- 11 attacks (including payloads hidden in Unicode tag characters, HTML
+comments and spaced text) and 7 benign documents. On the current rules it
+blocks all 11 and scores all 7 benign documents at 0.00. That is a smoke
+test on self-authored cases, not a benchmark, and it must not be reported as
+a precision, recall or accuracy figure. No benchmark has been published. The
+stated next step is seeding the corpus from public injection datasets and
+publishing both the corpus and the results, including the misses.
 
 ## Commercial scope
 

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from ...auth import User, current_founder
 from ...cqrs.activity import ActivityLogFilter, handle_activity_log_query
+from ...cqrs.airlock_waitlist import handle_waitlist_counts_query
 from ...database import Database
 from ...dependencies import get_database
 from ...services.billing import activate_manual_subscription, record_claim_event
@@ -182,6 +183,12 @@ async def founder_summary(
     pending_claims = await database.fetch_one(
         "SELECT count(*) AS total FROM payment_claims WHERE status='pending'"
     )
+    # Airlock's early-access list. It sits in this summary rather than a
+    # dashboard of its own because it is currently the only number the
+    # second product produces, and the decision it informs -- whether to
+    # build hosting and billing for it at all -- is one the founder makes
+    # while looking at this page.
+    airlock_waitlist = await handle_waitlist_counts_query(database)
     recent_users = await database.fetch_all(
         "SELECT id::text, email, created_at FROM users ORDER BY created_at DESC LIMIT 10"
     )
@@ -229,6 +236,7 @@ async def founder_summary(
             "ai_price_basis": AI_PRICE_BASIS,
         },
         "pending_payment_claims": (pending_claims or {}).get("total", 0),
+        "airlock_waitlist": {"total": airlock_waitlist.total, "last_7d": airlock_waitlist.last_7d},
         "conversion_funnel": {
             "signups": (funnel or {}).get("signups", 0),
             "tried_free_incident": (funnel or {}).get("tried_free_incident", 0),
