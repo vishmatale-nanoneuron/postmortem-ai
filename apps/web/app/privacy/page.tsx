@@ -76,8 +76,9 @@ export default function PrivacyPage() {
           <h2 className={h2}>What third parties see</h2>
           <p className={p}>
             Your incident evidence is sent to Google (Gemini) to draft a postmortem, and to Anthropic (Claude) only
-            if Gemini&apos;s own call fails and a fallback is configured. Card payments go through Stripe directly
-            -- your card details never reach our own servers. Password-reset emails are sent via Resend, which
+            if Gemini&apos;s own call fails and a fallback is configured. Payments are UPI or bank wire made directly
+            to the founder&apos;s account -- there is no card processor, and no payment instrument of yours ever
+            reaches our servers, only the transaction reference you submit. Password-reset emails are sent via Resend, which
             sees only the email address and the reset link, nothing about your incidents. The database itself is
             hosted by Supabase, the application by Vercel. None of these are chosen or paid to promote your data
             further -- they process it only to do the specific job listed here.

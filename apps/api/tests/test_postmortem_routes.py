@@ -116,9 +116,9 @@ async def context(monkeypatch: pytest.MonkeyPatch):
         assert register.status_code == 201, register.text
 
         # These tests are about postmortem/drafting logic, not billing --
-        # give the account an active subscription directly (mimicking what
-        # a real Stripe webhook would apply) rather than driving a full
-        # checkout flow through every test here.
+        # give the account an active subscription directly (what a founder
+        # approving a UPI/wire claim sets) rather than driving the full
+        # claim flow through every test here.
         await database.execute(
             "UPDATE users SET subscription_status='active' WHERE email=%s", (CLIENT_EMAIL,)
         )

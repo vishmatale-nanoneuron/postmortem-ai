@@ -145,7 +145,6 @@ export type FounderSummary = {
     signups: number;
     tried_free_incident: number;
     ever_paid: number;
-    ever_paid_via_stripe: number;
     currently_paying: number;
     approved_manual_claims: number;
   };
@@ -218,13 +217,8 @@ export type Claim = {
 
 export type PaymentClaim = Claim & { user_id: string; email: string; bank_verified: boolean };
 
-export type CardPricing = { configured: boolean };
-
 export const billing = {
   status: () => request<BillingStatus>("/v1/billing/status"),
-  cardPricing: () => request<CardPricing>("/v1/billing/card/pricing"),
-  checkout: () => request<{ url: string }>("/v1/billing/checkout", { method: "POST" }),
-  portal: () => request<{ url: string }>("/v1/billing/portal", { method: "POST" }),
   upiPricing: () => request<UpiPricing>("/v1/billing/upi/pricing"),
   submitUpiClaim: (reference: string, billingPeriod: "monthly" | "annual" = "monthly") =>
     request<Claim>("/v1/billing/upi/claim", {

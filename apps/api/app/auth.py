@@ -11,11 +11,12 @@ from .settings import Settings, get_settings
 
 SESSION_COOKIE_NAME = "session_token"
 
-# Stripe subscription.status values that mean "the account may use the
-# product." Everything else (past_due, canceled, unpaid, incomplete,
-# incomplete_expired, or the pre-checkout 'none') is treated as inactive --
-# an explicit allowlist rather than a denylist, so a Stripe status this
-# code hasn't seen before fails closed instead of silently granting access.
+# subscription_status values that mean "the account may use the product."
+# Everything else (including the pre-payment 'none') is treated as inactive
+# -- an explicit allowlist rather than a denylist, so a status this code
+# hasn't seen before fails closed instead of silently granting access. The
+# vocabulary is a leftover from the card processor that was removed on
+# 2026-09-13; a founder-approved UPI/wire claim sets 'active'.
 ACTIVE_SUBSCRIPTION_STATUSES = {"active", "trialing"}
 
 
@@ -50,8 +51,8 @@ class User:
         # A status of 'active'/'trialing' alone isn't enough: a manually
         # approved UPI/wire claim (founder.py's approve_payment_claim) sets
         # status='active' once and nothing ever flips it back -- there's no
-        # recurring billing system behind a manual payment, unlike Stripe,
-        # which corrects status itself via webhook when a period lapses.
+        # recurring billing system behind a manual payment to correct the
+        # status when a period lapses.
         # Without this check, a single ₹999 payment bought permanent access
         # instead of the one month it was actually billed for.
         if self.current_period_end is None:

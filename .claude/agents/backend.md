@@ -21,8 +21,8 @@ Ground rules specific to this codebase:
   safety before considering it done.
 - Every payment/subscription-granting code path must go through
   `apps/api/app/services/billing.py`'s `activate_manual_subscription` (manual
-  UPI/wire) or the signature-verified Stripe webhook — never add a new place that
-  sets `subscription_status='active'`.
+  UPI/wire, from the founder's approve) — never add a new place that sets
+  `subscription_status='active'`. There is no card processor.
 - `record_claim_event()` writes to the append-only `payment_claim_events` ledger —
   any new claim-state-changing action should call it, and a CheckViolation there
   must never fail the caller's actual request (see its existing try/except).

@@ -117,9 +117,10 @@ history survives the current-state row moving on.
 
 ## Payments — no processor dependency
 
-Stripe is invite-only for Indian businesses, so the working rails are direct
-bank transfer: **UPI** (India) and **SWIFT wire** (international). Money moves
-bank-to-bank — no aggregator, no percentage fee.
+The only rails are direct bank transfer: **UPI** (India) and **SWIFT wire**
+(international). Money moves bank-to-bank — no aggregator, no percentage
+fee, no card processor (the one that used to be wired in was removed on
+2026-09-13 on the owner's decision).
 
 - Prices are always derived **server-side** from the billing period. A
   client-supplied amount is ignored; otherwise anyone could buy a year at the
@@ -156,9 +157,9 @@ including bare CI.
   "Resource provisioning failed", including redeploys of previously-successful
   builds. Proven server-side: byte-identical output deploys READY to a different
   project. Frontend work is queued, not shipped.
-- **No card payments.** Not an omission — Stripe is invite-only in India, and
-  accepting cards independently requires an RBI Payment Aggregator licence
-  (₹15 crore net worth).
+- **No card payments.** By decision (2026-09-13): UPI and wire only.
+  Accepting cards independently in India would also require an RBI Payment
+  Aggregator licence (₹15 crore net worth).
 - **Single-user accounts.** No organisations, teams, or roles.
 - **Annual billing has no UI.** The API supports it; the dashboard cannot yet
   select it.

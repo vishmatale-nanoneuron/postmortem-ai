@@ -25,9 +25,6 @@ async def context(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("FOUNDER_UPI_ID", "founder@upi")
     monkeypatch.setenv("SUBSCRIPTION_PRICE_INR", "999")
     monkeypatch.setenv("FOUNDER_BANK_ACCOUNT_NUMBER", "000111222333")
-    monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
-    monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
-    monkeypatch.delenv("STRIPE_PRICE_ID", raising=False)
 
     from app.database import Database
     from app.main import create_app

@@ -18,9 +18,9 @@ docs/CORE_LOGIC_CONTRACT.md if present):
   where an uncited/invented claim can reach the database.
 - Publishing a postmortem requires an explicit human action, enforced at the DB
   layer (a CHECK constraint on `incident_postmortems`), not just app logic.
-- Payment/subscription access is granted in exactly one place per payment method
-  (Stripe webhook, or founder's explicit `approve_payment_claim`) — never inferred,
-  never automated into an auto-approval.
+- Payment/subscription access is granted in exactly one place: the founder's
+  explicit `approve_payment_claim` (UPI/wire are the only rails) — never
+  inferred, never automated into an auto-approval.
 - Migrations are forward-only and idempotent (`IF NOT EXISTS` / `ON CONFLICT DO
   NOTHING`) — never edit a shipped migration file.
 

@@ -45,7 +45,6 @@ async def context(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("WIRE_USD_CORRESPONDENT_SWIFT", "CHASUS33")
     monkeypatch.setenv("WIRE_USD_NOSTRO_ACCOUNT", "11407376")
     monkeypatch.setenv("WIRE_USD_ABA", "FED ABA 0210-0002-1")
-    monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
 
     from app.database import Database
     from app.main import create_app

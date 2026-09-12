@@ -27,11 +27,6 @@ async def context(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("FOUNDER_EMAIL", FOUNDER_EMAIL)
     monkeypatch.setenv("FOUNDER_UPI_ID", "founder@upi")
     monkeypatch.setenv("SUBSCRIPTION_PRICE_INR", "999")
-    # Deliberately no STRIPE_* vars -- proves the app runs, and this whole
-    # flow works, with Stripe entirely unconfigured.
-    monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
-    monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
-    monkeypatch.delenv("STRIPE_PRICE_ID", raising=False)
 
     from app.database import Database
     from app.main import create_app
@@ -209,11 +204,17 @@ async def test_a_non_founder_cannot_see_or_approve_payment_claims(context) -> No
 
 
 @pytest.mark.asyncio
-async def test_stripe_routes_503_when_unconfigured(context) -> None:
-    client, _, _ = context
-    await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": "correct-horse-battery"})
-
-    assert (await client.post("/v1/billing/checkout")).status_code == 503
+async def test_the_removed_card_routes_are_gone_not_503(context) -> None:
+    """Card billing was removed outright on 2026-09-13 (owner's decision:
+    UPI and wire only). A 404 here, not a 503, is the proof: there is no
+    unconfigured integration waiting behind these paths."""
+    _client, _database, application = context
+    registered = set(application.openapi()["paths"])
+    for path in ("/v1/billing/checkout", "/v1/billing/portal", "/v1/billing/webhook", "/v1/billing/card/pricing"):
+        assert path not in registered, path
+    # And the manual rails are still there.
+    for path in ("/v1/billing/upi/claim", "/v1/billing/wire/claim", "/v1/airlock/credits/claim"):
+        assert path in registered, path
 
 
 @pytest.mark.asyncio

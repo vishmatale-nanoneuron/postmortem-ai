@@ -48,7 +48,7 @@ Full detail: [docs](https://www.nanoneuron.ai/docs) · [llms.txt](https://www.na
 - **Database**: PostgreSQL (Supabase), pgvector for RAG over past incidents.
 - **AI**: Google Gemini, with a provider abstraction that made an earlier Anthropic→Gemini swap a
   clean one-file change.
-- **Payments**: Stripe (card, self-serve), UPI and international SWIFT wire (manual, founder-reviewed)
+- **Payments**: UPI and international SWIFT wire only (manual, founder-reviewed); no card processor by decision
   for clients anywhere card payment isn't live yet.
 
 This is a real, running product, not a demo or a starter kit — the source here is public for

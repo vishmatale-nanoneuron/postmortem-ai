@@ -19,8 +19,8 @@ logger = logging.getLogger("postmortem_ai")
 
 class EmailNotConfiguredError(RuntimeError):
     """Raised when RESEND_API_KEY/RESEND_EMAIL_DOMAIN aren't set -- callers
-    turn this into a 503, same "unconfigured means off" stance as Stripe's
-    billing._client() and every other optional integration in this app."""
+    turn this into a 503, same "unconfigured means off" stance as the
+    UPI/wire 'configured' checks and every other optional integration."""
 
 
 def send_password_reset_email(settings: Settings, to_email: str, reset_url: str) -> None:

@@ -47,14 +47,6 @@ class Settings(BaseSettings):
     # if that should ever change.
     founder_email: str = Field(default="vish.matale@gmail.com", alias="FOUNDER_EMAIL")
 
-    # Stripe subscription billing -- built and tested (sandbox), but
-    # optional at startup: going live needs Indian business KYC (PAN) that
-    # isn't done yet, so these are unset in production for now and the
-    # /v1/billing/* Stripe routes 503 rather than the app failing to boot.
-    # Real payment today goes through the UPI flow below instead.
-    stripe_secret_key: str | None = Field(default=None, alias="STRIPE_SECRET_KEY")
-    stripe_webhook_secret: str | None = Field(default=None, alias="STRIPE_WEBHOOK_SECRET")
-    stripe_price_id: str | None = Field(default=None, alias="STRIPE_PRICE_ID")
     frontend_url: str = Field(default="http://localhost:3000", alias="FRONTEND_URL")
 
     # Manual UPI payment: the client pays this UPI ID directly and submits
@@ -146,7 +138,7 @@ class Settings(BaseSettings):
     # Password reset emails via Resend (see services/email.py) -- optional,
     # same "unset means disabled" stance as everything else above: the
     # request endpoint 503s rather than crashing when unconfigured, same
-    # pattern as billing._client()'s Stripe check. resend_email_domain is
+    # pattern as the manual-rail 'configured' checks in billing.py. resend_email_domain is
     # the real, verified sending domain provisioned via the Vercel
     # Marketplace Resend integration -- never a guessed/hardcoded domain.
     resend_api_key: str | None = Field(default=None, alias="RESEND_API_KEY")

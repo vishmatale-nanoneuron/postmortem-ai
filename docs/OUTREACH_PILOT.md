@@ -134,8 +134,8 @@ demo answered their question 4. Until then it is a link you send.
 
 Today: one flat plan, ₹999/month in India, $15/month elsewhere, annual
 with two months free, first incident free. It is public on `/pricing`, on
-the homepage, and self-serve (UPI and wire with human approval; card via
-Stripe inside the dashboard). It is not behind "contact us".
+the homepage, and self-serve (UPI and wire with human approval -- the
+only rails). It is not behind "contact us".
 
 The suggestion to price per incident is plausible and untested. Rule for
 this pilot: **if at least 3 of the first 10 calls say the monthly fee is
