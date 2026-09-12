@@ -29,7 +29,7 @@ const fieldInput =
 const SYMBOLS: Record<string, string> = { INR: "₹", USD: "$", GBP: "£", EUR: "€" };
 
 function money(currency: string, amount: number): string {
-  return `${SYMBOLS[currency] ?? currency + " "}${amount.toLocaleString("en-IN")}`;
+  return `${SYMBOLS[currency] ?? currency + " "}${amount.toLocaleString("en-US")}`;
 }
 
 function when(ms: number): string {
@@ -98,7 +98,7 @@ function Stat({ label, value, emphasis = false }: { label: string; value: number
     <div className="rounded-md bg-paper px-3 py-2">
       <div className="text-[11px] font-medium tracking-wide text-muted uppercase">{label}</div>
       <div className={cn("font-mono text-lg tabular-nums", emphasis ? "text-ink" : "text-muted")}>
-        {value === null ? "–" : value.toLocaleString("en-IN")}
+        {value === null ? "–" : value.toLocaleString("en-US")}
       </div>
     </div>
   );
@@ -312,7 +312,7 @@ function BuyCredits({ onChanged }: { onChanged: () => void | Promise<void> }) {
       await refresh();
       await onChanged();
       setMessage(
-        `Submitted. Once the payment is verified -- usually within the day -- ${scans.toLocaleString("en-IN")} credits land on this account and you get an email.`,
+        `Submitted. Once the payment is verified -- usually within the day -- ${scans.toLocaleString("en-US")} credits land on this account and you get an email.`,
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not submit the reference.");
@@ -327,7 +327,7 @@ function BuyCredits({ onChanged }: { onChanged: () => void | Promise<void> }) {
     <div className="mb-4">
       <h3 className="mb-1 text-sm font-semibold">Buy credits</h3>
       <p className="mb-2 text-xs text-muted">
-        {pricing.scans_per_pack.toLocaleString("en-IN")} scans per pack. Credits do not expire. UPI for INR;
+        {pricing.scans_per_pack.toLocaleString("en-US")} scans per pack. Credits do not expire. UPI for INR;
         international SWIFT wire for USD, GBP and EUR (wire fees make larger orders the sensible choice there).
       </p>
 
@@ -379,7 +379,7 @@ function BuyCredits({ onChanged }: { onChanged: () => void | Promise<void> }) {
         </div>
         <p className="pb-2 text-sm">
           <span className="font-medium text-ink">{price ? money(currency, amount) : "–"}</span>{" "}
-          <span className="text-muted">for {scans.toLocaleString("en-IN")} scans</span>
+          <span className="text-muted">for {scans.toLocaleString("en-US")} scans</span>
         </p>
       </div>
 
@@ -474,7 +474,7 @@ function Statement({ entries }: { entries: AirlockCredits["statement"] }) {
                     entry.delta > 0 ? "text-emerald-700" : "text-ink",
                   )}
                 >
-                  {entry.delta > 0 ? `+${entry.delta.toLocaleString("en-IN")}` : entry.delta.toLocaleString("en-IN")}
+                  {entry.delta > 0 ? `+${entry.delta.toLocaleString("en-US")}` : entry.delta.toLocaleString("en-US")}
                 </td>
               </tr>
             ))}

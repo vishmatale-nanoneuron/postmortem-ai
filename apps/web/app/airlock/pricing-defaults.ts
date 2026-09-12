@@ -20,5 +20,5 @@ export const AIRLOCK_PRICING_DEFAULTS = {
 export const CURRENCY_SYMBOLS: Record<string, string> = { INR: "₹", USD: "$", GBP: "£", EUR: "€" };
 
 export function formatMoney(currency: string, amount: number): string {
-  return `${CURRENCY_SYMBOLS[currency] ?? currency + " "}${amount.toLocaleString("en-IN")}`;
+  return `${CURRENCY_SYMBOLS[currency] ?? currency + " "}${amount.toLocaleString("en-US")}`;
 }

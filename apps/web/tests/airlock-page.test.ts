@@ -191,6 +191,23 @@ describe("/airlock", () => {
     expect(PAGE).not.toContain("Not yet. The scanner is free.");
   });
 
+  it("says where and in what language it works, without overclaiming", () => {
+    // Global API, English rules, any-language deep scan, wire from anywhere
+    // and UPI in India. The rules' English limit is stated in the same
+    // answer as the global claim so one cannot be quoted without the other.
+    expect(PAGE).toContain("The API is global");
+    expect(PAGE).toContain("match English phrasing");
+    expect(PAGE).toContain("Gemini reads any language");
+    expect(PAGE).toContain("SWIFT wire in USD, GBP or EUR");
+    expect(PAGE).toContain("UPI in India");
+    expect(LLMS_FULL).toContain("The API is global");
+    expect(LLMS_FULL).toContain("rules match English phrasing");
+    // No India-specific digit grouping anywhere Airlock renders a number.
+    for (const source of [PAGE, PLAYGROUND, PRICING_DEFAULTS]) {
+      expect(source).not.toContain('"en-IN"');
+    }
+  });
+
   it("states the deep scan's terms next to the no-model promise", () => {
     // The default path makes a privacy promise (no model call). The deep
     // scan is the exception and must be described as opt-in, as sending

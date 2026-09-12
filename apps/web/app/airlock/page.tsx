@@ -218,6 +218,10 @@ const FAQ: { q: string; a: string }[] = [
     a: "From your dashboard: choose a currency and how many packs, have the payee details emailed to your own address, pay, and submit the transaction reference. The founder verifies the payment by hand \u2014 usually within the day \u2014 and the credits land on your account the moment it is approved, with an email to say so. Card payments are not available yet.",
   },
   {
+    q: "Does it work outside India, and outside English?",
+    a: "The API is global: HTTPS from anywhere, no region restriction, and it scores text rather than any vendor\u2019s model, so it sits in front of Claude, GPT, Gemini, Llama or your own. Pay from any country by SWIFT wire in USD, GBP or EUR, or by UPI in India; card payments are not available yet. The 30 rules match English phrasing \u2014 an injection written in another language will not trip them \u2014 which is exactly what the deep scan is for: Gemini reads any language. The outbound check covers international formats (E.164 phone numbers, IBAN, card numbers, email) plus US SSN and Indian Aadhaar and PAN.",
+  },
+  {
     q: "What happens if the scanner is down?",
     a: "You get a non-200 with no verdict and you are not charged. Treat it as block. A security check that defaults to \u201callow\u201d when it breaks is not a security check.",
   },
@@ -296,7 +300,7 @@ export default async function AirlockPage() {
               Scan your own text
             </a>
             <a href="#pricing" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
-              {inr && usd ? `${formatMoney("INR", inr.amount)} / ${formatMoney("USD", usd.amount)} per ${pricing.scans_per_pack.toLocaleString("en-IN")} scans` : "Pricing"}
+              {inr && usd ? `${formatMoney("USD", usd.amount)} / ${formatMoney("INR", inr.amount)} per ${pricing.scans_per_pack.toLocaleString("en-US")} scans` : "Pricing"}
             </a>
             <a href="#how" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
               How it decides
@@ -355,7 +359,7 @@ export default async function AirlockPage() {
           <h2 className={h2}>Pricing</h2>
           <p className={p}>
             Prepaid packs of{" "}
-            <span className="font-medium text-ink">{pricing.scans_per_pack.toLocaleString("en-IN")} scan credits</span>.
+            <span className="font-medium text-ink">{pricing.scans_per_pack.toLocaleString("en-US")} scan credits</span>.
             One credit per scan or egress check; {pricing.credits_per_deep_scan} for a deep scan with a Gemini second
             opinion. Credits do not expire. No monthly fee, no minimum, no free tier.
           </p>
@@ -374,8 +378,9 @@ export default async function AirlockPage() {
             ))}
           </div>
           <p className={cn(p, "mt-3")}>
-            Up to {pricing.max_packs_per_claim} packs per payment. Paying by wire? Larger orders make sense there:
-            a SWIFT transfer costs the sender roughly USD 15–40 in bank fees regardless of amount.
+            Up to {pricing.max_packs_per_claim} packs per payment, from any country: SWIFT wire in USD, GBP or EUR
+            internationally, UPI in India. Paying by wire? Larger orders make sense there: a SWIFT transfer costs
+            the sender roughly USD 15–40 in bank fees regardless of amount.
           </p>
           <p className={cn(p, "mb-0")}>
             <span className="font-medium text-ink">How buying works:</span> create an account, open the Airlock

@@ -202,7 +202,7 @@ export function Playground() {
             <span className="font-mono text-sm text-ink">{result.score.toFixed(2)}</span>
             <span className="text-xs text-muted">
               block at 0.75 · flag at 0.40 · {result.latency_ms} ms · {result.content_bytes} bytes
-              {result.credits_remaining !== null && ` · ${result.credits_remaining.toLocaleString("en-IN")} credits left`}
+              {result.credits_remaining !== null && ` · ${result.credits_remaining.toLocaleString("en-US")} credits left`}
             </span>
           </div>
 
