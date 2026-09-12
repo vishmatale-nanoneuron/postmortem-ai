@@ -303,6 +303,7 @@ function FounderDashboard() {
     ["Stats", "#founder-stats"],
     ["Margin", "#founder-margin"],
     ["Funnel", "#founder-funnel"],
+    ["Airlock", "#founder-airlock"],
     ["Signups", "#founder-signups"],
     ["AI runs", "#founder-ai-runs"],
     ["Payment claims", "#founder-claims"],
@@ -376,6 +377,9 @@ function FounderDashboard() {
       </div>
       <div id="founder-funnel" className="scroll-mt-16">
         <ConversionFunnelPanel funnel={summary.conversion_funnel} />
+      </div>
+      <div id="founder-airlock" className="scroll-mt-16">
+        <AirlockBusinessPanel airlock={summary.airlock} waitlist={summary.airlock_waitlist} />
       </div>
       {summary.ai_runs_by_feature.length > 0 && (
         <>
@@ -755,6 +759,51 @@ function UnitEconomicsPanel({ economics }: { economics: FounderSummary["unit_eco
 // one who tries it and never pays, and one who paid once and lapsed are
 // three different problems needing three different fixes, not one blended
 // "conversion rate."
+// Is the main product earning? Sold vs used vs outstanding, in credits,
+// plus real approved revenue per currency. Granted credits (pilots,
+// refunds) are shown but never counted as revenue.
+function AirlockBusinessPanel({
+  airlock,
+  waitlist,
+}: {
+  airlock: FounderSummary["airlock"];
+  waitlist: FounderSummary["airlock_waitlist"];
+}) {
+  const n = (value: number) => value.toLocaleString("en-US");
+  return (
+    <div className="mb-4">
+      <h3 className="mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">Airlock</h3>
+      <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+        {(
+          [
+            [n(airlock.credits_sold_total), "Credits sold"],
+            [n(airlock.credits_used_total), "Credits used, all time"],
+            [n(airlock.credits_used_last_7d), "Credits used, 7 days"],
+            [n(airlock.credits_outstanding), "Prepaid, unspent"],
+            [n(airlock.accounts_with_balance), "Accounts with credits"],
+            [n(airlock.active_keys), "Active API keys"],
+            [n(airlock.credits_granted_total), "Granted (not revenue)"],
+            [`${n(waitlist.total)} / ${n(waitlist.last_7d)}`, "Self-hosted list, total / 7d"],
+          ] as [string, string][]
+        ).map(([value, label]) => (
+          <div key={label} className="rounded-md bg-paper px-3 py-2">
+            <div className="text-lg font-semibold text-ink">{value}</div>
+            <div className="text-xs text-muted">{label}</div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 text-xs text-muted">
+        {airlock.revenue_by_currency.length === 0
+          ? "No approved Airlock pack yet."
+          : "Approved packs: " +
+            airlock.revenue_by_currency
+              .map((r) => `${currencySymbol(r.currency)}${r.amount.toLocaleString("en-US")} (${r.claims} ${r.claims === 1 ? "claim" : "claims"})`)
+              .join(" · ")}
+      </p>
+    </div>
+  );
+}
+
 function ConversionFunnelPanel({ funnel }: { funnel: FounderSummary["conversion_funnel"] }) {
   const pct = (n: number) => (funnel.signups === 0 ? "--" : `${Math.round((n / funnel.signups) * 100)}%`);
   const stages: [string, number, string][] = [

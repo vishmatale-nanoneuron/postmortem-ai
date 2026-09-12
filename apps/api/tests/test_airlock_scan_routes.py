@@ -288,6 +288,10 @@ async def test_unauthenticated_traffic_is_bounded_per_ip_and_paid_traffic_is_not
     # The paying customer at the same address is unaffected.
     paid = await client.post("/v1/airlock/scan", json={"content": BENIGN}, headers=_keyed(key))
     assert paid.status_code == 200, paid.text
+    # And a flood of wrong keys from that address is 429, not an unbounded
+    # stream of 401s each costing a hash lookup.
+    wrong = await client.post("/v1/airlock/scan", json={"content": BENIGN}, headers=_keyed("alk_" + "y" * 43))
+    assert wrong.status_code == 429
 
 
 @pytest.mark.asyncio

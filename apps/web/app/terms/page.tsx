@@ -79,6 +79,13 @@ export default function TermsPage() {
             own explicit choice, reversible at any time from that incident&apos;s settings. Evidence and drafts you
             keep private are never shown to anyone but you.
           </p>
+          <p className={p}>
+            <span className="font-medium text-ink">Airlock verdicts are a signal, not a guarantee.</span> A scan
+            returns allow, flag or block from a published rule set and, if you ask for it, a model&apos;s opinion.
+            It will miss some attacks and flag some ordinary text; the page says so and publishes the only
+            numbers we have. You decide what your agent does with a verdict. Airlock is a control you add to your
+            system, not a substitute for the rest of its security.
+          </p>
         </>,
       )}
 
@@ -93,6 +100,15 @@ export default function TermsPage() {
             withdraw option on that claim, or email directly. There is no automated refund system for manual
             payments -- if something goes wrong with one, email directly and it will be handled personally, not by
             a policy document promising a specific outcome in advance.
+          </p>
+          <p className={p}>
+            <span className="font-medium text-ink">Airlock credits</span> are prepaid, do not expire, and are
+            not transferable between accounts. One credit is spent per scan or egress check and five per deep
+            scan, taken before the engine runs; a call that is refused (no credits, invalid key, oversized input)
+            or that fails with a server error spends nothing, and a deep scan whose model opinion could not be
+            obtained refunds the extra four automatically. Unused credits on a pack bought within the last 14 days
+            are refunded on request by email -- the same personal review as approving the payment. Revoking a key
+            does not affect the balance. Deleting your account erases the balance and the ledger with it.
           </p>
         </>,
       )}

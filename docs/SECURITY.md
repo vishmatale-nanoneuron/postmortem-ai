@@ -2,7 +2,7 @@
 
 What the code actually does, with file references, so a prospective buyer
 (or a future maintainer) can check each claim rather than take it on faith.
-Reviewed against the code on 2026-09-11. This is documentation of the
+Reviewed against the code on 2026-09-13. This is documentation of the
 existing posture, not a change to it. To report a vulnerability, see
 `/.well-known/security.txt`.
 
@@ -90,16 +90,65 @@ in-process counters, so they hold across serverless instances.)
 | Registrations per IP | 5 per hour (captcha available, not enabled in production) |
 | Password-reset requests per IP | 5 per window |
 | AI drafts / extractions per account | hourly cap and 500 per month, taken under an advisory lock so concurrent requests cannot exceed it |
+| Airlock: unauthenticated or invalid-key calls per IP | 60 per hour, then 429 -- a flood of bad keys never becomes a flood of hash lookups |
+| Airlock: authenticated calls | metered by prepaid credits, not rate-limited -- the balance is the bound |
+| Airlock: active API keys per account | 10, checked under an advisory lock |
+| Airlock: payment-details emails per account | 5 per hour |
 
 Circuit breakers per AI provider and the `ai_runs` audit table record
 every model call, success or failure.
 
+## Airlock: the paid guard
+
+Airlock (`apps/api/app/api/v1/airlock.py`, `app/airlock/`,
+`app/cqrs/airlock_billing.py`) is a paid API that scores untrusted text for
+prompt injection and checks outbound calls for credentials and personal
+data. Because customers route content they do not control through it, its
+posture is stricter than the rest of the product's:
+
+- **Authentication.** `X-Airlock-Key` or `Authorization: Bearer alk_...`,
+  or the dashboard session cookie. Keys are 32 random bytes; only their
+  SHA-256 is stored (`airlock_api_keys.key_hash`), the secret is returned
+  once at creation, and a revoked key answers exactly like a wrong one.
+  Both schemes are declared in the OpenAPI document.
+- **Metering cannot double-spend.** One credit per call (five with
+  `"deep": true`) is taken by a single conditional `UPDATE` on a balance
+  row with `CHECK (balance >= 0)`, in the same transaction as the ledger
+  line; Postgres serialises concurrent debits on the row lock. Proven by
+  `tests/test_airlock_billing.py`: fifty concurrent scans against ten
+  credits yield exactly ten 200s and forty 402s. A refused call (401, 402,
+  422, 429) or a 5xx charges nothing.
+- **Content is never stored.** The audit table (`airlock_scan_events`,
+  migration 0031) has a SHA-256, byte count, verdict and rule ids -- no
+  content column, no account column, no IP. It is append-only by two
+  Postgres triggers (row-level `BEFORE UPDATE OR DELETE`, statement-level
+  `BEFORE TRUNCATE`), tested from a separate connection. Attribution lives
+  in the deletable ledger, so account erasure still holds.
+- **No model call by default.** The standard scan is thirty regular
+  expressions over normalised text. A deep scan is opt-in per call, sends
+  that content to Google's Gemini API, can only raise a verdict (its weight
+  is zero unless it says "injection", capped below the strongest single
+  rule), and on any provider failure reports `status: "unavailable"` and
+  refunds the extra credits -- it never silently changes the answer.
+- **Credits are granted in one place.** The founder's `approve_payment_claim`
+  (for a paid pack) or the founder-only manual grant endpoint; both write
+  a ledger line. No client-reachable route can add credits.
+- **Public reads are the only cached responses.** `/v1/airlock/pricing`
+  and `/v1/airlock/stats` (aggregate counts, no content) opt in to a short
+  `Cache-Control`; every other response on the API stays
+  `private, no-store`, pinned by a test.
+
 ## Data handling
 
-- Account deletion is an erasure: incidents, evidence, postmortems and
-  the account's own activity history go in one transaction
-  (`delete_account`, `apps/api/app/api/v1/auth.py`). The privacy policy
-  says so and the code matches it.
+- Account deletion is an erasure: incidents, evidence, postmortems, the
+  account's own activity history, and its Airlock keys, balance and ledger
+  go in one transaction (`delete_account`, `apps/api/app/api/v1/auth.py`,
+  with the Airlock tables cascading from `users`). The privacy policy says
+  so and the code matches it. The append-only Airlock audit rows are not
+  touched, because they never named the account.
+- Payments are UPI or international wire only. There is no card
+  processor; no payment instrument is ever sent to or stored by this
+  service, only the transaction reference the customer submits.
 - Clients can export everything they own as JSON (`GET /v1/postmortems/export`)
   and each postmortem as Markdown.
 - Webhook, PagerDuty and Slack ingestion authenticate by a per-account

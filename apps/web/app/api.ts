@@ -148,6 +148,20 @@ export type FounderSummary = {
     currently_paying: number;
     approved_manual_claims: number;
   };
+  airlock_waitlist: { total: number; last_7d: number };
+  // Whether Airlock is earning -- see cqrs/airlock_billing.py's
+  // handle_airlock_business_stats_query. revenue_by_currency is approved
+  // Airlock pack claims only; credits_granted_total is not revenue.
+  airlock: {
+    credits_sold_total: number;
+    credits_granted_total: number;
+    credits_used_total: number;
+    credits_used_last_7d: number;
+    credits_outstanding: number;
+    active_keys: number;
+    accounts_with_balance: number;
+    revenue_by_currency: { currency: string; amount: number; claims: number }[];
+  };
   recent_users: { id: string; email: string; created_at: number }[];
   recent_ai_runs: {
     id: string;

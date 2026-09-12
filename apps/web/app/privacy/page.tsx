@@ -67,6 +67,15 @@ export default function PrivacyPage() {
             and the postmortems drafted from it. If you submit a manual UPI or wire payment, a transaction
             reference. Nothing else is asked for.
           </p>
+          <p className={p}>
+            <span className="font-medium text-ink">Airlock</span> is different by design: the text you send to{" "}
+            <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">/v1/airlock/scan</code> or{" "}
+            <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">/v1/airlock/egress</code> is
+            scored and then discarded. What is kept is one audit entry per decision -- a SHA-256 of the content,
+            its byte count, the verdict and the rule ids -- with no column for the content and no column for
+            your account. Your credit ledger (which key spent what, when) is kept against your account and deleted
+            with it. API keys are stored as a hash; the key itself is shown to you once and never kept.
+          </p>
         </>,
       )}
 
@@ -76,7 +85,11 @@ export default function PrivacyPage() {
           <h2 className={h2}>What third parties see</h2>
           <p className={p}>
             Your incident evidence is sent to Google (Gemini) to draft a postmortem, and to Anthropic (Claude) only
-            if Gemini&apos;s own call fails and a fallback is configured. Payments are UPI or bank wire made directly
+            if Gemini&apos;s own call fails and a fallback is configured. An Airlock scan sends nothing to any model
+            by default; only a <span className="font-medium text-ink">deep scan</span>, which you request per call
+            with <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">&quot;deep&quot;: true</code>,
+            sends that one piece of content to Google (Gemini) for classification -- and we still keep only the
+            hash. Payments are UPI or bank wire made directly
             to the founder&apos;s account -- there is no card processor, and no payment instrument of yours ever
             reaches our servers, only the transaction reference you submit. Password-reset emails are sent via Resend, which
             sees only the email address and the reset link, nothing about your incidents. The database itself is
@@ -94,6 +107,7 @@ export default function PrivacyPage() {
             <li>Never sell or share your data with advertisers or data brokers -- there is no such relationship to begin with.</li>
             <li>Never expose your email address on a published, publicly-shared postmortem page -- confirmed directly in the API response shape, not just a policy statement.</li>
             <li>Never make an incident public without you explicitly turning that on -- publishing and public visibility are separate, deliberate actions.</li>
+            <li>Never store the content you scan with Airlock, and never send it to a model unless you asked for a deep scan on that specific call -- the audit table has no column that could hold it, which is a stronger promise than a policy.</li>
           </ul>
         </>,
       )}

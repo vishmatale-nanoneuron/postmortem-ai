@@ -324,3 +324,61 @@ async def handle_ledger_query(database: Database, user_id: str, *, limit: int = 
         (user_id, user_id, limit),
     )
     return [LedgerEntry(**row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# The owner's view. Whether Airlock is earning is a question the founder
+# answers from the dashboard, so the numbers live here next to the ledger
+# they come from rather than being re-derived in founder.py.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AirlockBusinessStats:
+    credits_sold_total: int  # reason='purchase' -- paid packs, approved
+    credits_granted_total: int  # grant/refund/adjustment -- not revenue
+    credits_used_total: int
+    credits_used_last_7d: int
+    credits_outstanding: int  # sum of balances: prepaid but not yet spent
+    active_keys: int
+    accounts_with_balance: int
+    revenue_by_currency: list[dict]  # approved Airlock claims: {"currency", "amount", "claims"}
+
+
+SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
+
+
+async def handle_airlock_business_stats_query(database: Database, *, now_ms: int | None = None) -> AirlockBusinessStats:
+    cutoff = (now_ms if now_ms is not None else _now_ms()) - SEVEN_DAYS_MS
+    ledger = await database.fetch_one(
+        """SELECT coalesce(sum(delta) FILTER (WHERE reason = 'purchase'), 0) AS sold,
+                  coalesce(sum(delta) FILTER (WHERE reason IN ('grant', 'refund', 'adjustment') AND delta > 0), 0)
+                    AS granted,
+                  coalesce(-sum(delta) FILTER (WHERE delta < 0), 0) AS used,
+                  coalesce(-sum(delta) FILTER (WHERE delta < 0 AND created_at >= %s), 0) AS used_7d
+           FROM airlock_credit_ledger""",
+        (cutoff,),
+    )
+    balances = await database.fetch_one(
+        "SELECT coalesce(sum(balance), 0) AS outstanding, count(*) FILTER (WHERE balance > 0) AS funded"
+        " FROM airlock_credit_balances"
+    )
+    keys = await database.fetch_one("SELECT count(*) AS n FROM airlock_api_keys WHERE revoked_at IS NULL")
+    revenue = await database.fetch_all(
+        """SELECT currency, sum(amount_inr) AS amount, count(*) AS claims
+           FROM payment_claims WHERE product = 'airlock' AND status = 'approved'
+           GROUP BY currency ORDER BY currency"""
+    )
+    data = ledger or {}
+    return AirlockBusinessStats(
+        credits_sold_total=int(data.get("sold", 0)),
+        credits_granted_total=int(data.get("granted", 0)),
+        credits_used_total=int(data.get("used", 0)),
+        credits_used_last_7d=int(data.get("used_7d", 0)),
+        credits_outstanding=int((balances or {}).get("outstanding", 0)),
+        active_keys=int((keys or {}).get("n", 0)),
+        accounts_with_balance=int((balances or {}).get("funded", 0)),
+        revenue_by_currency=[
+            {"currency": r["currency"], "amount": int(r["amount"]), "claims": int(r["claims"])} for r in revenue
+        ],
+    )
