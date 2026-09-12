@@ -454,3 +454,57 @@ export type EvidenceQualitySummary = {
   drafts_with_any_unsupported_section: number;
   unsupported_by_section: Record<string, number>;
 };
+
+// Airlock's early-access list. The second product has no hosted scanner
+// yet, so this is the only Airlock call the site can make -- deliberately
+// not a "try a scan" endpoint, which would imply an API that isn't running.
+// The backend answers 202 for a new address and for one already on the
+// list, identically; callers must not try to tell them apart.
+export type AirlockWaitlistInput = {
+  email: string;
+  company?: string | null;
+  use_case?: string | null;
+};
+
+export async function joinAirlockWaitlist(input: AirlockWaitlistInput): Promise<{ status: string }> {
+  return request<{ status: string }>("/v1/airlock/waitlist", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+// Airlock's scanner. Free, unauthenticated, bounded per IP -- see
+// apps/api/app/api/v1/airlock.py. This one really does scan: unlike the
+// waitlist, there is a running engine behind it.
+export type AirlockMatch = { rule_id: string; family: string; weight: number; description: string };
+
+export type AirlockScan = {
+  verdict: "allow" | "flag" | "block";
+  score: number;
+  matches: AirlockMatch[];
+  families: string[];
+  signals: Record<string, unknown>;
+  content_sha256: string;
+  content_bytes: number;
+  latency_ms: number;
+};
+
+export async function airlockScan(content: string, source?: string): Promise<AirlockScan> {
+  return request<AirlockScan>("/v1/airlock/scan", {
+    method: "POST",
+    body: JSON.stringify({ content, source: source ?? null }),
+  });
+}
+
+export type AirlockStats = {
+  total: number;
+  blocked: number;
+  flagged: number;
+  allowed: number;
+  last_7d: number;
+  top_rules: { rule: string; count: number }[];
+};
+
+export async function airlockStats(): Promise<AirlockStats> {
+  return request<AirlockStats>("/v1/airlock/stats");
+}

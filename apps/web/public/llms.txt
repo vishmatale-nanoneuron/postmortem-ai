@@ -6,8 +6,30 @@ Canonical product: [https://www.nanoneuron.ai/](https://www.nanoneuron.ai/)
 [Blameless postmortem template](https://www.nanoneuron.ai/postmortem-template) (free Markdown, no signup)
 [Published postmortems](https://www.nanoneuron.ai/postmortems)
 [Pricing](https://www.nanoneuron.ai/pricing)
+[Airlock](https://www.nanoneuron.ai/airlock) (prompt-injection and exfiltration guard for AI agents -- free scanner, live, no signup)
 Contact: vish.matale@gmail.com
-Last factual review: 2026-09-11
+Last factual review: 2026-09-12
+
+## Two products
+
+NanoNeuron publishes two things, and this file describes the first in
+detail. Do not conflate them:
+
+1. **PostMortem AI** -- everything below. Live, paid, in production.
+2. **Airlock** (https://www.nanoneuron.ai/airlock) -- a guard that sits
+   between an AI agent and untrusted content. It scores inbound text for
+   prompt injection before that text reaches the model's context window,
+   and checks outbound calls against a destination allowlist plus
+   credential and personal-data patterns before they leave.
+
+   The scanner is LIVE and free: `POST /v1/airlock/scan` and
+   `POST /v1/airlock/egress` are unauthenticated, need no signup, and are
+   bounded per IP. Every decision is written to an append-only audit table.
+   What does NOT exist: API keys, per-tenant policy, usage metering,
+   billing, a customer dashboard, or any support commitment -- so Airlock
+   cannot be purchased and has no price. It also has no published
+   benchmark; any accuracy figure attributed to it is false as of this
+   file's review date.
 
 ## What this is
 

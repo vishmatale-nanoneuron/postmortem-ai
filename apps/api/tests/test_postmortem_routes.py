@@ -84,8 +84,25 @@ async def context(monkeypatch: pytest.MonkeyPatch):
     database = Database(get_settings())
     await database.open()
 
-    await database.execute("DELETE FROM incident_postmortems WHERE incident_id=%s", (INCIDENT,))
-    await database.execute("DELETE FROM incident_evidence WHERE incident_id=%s", (INCIDENT,))
+    # Every incident this account owns, not just the one fixed id. Tests in
+    # this file create incidents with fresh uuids (an "Activity-logged
+    # incident", the second incident in the RAG test, ...) and
+    # incidents.client_email is a plain column with no FK to users, so
+    # deleting the user below orphans them rather than removing them. On a
+    # long-lived local Postgres they therefore accumulated across runs, and
+    # test_a_published_postmortem_surfaces_as_rag_context_for_a_later_draft
+    # started failing for a reason that had nothing to do with its subject:
+    # RAG returns the most similar PUBLISHED postmortems for the account,
+    # and seven near-identical leftovers from previous runs outranked the
+    # one the fixture had just seeded. CI never saw it because CI gets a
+    # fresh database every run -- the exact shape of bug that hides until
+    # someone iterates locally.
+    #
+    # incident_evidence, incident_postmortems, ai_runs,
+    # postmortem_draft_history and incident_public_updates are all ON DELETE
+    # CASCADE from incidents (verified against the live schema), so this one
+    # statement is enough and cannot leave a dangling child behind.
+    await database.execute("DELETE FROM incidents WHERE client_email=%s", (CLIENT_EMAIL,))
     await database.execute("DELETE FROM incidents WHERE id=%s", (INCIDENT,))
     await database.execute("DELETE FROM users WHERE email=%s", (CLIENT_EMAIL,))
 

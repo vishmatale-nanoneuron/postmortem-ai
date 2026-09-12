@@ -33,4 +33,5 @@ def _clear_rate_limit_tables():
             connection.execute("DELETE FROM registration_attempts")
             connection.execute("DELETE FROM login_attempts")
             connection.execute("DELETE FROM password_reset_attempts")
+            connection.execute("DELETE FROM airlock_waitlist_attempts")
     yield

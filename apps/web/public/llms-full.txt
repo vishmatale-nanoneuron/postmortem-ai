@@ -9,8 +9,9 @@ Canonical product: [https://www.nanoneuron.ai/](https://www.nanoneuron.ai/)
 [GitHub outage demo](https://www.nanoneuron.ai/blog/github-outage-demo) (the tool's own unedited output on a real public incident)
 [Published postmortems](https://www.nanoneuron.ai/postmortems)
 [Pricing](https://www.nanoneuron.ai/pricing)
+[Airlock](https://www.nanoneuron.ai/airlock) (free prompt-injection scanner, live -- see "Airlock" below)
 Contact: vish.matale@gmail.com
-Last factual review: 2026-09-11
+Last factual review: 2026-09-12
 
 This file is the complete reference; llms.txt above is the short index. Every
 claim here is checked against the running code and, where practical, against
@@ -204,6 +205,16 @@ drift apart.
 
 ## REST API surface (all under `/v1`)
 
+Airlock (`/v1/airlock`): `POST /scan` (public, unauthenticated, free;
+scores content for prompt injection and returns verdict, score, matched rule
+ids with their descriptions, and the normalisation signals; per-IP limited),
+`POST /egress` (public; checks an outbound payload and destination, returns
+the payload redacted), `GET /stats` (public; aggregate counts and the
+most-fired rules -- no content, ever), `POST /waitlist` (public; records an
+early-access signup for the hosted version, answers 202 identically whether
+the address is new or already on the list so the response cannot be used to
+enumerate it), `GET /waitlist` (founder-only; the list itself).
+
 Auth (`/v1/auth`): `POST /register`, `POST /login`, `POST /logout`,
 `GET /me`, `PUT /me`, `PATCH /me`, `DELETE /me` (founder account cannot
 self-delete), `POST /password-reset/request`, `POST /password-reset/confirm`,
@@ -363,6 +374,64 @@ Public marketing/docs/published-postmortem pages are meant to be indexed;
 every account-scoped page requires authentication and is not meant to be
 crawled as public data. No API keys, credentials, or account-specific data
 are ever exposed in this file or any public page.
+
+## Airlock (second product)
+
+Airlock is a guard that sits between an AI agent and untrusted content. Two
+directions:
+
+- **Inbound.** Text is normalised first -- Unicode tag-block characters
+  decoded, invisible characters stripped, HTML comments and hidden elements
+  extracted, spaced-out obfuscation collapsed -- then scored against 30
+  weighted rules across 8 attack families (instruction override, role
+  hijack, delimiter break, exfiltration, tool abuse, authority spoof, memory
+  poison, encoding). Scores combine with noisy-OR rather than addition, so
+  several weak signals cannot sum to false certainty. Block at 0.75, flag at
+  0.40.
+- **Outbound.** Destination checked against an allowlist; payload checked
+  against 11 credential patterns (AWS access key and secret, Anthropic,
+  OpenAI, GitHub, Slack, Google, Stripe, private keys, JWTs, bearer tokens)
+  and 7 personal-data patterns (email, E.164 phone, credit card, SSN,
+  Aadhaar, PAN, IBAN), plus a query-string entropy check.
+
+Audit: one append-only entry per decision, holding a SHA-256 of the scanned
+content, its byte count, the verdict and the rules that fired. The raw
+content is never stored, and the public scanner stores no excerpt either.
+Rows carry no account or IP, deliberately: an append-only table cannot take
+part in an account erasure, so it holds nothing about a person to erase.
+
+Append-only is enforced by two Postgres triggers (migration 0031) -- a
+row-level one rejecting UPDATE and DELETE, and a statement-level one
+rejecting TRUNCATE. The second is not redundant: TRUNCATE fires no row-level
+trigger, and was verified to empty the table silently before it was added.
+
+There is no model call and no network request in the decision path, so the
+scanner has no undecided state; a failure is a 5xx carrying no verdict,
+which a caller must treat as block. There is no CSV export endpoint yet --
+`GET /v1/airlock/stats` returns aggregates only.
+
+**Status, stated precisely because it is the thing most likely to be
+misreported.** Two halves, and they differ:
+
+RUNNING NOW -- the detection engine, the egress check and the append-only
+audit log are served from this site's own FastAPI backend at
+`POST /v1/airlock/scan` and `POST /v1/airlock/egress`. Free,
+unauthenticated, no signup, bounded per IP. The playground at
+https://www.nanoneuron.ai/airlock calls them for real.
+
+NOT BUILT -- API keys, per-tenant thresholds and egress allowlists, usage
+metering, billing, a customer dashboard, and any support commitment.
+Airlock therefore cannot be purchased and has no price; the early-access
+list on that page is for the hosted version, not for the scanner.
+
+**On accuracy claims:** the repository contains an 18-case suite written by
+us -- 11 attacks (including payloads hidden in Unicode tag characters, HTML
+comments and spaced text) and 7 benign documents. On the current rules it
+blocks all 11 and scores all 7 benign documents at 0.00. That is a smoke
+test on self-authored cases, not a benchmark, and it must not be reported as
+a precision, recall or accuracy figure. No benchmark has been published. The
+stated next step is seeding the corpus from public injection datasets and
+publishing both the corpus and the results, including the misses.
 
 ## Commercial scope
 
