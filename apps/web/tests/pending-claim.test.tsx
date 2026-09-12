@@ -1,5 +1,5 @@
 // Regression coverage for the withdraw-a-claim flow added this session
-// (apps/web/app/workspace.tsx PendingClaim). The real risk here isn't the
+// (apps/web/app/pending-claim.tsx). The real risk here isn't the
 // UI rendering -- it's that a destructive action (billing.cancelClaim,
 // which server-side soft-cancels a payment claim) must never fire without
 // the user confirming first via window.confirm.
@@ -15,7 +15,7 @@ vi.mock("../app/api", () => ({
 }));
 
 import { billing } from "../app/api";
-import { PendingClaim } from "../app/workspace";
+import { PendingClaim } from "../app/pending-claim";
 
 const claim = {
   id: "claim-1",

@@ -34,6 +34,8 @@ import { auth, type AuthUser } from "./auth";
 import { cn } from "@/lib/utils";
 import { GroundingExample, Hero, HowItWorks, IntegrationLogos, SiteFooter, SiteHeader, WhatThisIsnt } from "./landing";
 import { AirlockHero } from "./airlock/airlock-hero";
+import { AirlockPanel } from "./airlock/airlock-panel";
+import { PendingClaim } from "./pending-claim";
 import { usePolling } from "./use-polling";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -166,6 +168,7 @@ export default function Workspace() {
       >
         {(
           [
+            ["Airlock", "#client-airlock"],
             !user.is_founder && (["Billing", "#client-billing"] as [string, string]),
             ["Integrations", "#client-integrations"],
             ["Webhook", "#client-webhook"],
@@ -190,6 +193,10 @@ export default function Workspace() {
           boundary (which incidents this account may touch, and that
           publishing always requires a subscription) is enforced
           server-side regardless of what renders here. */}
+      {/* The main product's panel sits first: keys, credits, buying, the
+          statement. A visitor who signed up for Airlock should not have to
+          scroll past PostMortem AI to find it. */}
+      <AirlockPanel isFounder={user.is_founder} />
       {!user.has_active_subscription && (
         <SubscribeGate
           hasFreeIncidentAvailable={user.has_free_incident_available}
@@ -423,10 +430,97 @@ function FounderDashboard() {
       <div id="founder-claims" className="scroll-mt-16">
         <PaymentClaimsReview />
       </div>
+      <div id="founder-airlock-grant" className="scroll-mt-16">
+        <AirlockGrantForm />
+      </div>
       <div id="founder-agent-activity" className="scroll-mt-16">
         <AgentActivityPanel />
       </div>
     </Card>
+  );
+}
+
+// Founder-only: credit Airlock scans to an account for anything that is not
+// a payment (a refund credited as scans, a pilot for a prospect, goodwill
+// after an outage). Paid credits come from approving a claim above; this
+// is deliberately a separate form with a mandatory note, and every grant
+// is a ledger line the customer can read in their own statement.
+function AirlockGrantForm() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function grant(form: FormData) {
+    const email = String(form.get("email") ?? "").trim();
+    const credits = Number(form.get("credits") ?? 0);
+    const reason = String(form.get("reason") ?? "grant") as "grant" | "refund" | "adjustment";
+    const note = String(form.get("note") ?? "").trim();
+    if (!email || !Number.isInteger(credits) || credits < 1 || !note) {
+      return setError("Email, a whole number of credits, and a note are all required.");
+    }
+    if (!window.confirm(`Grant ${credits.toLocaleString("en-IN")} Airlock credits to ${email}?\n\nReason: ${reason}\nNote: ${note}`)) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await founderBilling.grantAirlockCredits(email, credits, reason, note);
+      setMessage(`Granted. ${result.email} now has ${result.balance.toLocaleString("en-IN")} credits.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not grant credits.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 border-t border-line pt-4">
+      <h3 className="mb-1 text-sm font-semibold">Grant Airlock credits</h3>
+      <p className="mb-2 text-xs text-muted">
+        For refunds, pilots and goodwill -- not for payments, which are approved above. Lands as a ledger line with
+        your note on it.
+      </p>
+      <form action={grant} className="grid gap-2 sm:grid-cols-[2fr_1fr_1fr]">
+        <div>
+          <label className={fieldLabel} htmlFor="airlock-grant-email">
+            Account email
+          </label>
+          <input id="airlock-grant-email" className={`${fieldInput} mb-0`} name="email" type="email" required />
+        </div>
+        <div>
+          <label className={fieldLabel} htmlFor="airlock-grant-credits">
+            Credits
+          </label>
+          <input id="airlock-grant-credits" className={`${fieldInput} mb-0`} name="credits" type="number" min={1} step={1} required />
+        </div>
+        <div>
+          <label className={fieldLabel} htmlFor="airlock-grant-reason">
+            Reason
+          </label>
+          <select id="airlock-grant-reason" className={`${fieldInput} mb-0`} name="reason" defaultValue="grant">
+            <option value="grant">grant</option>
+            <option value="refund">refund</option>
+            <option value="adjustment">adjustment</option>
+          </select>
+        </div>
+        <div className="sm:col-span-3">
+          <label className={fieldLabel} htmlFor="airlock-grant-note">
+            Note (shown on the customer&apos;s statement)
+          </label>
+          <input id="airlock-grant-note" className={`${fieldInput} mb-0`} name="note" maxLength={200} required />
+        </div>
+        <div className="sm:col-span-3">
+          <Button variant="ink" size="app" disabled={busy} type="submit">
+            {busy ? "Granting..." : "Grant credits"}
+          </Button>
+        </div>
+      </form>
+      {message && <p className="mt-2 text-sm text-accent">{message}</p>}
+      {error && (
+        <p role="status" className="mt-2 text-sm text-red-600">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -786,6 +880,8 @@ function PaymentClaimsReview() {
     reference: string,
     bankVerified: boolean,
     billingPeriod: string,
+    product: string = "postmortem",
+    scanCredits: number | null = null,
   ) {
     // Approving is what actually grants access -- a single accidental
     // click here previously had no safety net at all (this is exactly how
@@ -797,13 +893,19 @@ function PaymentClaimsReview() {
       // State the duration explicitly. An annual claim grants 365 days, and
       // approving one believing it to be the usual 30 is an expensive,
       // silent mistake -- the two claims looked identical here before.
-      const grant = billingPeriod === "annual" ? "a FULL YEAR (365 days)" : "30 days";
+      // An Airlock claim grants scan credits, not time; say which.
+      const grant =
+        product === "airlock"
+          ? `${(scanCredits ?? 0).toLocaleString("en-IN")} Airlock scan credits`
+          : billingPeriod === "annual"
+            ? "a FULL YEAR (365 days) of paid access"
+            : "30 days of paid access";
       const confirmed = bankVerified
         ? window.confirm(
-            `Approve reference "${reference}"?\n\nThis grants ${grant} of paid access.\n\nA real forwarded bank alert already matched this exact reference and amount.`,
+            `Approve reference "${reference}"?\n\nThis grants ${grant}.\n\nA real forwarded bank alert already matched this exact reference and amount.`,
           )
         : window.confirm(
-            `Approve reference "${reference}"?\n\nThis grants ${grant} of paid access.\n\nNo bank alert has matched this yet -- only click OK if you have personally checked your bank/UPI statement and confirmed this exact amount and reference actually arrived.`,
+            `Approve reference "${reference}"?\n\nThis grants ${grant}.\n\nNo bank alert has matched this yet -- only click OK if you have personally checked your bank/UPI statement and confirmed this exact amount and reference actually arrived.`,
           );
       if (!confirmed) return;
     }
@@ -865,7 +967,15 @@ function PaymentClaimsReview() {
                 {claim.amount} via {claim.method === "wire" ? "SWIFT wire" : "UPI"}, ref{" "}
                 <span className="font-mono text-xs">{claim.reference}</span>
                 <span className="text-muted"> ({claim.status})</span>
-                {claim.billing_period === "annual" && (
+                {claim.product === "airlock" && (
+                  <span
+                    className="ml-1.5 rounded-full bg-accent/10 px-1.5 py-0.5 text-xs font-medium text-accent"
+                    title="Approving this grants Airlock scan credits, not a subscription"
+                  >
+                    AIRLOCK · {(claim.scan_credits ?? 0).toLocaleString("en-IN")} scans
+                  </span>
+                )}
+                {claim.product !== "airlock" && claim.billing_period === "annual" && (
                   // Visible before the click, not only in the confirm dialog:
                   // a year-long grant should never be something you discover
                   // after approving.
@@ -887,7 +997,17 @@ function PaymentClaimsReview() {
                   <button
                     className="rounded-md bg-ink px-2 py-1 text-xs font-medium text-paper disabled:opacity-50"
                     disabled={busyId === claim.id}
-                    onClick={() => void act(claim.id, "approve", claim.reference, claim.bank_verified, claim.billing_period)}
+                    onClick={() =>
+                      void act(
+                        claim.id,
+                        "approve",
+                        claim.reference,
+                        claim.bank_verified,
+                        claim.billing_period,
+                        claim.product ?? "postmortem",
+                        claim.scan_credits ?? null,
+                      )
+                    }
                     type="button"
                   >
                     Approve
@@ -1258,85 +1378,6 @@ function CardPayment() {
   );
 }
 
-export function PendingClaim({ claim, onChanged }: { claim: Claim; onChanged: () => void | Promise<void> }) {
-  const [editing, setEditing] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  async function saveReference(form: FormData) {
-    const reference = String(form.get("reference") || "").trim();
-    const validationError = firstError(paymentReferenceSchema, { reference });
-    if (validationError) return setError(validationError);
-    setBusy(true);
-    setError("");
-    try {
-      await billing.updateClaim(claim.id, reference);
-      setEditing(false);
-      await onChanged();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not update reference.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function cancel() {
-    if (!window.confirm(`Withdraw reference "${claim.reference}"? You can submit a new one afterward.`)) return;
-    setBusy(true);
-    setError("");
-    try {
-      await billing.cancelClaim(claim.id);
-      await onChanged();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not cancel claim.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (editing) {
-    return (
-      <form action={saveReference} className="rounded-md bg-paper px-3 py-2">
-        <label className={fieldLabel} htmlFor={`claim-reference-${claim.id}`}>
-          Transaction reference
-        </label>
-        <input
-          id={`claim-reference-${claim.id}`}
-          className={fieldInput}
-          name="reference"
-          defaultValue={claim.reference}
-          required
-        />
-        <div className="flex gap-2">
-          <Button variant="ink" size="app" disabled={busy} type="submit">
-            Save
-          </Button>
-          <Button variant="line" size="app" disabled={busy} type="button" onClick={() => setEditing(false)}>
-            Cancel
-          </Button>
-        </div>
-        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-      </form>
-    );
-  }
-
-  return (
-    <div className="rounded-md bg-paper px-3 py-2 text-sm text-muted">
-      <p>
-        Reference <span className="font-medium text-ink">{claim.reference}</span> submitted, awaiting review.
-      </p>
-      <div className="mt-1.5 flex gap-3">
-        <button className="text-xs underline underline-offset-2" disabled={busy} type="button" onClick={() => setEditing(true)}>
-          Edit
-        </button>
-        <button className="text-xs text-red-600 underline underline-offset-2" disabled={busy} type="button" onClick={() => void cancel()}>
-          Withdraw
-        </button>
-      </div>
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-    </div>
-  );
-}
 
 function UpiPayment() {
   const [upi, setUpi] = useState<UpiPricing | null>(null);

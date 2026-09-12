@@ -10,8 +10,9 @@ import { ScanTheatre } from "./scan-theatre";
 //
 // Same restraint as the rest of the site: the headline states the problem,
 // the demonstration is real engine output, and the two facts a visitor
-// most needs -- it is free, and it is live -- are said in the badge rather
-// than implied. No price, because there is none.
+// most needs -- it is live, and it is paid -- are said in the badge rather
+// than implied. The price itself is on /airlock#pricing, fetched from the
+// backend, so it is stated once.
 export function AirlockHero() {
   return (
     <div className="relative overflow-hidden">
@@ -25,7 +26,7 @@ export function AirlockHero() {
             <AirlockMark size={34} />
             <span className="text-lg font-semibold tracking-tight text-ink">Airlock</span>
             <span className="rounded-full border border-line px-2 py-0.5 text-[10px] tracking-wide text-muted uppercase">
-              Free scanner · live
+              Paid API · live
             </span>
           </div>
           <h1 className="mt-5 animate-in fade-in slide-in-from-bottom-3 text-4xl leading-[1.1] font-semibold tracking-tight text-ink duration-700 delay-100 fill-mode-backwards sm:text-6xl">
@@ -67,7 +68,7 @@ export function AirlockHero() {
             <Link className="underline underline-offset-2" href="/airlock#try-it">
               The live scanner
             </Link>{" "}
-            runs on whatever you paste into it &mdash; free, no signup, nothing stored.
+            runs on whatever you paste into it from your own credits &mdash; nothing stored, no free tier.
           </p>
         </div>
       </div>

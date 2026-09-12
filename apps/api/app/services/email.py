@@ -369,3 +369,97 @@ def send_client_claim_rejected_email(settings: Settings, claim_id: str, to_email
         {"idempotency_key": f"claim-rejected/{claim_id}"},
     )
     logger.info("client_claim_rejected_sent", extra={"claim_id": claim_id, "method": method})
+
+
+# ---------------------------------------------------------------------------
+# Airlock. Same rails, different product: the emails above say "/month" and
+# "your subscription is active", both of which would be false for a pack of
+# scans. Two templates rather than parameterising the subscription ones,
+# because the useful content differs (a pack email should say how many
+# scans; an activation email should say where the API key lives).
+# ---------------------------------------------------------------------------
+
+
+def send_airlock_payment_details_email(
+    settings: Settings,
+    to_email: str,
+    request_id: str,
+    *,
+    method: str,
+    currency: str,
+    amount: int,
+    scan_credits: int,
+    lines: list[tuple[str, str]],
+    upi_link: str | None = None,
+) -> None:
+    """Account details for paying for an Airlock pack. `lines` is the
+    method-specific label/value list (UPI ID and payee, or the wire
+    beneficiary and correspondent rows) assembled by the route from
+    settings; this function never reads bank settings itself. Same
+    idempotency shape as send_upi_payment_details_email."""
+    if not settings.resend_api_key or not settings.resend_email_domain:
+        raise EmailNotConfiguredError("RESEND_API_KEY/RESEND_EMAIL_DOMAIN are not configured")
+
+    symbol = {"INR": "₹", "USD": "$", "GBP": "£", "EUR": "€"}.get(currency, currency + " ")
+    detail_rows = "".join(f"<br>{label}: <code>{value}</code>" for label, value in lines if value)
+    button = (
+        f'<p><a href="{upi_link}" style="display:inline-block;background:#1a1a1a;color:#f7f7f5;'
+        f'padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600">'
+        f"Pay {symbol}{amount} with any UPI app</a></p>"
+        if upi_link
+        else ""
+    )
+    charge_note = (
+        "<p style=\"font-size:13px;color:#555\">Send with the OUR charge code so the full amount arrives; "
+        "a wire that lands short cannot be matched to your claim.</p>"
+        if method == "wire"
+        else ""
+    )
+    resend.api_key = settings.resend_api_key
+    resend.Emails.send(
+        {
+            "from": f"Airlock by NanoNeuron <noreply@{settings.resend_email_domain}>",
+            "to": [to_email],
+            "subject": f"Airlock: payment details for {scan_credits:,} scans",
+            "html": (
+                f"<p>Pay <strong>{symbol}{amount}</strong> ({currency}) for <strong>{scan_credits:,} Airlock scans</strong> "
+                f"via {method.upper()}.</p>"
+                + button
+                + f"<p style=\"font-size:13px;color:#555\">Details{detail_rows}</p>"
+                + charge_note
+                + "<p>Once you've paid, go back to the Airlock section of your dashboard and submit the transaction "
+                "reference. Your credits are added the moment the payment is verified -- usually within the day -- "
+                "and you'll get an email when that happens.</p>"
+            ),
+        },
+        {"idempotency_key": f"airlock-details/{request_id}"},
+    )
+    logger.info("airlock_payment_details_email_sent", extra={"method": method})
+
+
+def send_airlock_credits_approved_email(settings: Settings, claim_id: str, to_email: str, method: str) -> None:
+    """Airlock's counterpart to send_client_claim_approved_email. Fires
+    after the credits are already on the account, so it says what to do
+    next -- mint a key and call the API -- rather than restating the
+    receipt."""
+    if not settings.resend_api_key or not settings.resend_email_domain:
+        raise EmailNotConfiguredError("RESEND_API_KEY/RESEND_EMAIL_DOMAIN are not configured")
+
+    resend.api_key = settings.resend_api_key
+    resend.Emails.send(
+        {
+            "from": f"Airlock by NanoNeuron <noreply@{settings.resend_email_domain}>",
+            "to": [to_email],
+            "subject": "Your Airlock credits are live",
+            "html": (
+                f"<p>Your <strong>{method.upper()}</strong> payment has been verified and your Airlock scan credits "
+                "are on your account now -- nothing else to do.</p>"
+                "<p>To start scanning: open the Airlock section of your dashboard, create an API key (it is shown "
+                "once, so copy it), and call <code>POST /v1/airlock/scan</code> with the key in an "
+                "<code>X-Airlock-Key</code> header. Every response tells you how many credits remain.</p>"
+                "<p>If anything looks wrong with your balance, reply to this email.</p>"
+            ),
+        },
+        {"idempotency_key": f"airlock-approved/{claim_id}"},
+    )
+    logger.info("airlock_credits_approved_sent", extra={"claim_id": claim_id, "method": method})

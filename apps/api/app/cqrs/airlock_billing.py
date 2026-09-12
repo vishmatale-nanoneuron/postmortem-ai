@@ -1,0 +1,326 @@
+"""Command/query split for Airlock's keys and credits (migration 0032).
+
+Three things live here and nowhere else:
+
+- How a key is minted, stored and resolved. The secret is generated once,
+  returned once, and only its SHA-256 is kept; there is no handler that can
+  read a key back, because the table has nothing to read.
+- How a credit is spent. `handle_debit_credit` is the one place a balance
+  goes down, and it is atomic by construction (a conditional UPDATE on the
+  balance row, not a read-then-write) so two scans racing for the last
+  credit cannot both win. Exactly the double-spend that a "check balance,
+  then scan, then decrement" sequence would allow.
+- How credits are granted. `handle_grant_credits` is called from the
+  founder's approve flow and the founder's manual grant, and from nothing a
+  client can reach.
+
+The scanner routes (api/v1/airlock.py) use these and add nothing of their
+own to the money path -- which is the point of the split: a route can
+compute a verdict, but it cannot invent a credit or forget to charge one.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import secrets
+import time
+from dataclasses import dataclass
+
+from ..database import Database, Transaction
+
+KEY_PREFIX = "alk_"
+# 32 random bytes -> 43 url-safe characters. Far beyond brute force, and
+# the reason a fast hash is safe: SHA-256 of a 256-bit secret has no
+# dictionary to be attacked with, unlike a password.
+KEY_SECRET_BYTES = 32
+# Enough to tell keys apart in a list; not enough to guess the rest.
+DISPLAY_PREFIX_CHARS = 12
+
+MAX_ACTIVE_KEYS_PER_USER = 10
+
+# last_used_at is a courtesy ("is this key still in use?"), not an audit
+# field, so it is written at most once a minute per key rather than on every
+# scan -- one fewer write on the hot path.
+LAST_USED_WRITE_INTERVAL_MS = 60 * 1000
+
+
+class InsufficientCredits(Exception):
+    """Raised by handle_debit_credit when the balance is already zero. The
+    route turns it into a 402; nothing else should catch it."""
+
+
+class TooManyKeys(Exception):
+    pass
+
+
+def hash_key(secret: str) -> str:
+    return hashlib.sha256(secret.encode()).hexdigest()
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+# ---------------------------------------------------------------------------
+# Keys
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class IssueApiKeyCommand:
+    user_id: str
+    label: str
+
+
+@dataclass(frozen=True)
+class IssuedApiKey:
+    id: str
+    label: str
+    prefix: str
+    created_at: int
+    # The full key. Present on this dataclass only, returned from
+    # handle_issue_api_key only, and shown to the customer once.
+    secret: str
+
+
+async def handle_issue_api_key(database: Database, command: IssueApiKeyCommand) -> IssuedApiKey:
+    secret = KEY_PREFIX + secrets.token_urlsafe(KEY_SECRET_BYTES)
+    prefix = secret[:DISPLAY_PREFIX_CHARS]
+    now = _now_ms()
+    async with database.transaction() as tx:
+        # The cap is checked under the same per-user advisory lock the
+        # rate limiters use, so a burst of concurrent "create key" requests
+        # cannot each see nine keys and each mint a tenth.
+        await tx.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"{command.user_id}:airlock_keys",))
+        row = await tx.fetch_one(
+            "SELECT count(*) AS n FROM airlock_api_keys WHERE user_id=%s AND revoked_at IS NULL",
+            (command.user_id,),
+        )
+        if row and int(row["n"]) >= MAX_ACTIVE_KEYS_PER_USER:
+            raise TooManyKeys()
+        inserted = await tx.fetch_one(
+            """INSERT INTO airlock_api_keys (user_id, label, prefix, key_hash, created_at)
+               VALUES (%s, %s, %s, %s, %s)
+               RETURNING id::text""",
+            (command.user_id, command.label.strip()[:80], prefix, hash_key(secret), now),
+        )
+    assert inserted is not None
+    return IssuedApiKey(
+        id=inserted["id"], label=command.label.strip()[:80], prefix=prefix, created_at=now, secret=secret
+    )
+
+
+@dataclass(frozen=True)
+class RevokeApiKeyCommand:
+    user_id: str
+    key_id: str
+
+
+async def handle_revoke_api_key(database: Database, command: RevokeApiKeyCommand) -> bool:
+    """True if a key was revoked; False if there was no active key with that
+    id for this user. The user_id in the WHERE is the ownership check --
+    another account's key id is simply "not found", never "forbidden"."""
+    updated = await database.execute(
+        "UPDATE airlock_api_keys SET revoked_at=%s WHERE id=%s AND user_id=%s AND revoked_at IS NULL",
+        (_now_ms(), command.key_id, command.user_id),
+    )
+    return bool(updated)
+
+
+@dataclass(frozen=True)
+class ApiKeySummary:
+    id: str
+    label: str
+    prefix: str
+    created_at: int
+    last_used_at: int | None
+    revoked_at: int | None
+
+
+async def handle_api_keys_query(database: Database, user_id: str) -> list[ApiKeySummary]:
+    rows = await database.fetch_all(
+        """SELECT id::text, label, prefix, created_at, last_used_at, revoked_at
+           FROM airlock_api_keys WHERE user_id=%s ORDER BY created_at DESC LIMIT 50""",
+        (user_id,),
+    )
+    return [ApiKeySummary(**row) for row in rows]
+
+
+@dataclass(frozen=True)
+class ResolvedKey:
+    id: str
+    user_id: str
+
+
+async def resolve_api_key(database: Database, secret: str) -> ResolvedKey | None:
+    """The secret to (key, account) lookup the scanner authenticates with.
+    A revoked key resolves to None exactly like a wrong one; the caller
+    cannot tell which, and should not be able to."""
+    if not secret.startswith(KEY_PREFIX) or len(secret) > 128:
+        return None
+    row = await database.fetch_one(
+        "SELECT id::text, user_id::text, last_used_at FROM airlock_api_keys WHERE key_hash=%s AND revoked_at IS NULL",
+        (hash_key(secret),),
+    )
+    if not row:
+        return None
+    now = _now_ms()
+    last = row["last_used_at"]
+    if last is None or now - int(last) > LAST_USED_WRITE_INTERVAL_MS:
+        await database.execute("UPDATE airlock_api_keys SET last_used_at=%s WHERE id=%s", (now, row["id"]))
+    return ResolvedKey(id=row["id"], user_id=row["user_id"])
+
+
+# ---------------------------------------------------------------------------
+# Credits
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GrantCreditsCommand:
+    user_id: str
+    credits: int
+    reason: str  # 'purchase' | 'grant' | 'refund' | 'adjustment'
+    reference: str | None = None
+
+
+async def handle_grant_credits(database: Database | Transaction, command: GrantCreditsCommand) -> int:
+    """Adds credits and returns the new balance. Accepts a Transaction so the
+    founder's approve flow can grant in the same transaction that marks the
+    claim approved -- a grant with no approved claim, or an approved claim
+    with no grant, are both states this product must never be in."""
+    if command.credits <= 0:
+        raise ValueError("credits must be positive")
+    now = _now_ms()
+    row = await database.fetch_one(
+        """INSERT INTO airlock_credit_balances (user_id, balance, updated_at)
+           VALUES (%s, %s, %s)
+           ON CONFLICT (user_id) DO UPDATE
+             SET balance = airlock_credit_balances.balance + EXCLUDED.balance, updated_at = EXCLUDED.updated_at
+           RETURNING balance""",
+        (command.user_id, command.credits, now),
+    )
+    await database.execute(
+        """INSERT INTO airlock_credit_ledger (user_id, api_key_id, delta, reason, reference, created_at)
+           VALUES (%s, NULL, %s, %s, %s, %s)""",
+        (command.user_id, command.credits, command.reason, command.reference, now),
+    )
+    assert row is not None
+    return int(row["balance"])
+
+
+@dataclass(frozen=True)
+class DebitCreditCommand:
+    user_id: str
+    reason: str  # 'scan' | 'deep_scan' | 'egress'
+    api_key_id: str | None = None
+    # A plain scan is 1; a deep scan is 1 + DEEP_SCAN_EXTRA_CREDITS. Always
+    # taken in one debit so a caller either affords the whole call or none
+    # of it.
+    credits: int = 1
+
+
+async def handle_debit_credit(database: Database, command: DebitCreditCommand) -> int:
+    """Spends `credits` and returns the balance after. Raises
+    InsufficientCredits -- and writes nothing -- when the balance is short.
+
+    The conditional UPDATE is the whole concurrency story: Postgres takes a
+    row lock on the balance row, so concurrent debits for one account
+    serialise, and each one re-evaluates `balance >= 1` against the value
+    the previous one left. There is no window in which two callers both
+    observe 1 and both decrement. The ledger row is written in the same
+    transaction, so a balance can never move without a line explaining it.
+    """
+    if command.credits <= 0:
+        raise ValueError("credits must be positive")
+    now = _now_ms()
+    async with database.transaction() as tx:
+        row = await tx.fetch_one(
+            """UPDATE airlock_credit_balances SET balance = balance - %s, updated_at = %s
+               WHERE user_id = %s AND balance >= %s
+               RETURNING balance""",
+            (command.credits, now, command.user_id, command.credits),
+        )
+        if row is None:
+            raise InsufficientCredits()
+        await tx.execute(
+            """INSERT INTO airlock_credit_ledger (user_id, api_key_id, delta, reason, reference, created_at)
+               VALUES (%s, %s, %s, %s, NULL, %s)""",
+            (command.user_id, command.api_key_id, -command.credits, command.reason, now),
+        )
+        return int(row["balance"])
+
+
+@dataclass(frozen=True)
+class CreditBalance:
+    balance: int
+    purchased_total: int
+    used_total: int
+    used_last_30d: int
+
+
+THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
+
+
+async def handle_credit_balance_query(database: Database, user_id: str, *, now_ms: int | None = None) -> CreditBalance:
+    cutoff = (now_ms if now_ms is not None else _now_ms()) - THIRTY_DAYS_MS
+    balance_row = await database.fetch_one(
+        "SELECT balance FROM airlock_credit_balances WHERE user_id=%s", (user_id,)
+    )
+    # A refund is not a purchase and a refunded charge was not a use: the
+    # deep-scan refund (+4 after a -5 when Gemini was unavailable) nets
+    # against usage, so "used" is what the customer actually consumed and
+    # "purchased" is what they actually bought or were granted. Seen in the
+    # first end-to-end run as "bought 10,004, used 6" for one refunded call.
+    totals = await database.fetch_one(
+        """SELECT coalesce(sum(delta) FILTER (WHERE delta > 0 AND reason <> 'refund'), 0) AS purchased,
+                  coalesce(-sum(delta) FILTER (WHERE delta < 0 OR reason = 'refund'), 0) AS used,
+                  coalesce(-sum(delta) FILTER (WHERE (delta < 0 OR reason = 'refund') AND created_at >= %s), 0)
+                    AS used_30d
+           FROM airlock_credit_ledger WHERE user_id=%s""",
+        (cutoff, user_id),
+    )
+    data = totals or {}
+    return CreditBalance(
+        balance=int(balance_row["balance"]) if balance_row else 0,
+        purchased_total=int(data.get("purchased", 0)),
+        used_total=int(data.get("used", 0)),
+        used_last_30d=int(data.get("used_30d", 0)),
+    )
+
+
+@dataclass(frozen=True)
+class LedgerEntry:
+    delta: int
+    reason: str
+    reference: str | None
+    key_prefix: str | None
+    created_at: int
+
+
+async def handle_ledger_query(database: Database, user_id: str, *, limit: int = 50) -> list[LedgerEntry]:
+    """The statement: purchases, grants and (collapsed per day, per key) the
+    scans that spent them. Individual -1 rows would drown the purchases
+    they sit between, so debits are rolled up into one line per key per
+    day with the day's total in `delta`."""
+    rows = await database.fetch_all(
+        """SELECT * FROM (
+             SELECT l.delta, l.reason, l.reference, k.prefix AS key_prefix, l.created_at
+             FROM airlock_credit_ledger l
+             LEFT JOIN airlock_api_keys k ON k.id = l.api_key_id
+             WHERE l.user_id=%s AND l.delta > 0
+             UNION ALL
+             SELECT sum(l.delta)::int AS delta,
+                    'usage' AS reason,
+                    NULL AS reference,
+                    k.prefix AS key_prefix,
+                    max(l.created_at) AS created_at
+             FROM airlock_credit_ledger l
+             LEFT JOIN airlock_api_keys k ON k.id = l.api_key_id
+             WHERE l.user_id=%s AND l.delta < 0
+             GROUP BY (l.created_at / 86400000), k.prefix
+           ) AS statement
+           ORDER BY created_at DESC LIMIT %s""",
+        (user_id, user_id, limit),
+    )
+    return [LedgerEntry(**row) for row in rows]

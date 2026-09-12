@@ -50,7 +50,8 @@ BillingPeriod = Literal["monthly", "annual"]
 # cqrs/activity.py exists to prevent -- so the read side is defined once here
 # and reused, rather than hand-written per endpoint.
 _CLAIM_COLUMNS = (
-    "id::text, method, currency, amount_inr AS amount, reference, status, created_at, billing_period"
+    "id::text, method, currency, amount_inr AS amount, reference, status, created_at, billing_period,"
+    " product, scan_credits"
 )
 
 RATE_LIMITED_DETAIL = "Too many requests. Try again later."
@@ -319,6 +320,11 @@ class ClaimOut(BaseModel):
     # approve_payment_claim will grant. Defaulted rather than required so a
     # row read back from before migration 0029 still deserialises.
     billing_period: str = "monthly"
+    # 'postmortem' (a subscription period) or 'airlock' (a pack of scans).
+    # Same defaulting reason as billing_period, for migration 0032.
+    product: str = "postmortem"
+    # Only ever set on an Airlock claim: the number of scans approval grants.
+    scan_credits: int | None = None
 
 
 def annual_price(monthly: int, settings: Settings) -> int:
@@ -341,6 +347,9 @@ async def _insert_claim(
     amount: int,
     reference: str,
     billing_period: str = "monthly",
+    *,
+    product: str = "postmortem",
+    scan_credits: int | None = None,
 ) -> ClaimOut:
     # A real UPI/wire transaction reference is unique per transaction --
     # amount and currency are already server-derived (never client input,
@@ -362,14 +371,16 @@ async def _insert_claim(
     now = int(time.time() * 1000)
     row = await database.fetch_one(
         """INSERT INTO payment_claims
-             (user_id, amount_inr, currency, method, reference, status, created_at, billing_period)
-           VALUES (%s, %s, %s, %s, %s, 'pending', %s, %s)
+             (user_id, amount_inr, currency, method, reference, status, created_at, billing_period,
+              product, scan_credits)
+           VALUES (%s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s)
            RETURNING """
         + _CLAIM_COLUMNS,
-        (user.id, amount, currency, method, reference, now, billing_period),
+        (user.id, amount, currency, method, reference, now, billing_period, product, scan_credits),
     )
     assert row is not None
-    await record_claim_event(database, row["id"], "created", user.email, f"{currency} {amount} via {method}")
+    what = f"{scan_credits} Airlock scans" if product == "airlock" else billing_period
+    await record_claim_event(database, row["id"], "created", user.email, f"{currency} {amount} via {method} ({what})")
 
     # Best-effort, never blocks the claim: the claim row above is already
     # committed and is the real record a founder can act on from the
@@ -602,7 +613,8 @@ async def my_upi_claims(
 ) -> list[ClaimOut]:
     rows = await database.fetch_all(
         f"""SELECT {_CLAIM_COLUMNS}
-           FROM payment_claims WHERE user_id=%s AND method='upi' ORDER BY created_at DESC""",
+           FROM payment_claims WHERE user_id=%s AND method='upi' AND product='postmortem'
+           ORDER BY created_at DESC""",
         (user.id,),
     )
     return [ClaimOut(**row) for row in rows]
@@ -805,7 +817,8 @@ async def my_wire_claims(
 ) -> list[ClaimOut]:
     rows = await database.fetch_all(
         f"""SELECT {_CLAIM_COLUMNS}
-           FROM payment_claims WHERE user_id=%s AND method='wire' ORDER BY created_at DESC""",
+           FROM payment_claims WHERE user_id=%s AND method='wire' AND product='postmortem'
+           ORDER BY created_at DESC""",
         (user.id,),
     )
     return [ClaimOut(**row) for row in rows]

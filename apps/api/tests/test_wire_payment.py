@@ -142,6 +142,9 @@ async def test_a_founder_approving_a_wire_claim_grants_access(context) -> None:
         "status": "pending",
         "created_at": claim.json()["created_at"],
         "billing_period": "monthly",
+        # A subscription claim, not an Airlock pack (migration 0032).
+        "product": "postmortem",
+        "scan_credits": None,
     }
     claim_id = claim.json()["id"]
 

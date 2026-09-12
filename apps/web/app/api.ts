@@ -209,6 +209,11 @@ export type Claim = {
   // projection. It matters at approval time: an annual claim grants 365 days,
   // not 30, so the founder UI must say which before the click, not after.
   billing_period: string;
+  // "postmortem" (a subscription) or "airlock" (a pack of scans), and for
+  // the latter how many scans approval grants. Optional because a row read
+  // back from before migration 0032 may lack them.
+  product?: string;
+  scan_credits?: number | null;
 };
 
 export type PaymentClaim = Claim & { user_id: string; email: string; bank_verified: boolean };
@@ -264,6 +269,14 @@ export type PaymentClaimEvent = { event_type: string; actor: string; detail: str
 
 export const founderBilling = {
   paymentClaims: () => request<PaymentClaim[]>("/v1/founder/payment-claims"),
+  // Founder-only Airlock credit grant for everything that is not a
+  // payment: refunds credited as scans, goodwill after an outage, a pilot.
+  // Every grant is a ledger line with the note on it (founder.py).
+  grantAirlockCredits: (email: string, credits: number, reason: "grant" | "refund" | "adjustment", note: string) =>
+    request<{ email: string; credits: number; balance: number }>("/v1/founder/airlock/grant", {
+      method: "POST",
+      body: JSON.stringify({ email, credits, reason, note }),
+    }),
   approveClaim: (claimId: string) =>
     request<PaymentClaim>(`/v1/founder/payment-claims/${claimId}/approve`, { method: "POST" }),
   rejectClaim: (claimId: string) =>
@@ -473,9 +486,11 @@ export async function joinAirlockWaitlist(input: AirlockWaitlistInput): Promise<
   });
 }
 
-// Airlock's scanner. Free, unauthenticated, bounded per IP -- see
-// apps/api/app/api/v1/airlock.py. This one really does scan: unlike the
-// waitlist, there is a running engine behind it.
+// Airlock's scanner. Paid and metered -- see apps/api/app/api/v1/airlock.py.
+// From the browser it authenticates with the session cookie and spends one
+// credit per call from the same balance an API key would; a signed-out
+// visitor gets 401 and an unfunded account gets 402. The playground turns
+// both into a sentence that says what to do next rather than a raw status.
 export type AirlockMatch = { rule_id: string; family: string; weight: number; description: string };
 
 export type AirlockScan = {
@@ -487,14 +502,119 @@ export type AirlockScan = {
   content_sha256: string;
   content_bytes: number;
   latency_ms: number;
+  // Balance after this call; null when the call was not charged (founder).
+  credits_remaining: number | null;
+  // 1, 5 for a deep scan, back to 1 if Gemini was unavailable and the
+  // extra was refunded, 0 for the founder.
+  credits_charged: number;
+  // Only on a deep scan: the model's answer, or status "unavailable".
+  semantic: {
+    status: "ok" | "unavailable";
+    injection: boolean;
+    confidence: number;
+    family: string | null;
+    reason: string;
+    model: string;
+    weight: number;
+  } | null;
 };
 
-export async function airlockScan(content: string, source?: string): Promise<AirlockScan> {
-  return request<AirlockScan>("/v1/airlock/scan", {
-    method: "POST",
-    body: JSON.stringify({ content, source: source ?? null }),
-  });
+export class AirlockScanError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+  }
 }
+
+export async function airlockScan(content: string, source?: string, deep = false): Promise<AirlockScan> {
+  const response = await fetch(`${API_BASE}/v1/airlock/scan`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content, source: source ?? null, deep }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new AirlockScanError(readableDetail(body.detail) ?? `Request failed: ${response.status}`, response.status);
+  }
+  return response.json() as Promise<AirlockScan>;
+}
+
+// Public, price-only. What a pack costs in each currency and which manual
+// rail (UPI for INR, wire otherwise) takes it. Never the payee details.
+export type AirlockPricing = {
+  scans_per_pack: number;
+  max_packs_per_claim: number;
+  credits_per_scan: number;
+  credits_per_deep_scan: number;
+  prices: { currency: string; amount: number; method: string; configured: boolean }[];
+};
+
+export async function airlockPricing(): Promise<AirlockPricing> {
+  return request<AirlockPricing>("/v1/airlock/pricing");
+}
+
+export type AirlockApiKey = {
+  id: string;
+  label: string;
+  prefix: string;
+  created_at: number;
+  last_used_at: number | null;
+  revoked_at: number | null;
+};
+
+// `secret` is present on creation only. The backend keeps a hash; there is
+// no call that returns it again.
+export type AirlockCreatedKey = AirlockApiKey & { secret: string };
+
+export type AirlockLedgerEntry = {
+  delta: number;
+  reason: string;
+  reference: string | null;
+  key_prefix: string | null;
+  created_at: number;
+};
+
+export type AirlockCredits = {
+  balance: number;
+  purchased_total: number;
+  used_total: number;
+  used_last_30d: number;
+  statement: AirlockLedgerEntry[];
+};
+
+export type AirlockCurrency = "INR" | "USD" | "GBP" | "EUR";
+
+export const airlock = {
+  pricing: airlockPricing,
+  keys: () => request<AirlockApiKey[]>("/v1/airlock/keys"),
+  createKey: (label: string) =>
+    request<AirlockCreatedKey>("/v1/airlock/keys", { method: "POST", body: JSON.stringify({ label }) }),
+  revokeKey: async (keyId: string): Promise<void> => {
+    const response = await fetch(`${API_BASE}/v1/airlock/keys/${keyId}`, { method: "DELETE", credentials: "include" });
+    if (!response.ok && response.status !== 204) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(readableDetail(body.detail) ?? `Request failed: ${response.status}`);
+    }
+  },
+  credits: () => request<AirlockCredits>("/v1/airlock/credits"),
+  // The purchase is a payment claim (product='airlock') on the same manual
+  // rails as the subscription. Amount and credit count are server-derived
+  // from currency x packs; the client never states either.
+  submitClaim: (currency: AirlockCurrency, reference: string, packs: number) =>
+    request<Claim>("/v1/airlock/credits/claim", {
+      method: "POST",
+      body: JSON.stringify({ currency, reference, packs }),
+    }),
+  myClaims: () => request<Claim[]>("/v1/airlock/credits/claims"),
+  emailDetails: (currency: AirlockCurrency, packs: number) =>
+    request<{ sent: boolean }>("/v1/airlock/credits/email-details", {
+      method: "POST",
+      body: JSON.stringify({ currency, packs }),
+    }),
+};
 
 export type AirlockStats = {
   total: number;

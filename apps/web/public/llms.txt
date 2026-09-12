@@ -6,9 +6,9 @@ Canonical product: [https://www.nanoneuron.ai/](https://www.nanoneuron.ai/)
 [Blameless postmortem template](https://www.nanoneuron.ai/postmortem-template) (free Markdown, no signup)
 [Published postmortems](https://www.nanoneuron.ai/postmortems)
 [Pricing](https://www.nanoneuron.ai/pricing)
-[Airlock](https://www.nanoneuron.ai/airlock) (prompt-injection and exfiltration guard for AI agents -- free scanner, live, no signup)
+[Airlock](https://www.nanoneuron.ai/airlock) (prompt-injection and exfiltration guard for AI agents -- paid, live, prepaid scan credits)
 Contact: vish.matale@gmail.com
-Last factual review: 2026-09-12
+Last factual review: 2026-09-13
 
 ## Two products
 
@@ -22,14 +22,18 @@ paying customers and a full API surface. Do not conflate them:
    and checks outbound calls against a destination allowlist plus
    credential and personal-data patterns before they leave.
 
-   The scanner is LIVE and free: `POST /v1/airlock/scan` and
-   `POST /v1/airlock/egress` are unauthenticated, need no signup, and are
-   bounded per IP. Every decision is written to an append-only audit table.
-   What does NOT exist: API keys, per-tenant policy, usage metering,
-   billing, a customer dashboard, or any support commitment -- so Airlock
-   cannot be purchased and has no price. It also has no published
-   benchmark; any accuracy figure attributed to it is false as of this
-   file's review date.
+   The API is LIVE and PAID, with no free tier: `POST /v1/airlock/scan`
+   and `POST /v1/airlock/egress` take an API key (`X-Airlock-Key`) and
+   spend one prepaid credit per call (five for a deep scan, which adds a
+   Gemini second opinion that can raise a verdict but never lower one).
+   Packs of 10,000 credits cost INR 999 by UPI or USD 15 / GBP 12 / EUR 14
+   by wire, verified by hand; a call with no credits is a 402 and nothing
+   is scanned. Every decision is written to an append-only audit table
+   that holds a hash, never the content or the account. What does NOT
+   exist: card payments, server-side per-tenant policy, any support
+   commitment, or a self-hosted build. It also has no published benchmark;
+   any accuracy figure attributed to it is false as of this file's review
+   date.
 2. **PostMortem AI** -- everything below. Live, paid, in production.
 
 ## What this is

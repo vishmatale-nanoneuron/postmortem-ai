@@ -3,7 +3,7 @@ import Workspace from "./workspace";
 
 const TITLE = "Airlock and PostMortem AI — NanoNeuron";
 const DESCRIPTION =
-  "Airlock: a free, live prompt-injection and exfiltration guard for AI agents -- scores untrusted content before it reaches the model, checks outbound calls for credentials and PII, keeps an append-only audit log. PostMortem AI: incident postmortems where every claim cites recorded evidence.";
+  "Airlock: a paid, live prompt-injection and exfiltration guard for AI agents -- scores untrusted content before it reaches the model, checks outbound calls for credentials and PII, keeps an append-only audit log, prepaid scan credits and API keys. PostMortem AI: incident postmortems where every claim cites recorded evidence.";
 
 // Homepage-level only. app/layout.tsx keeps the site-wide title template and
 // siteName as they were: those are what search engines have indexed for the

@@ -379,11 +379,11 @@ export function SiteHeader() {
             Docs
           </Link>
           <Link
-            href="/airlock#try-it"
+            href="/airlock#pricing"
             className={cn(buttonVariants({ size: "sm" }), "h-auto px-2.5 py-1.5 text-xs sm:px-3")}
           >
-            <span className="sm:hidden">Scan</span>
-            <span className="hidden sm:inline">Scan text</span>
+            <span className="sm:hidden">Buy</span>
+            <span className="hidden sm:inline">Get a key</span>
           </Link>
         </nav>
       </div>
