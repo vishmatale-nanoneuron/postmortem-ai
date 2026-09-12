@@ -2,7 +2,8 @@ import hmac
 import time
 from dataclasses import dataclass
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, Security, status
+from fastapi.security import APIKeyCookie
 
 from .database import Database
 from .dependencies import get_database
@@ -10,6 +11,17 @@ from .security.tokens import verify_token
 from .settings import Settings, get_settings
 
 SESSION_COOKIE_NAME = "session_token"
+
+# Declared so the OpenAPI document (and /docs) says how session routes are
+# authenticated, rather than leaving it implicit. auto_error=False: the
+# dependencies below decide between 401 and "not signed in, that's fine".
+# The value is still read from the request directly, as before -- this
+# parameter exists for the schema, not for the lookup.
+session_cookie_scheme = APIKeyCookie(
+    name=SESSION_COOKIE_NAME,
+    auto_error=False,
+    description="Session cookie set by POST /v1/auth/login or /register.",
+)
 
 # subscription_status values that mean "the account may use the product."
 # Everything else (including the pre-payment 'none') is treated as inactive
@@ -147,6 +159,7 @@ async def _resolve_user_from_cookie(request: Request, database: Database, settin
 
 async def current_user(
     request: Request,
+    _declared: str | None = Security(session_cookie_scheme),
     database: Database = Depends(get_database),
     settings: Settings = Depends(get_settings),
 ) -> User:

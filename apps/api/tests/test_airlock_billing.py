@@ -336,13 +336,26 @@ async def test_the_openapi_contract_documents_the_paid_api(context):
     assert {"401", "402", "422", "429"} <= set(scan["responses"])
     assert "402" in scan["responses"] and "credits" in scan["responses"]["402"]["description"].lower()
     schemes = schema["components"]["securitySchemes"]
-    header = next(s for s in schemes.values() if s.get("type") == "apiKey")
-    assert header["name"] == "X-Airlock-Key"
-    assert any(s.get("scheme") == "bearer" for s in schemes.values())
-    # The route declares it uses them, so "Authorize" in /docs applies here.
+    by_kind = {(s.get("type"), s.get("in"), s.get("scheme")): s for s in schemes.values()}
+    assert by_kind[("apiKey", "header", None)]["name"] == "X-Airlock-Key"
+    assert ("http", None, "bearer") in by_kind
+    # The session cookie is declared too, so session routes say how they
+    # authenticate instead of leaving it implicit.
+    assert by_kind[("apiKey", "cookie", None)]["name"] == "session_token"
+    # The scan route declares the two key schemes, so "Authorize" in /docs
+    # applies to it; the session routes declare the cookie.
     declared = {name for entry in scan["security"] for name in entry}
-    assert declared == set(schemes) & declared and len(declared) == 2
+    assert len(declared) == 2 and all(schemes[n]["type"] in ("apiKey", "http") for n in declared)
+    keys_route = schema["paths"]["/v1/airlock/keys"]["post"]
+    assert {name for entry in keys_route["security"] for name in entry} == {"APIKeyCookie"}
     assert any(t["name"] == "airlock" for t in schema["tags"])
+    # Clean operationIds for generated clients, and the document metadata a
+    # reviewer or SDK generator needs.
+    assert scan["operationId"] == "scan"
+    assert keys_route["operationId"] == "create_key"
+    assert schema["info"]["contact"]["url"].rstrip("/") == "https://www.nanoneuron.ai"
+    assert schema["info"]["termsOfService"] == "https://www.nanoneuron.ai/terms"
+    assert schema["servers"][0]["url"] == "https://postmortem-ai-api.vercel.app"
 
     # Public reads are cacheable; metered writes are not.
     assert "max-age" in (await client.get("/v1/airlock/pricing")).headers["cache-control"]
@@ -360,3 +373,23 @@ async def test_authenticated_responses_are_still_never_cached(context):
         assert response.status_code == 200, path
         assert response.headers["cache-control"] == "private, no-store, must-revalidate", path
         assert response.headers["vary"] == "Cookie", path
+
+
+@pytest.mark.asyncio
+async def test_every_response_carries_a_request_id_and_timing(context):
+    """Correlation and app-side latency on every response: a customer can
+    quote X-Request-ID from a failed scan and it matches the log line; a
+    supplied id is echoed so their own trace id survives the hop."""
+    client, _database = context
+    fresh = await client.get("/v1/airlock/pricing")
+    assert len(fresh.headers["x-request-id"]) == 32
+    assert fresh.headers["server-timing"].startswith("app;dur=")
+    echoed = await client.get("/v1/airlock/pricing", headers={"X-Request-ID": "trace-abc-123"})
+    assert echoed.headers["x-request-id"] == "trace-abc-123"
+    # Unprintable or oversized ids are replaced, never echoed into logs.
+    junk = await client.get("/v1/airlock/pricing", headers={"X-Request-ID": "x" * 500})
+    assert junk.headers["x-request-id"] != "x" * 500
+    # Large bodies are compressed when the caller accepts it.
+    gz = await client.get("/openapi.json", headers={"Accept-Encoding": "gzip"})
+    assert gz.headers.get("content-encoding") == "gzip"
+    assert gz.status_code == 200 and "paths" in gz.json()
