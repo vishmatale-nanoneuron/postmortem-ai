@@ -447,6 +447,20 @@ double-spend (tested: 50 concurrent scans against 10 credits yield exactly
 10 successes and 40 402s). There is no card processor. The founder's
 own account is the only one not metered.
 
+**API contract.** The OpenAPI document at
+https://postmortem-ai-api.vercel.app/openapi.json (interactive at /docs)
+declares the three authentication schemes (X-Airlock-Key header, Bearer,
+session cookie), documents 401/402/422/429 on the metered routes, carries
+clean operationIds (`scan`, `egress`, `create_key`, `submit_pack_claim`)
+for generated clients, and names the production server. Every response
+carries `X-Request-ID` (a caller-supplied id is echoed) and `Server-Timing`
+(app-side duration); a 500 body includes the same request id. Responses
+over 1 KB are gzip-compressed when accepted. `/v1/airlock/pricing` and
+`/stats` are the only cacheable responses; everything authenticated is
+`private, no-store`. Every 429 carries `Retry-After`. The customer is
+emailed once when the balance first drops below 1,000 credits and once
+when it reaches zero (stateless: sent on the call that crosses the line).
+
 **Geography and language.** The API is global (HTTPS from anywhere, no
 region restriction) and model-agnostic. Payment from any country by SWIFT
 wire in USD/GBP/EUR, or by UPI within India -- the only rails. The 30

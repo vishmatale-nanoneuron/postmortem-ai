@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+// zod v4 probes `Function("")` at import time to decide whether it may JIT
+// its validators. Under this site's Content-Security-Policy (no
+// 'unsafe-eval') the probe throws, zod falls back correctly -- but the
+// browser logs a CSP violation on every page load, which Lighthouse and
+// any security scanner report as an issue. jitless skips the probe; the
+// handful of schemas here do not need a JIT.
+z.config({ jitless: true });
+
 // Mirrors the real backend constraints (apps/api/app/api/v1/postmortems.py's
 // IncidentCreate/EvidenceCreate, apps/api/app/api/v1/auth.py's
 // RegisterRequest/LoginRequest) so a client gets a clear, immediate error

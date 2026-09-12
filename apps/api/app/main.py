@@ -1,10 +1,14 @@
 import logging
+import time
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse, ORJSONResponse
+from fastapi.routing import APIRoute
 
 from .api.v1.airlock import router as airlock_router
 from .api.v1.auth import router as auth_router
@@ -23,9 +27,39 @@ from .settings import get_settings
 logger = logging.getLogger("postmortem_ai")
 
 
+# Correlation. Every response carries X-Request-ID -- the caller's own if
+# they sent one (a customer's trace id), else a fresh uuid -- and the same
+# id is on every log line for that request and in the body of a 500, so
+# "my scan at 14:02 failed" becomes "request 7f3a... failed" and can be
+# found in the platform logs in one search. Vercel also stamps
+# x-vercel-id; that stays as-is alongside.
+REQUEST_ID_HEADER = "X-Request-ID"
+
+
+def _request_id(request: Request) -> str:
+    supplied = (request.headers.get(REQUEST_ID_HEADER) or "").strip()
+    # Bounded and printable: a header is untrusted input and ends up in logs.
+    if supplied and len(supplied) <= 128 and supplied.isprintable():
+        return supplied
+    return uuid.uuid4().hex
+
+
+def _operation_id(route: APIRoute) -> str:
+    """Clean operationIds for generated clients: `scan`, `create_key`,
+    `submit_pack_claim` -- rather than FastAPI's default
+    `scan_v1_airlock_scan_post`, which becomes the method name in every
+    OpenAPI-generated SDK. Names are unique per router because every route
+    function already has a distinct name."""
+    return route.name
+
+
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.exception("Unhandled exception on %s %s", request.method, request.url.path, exc_info=exc)
-    response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    request_id = getattr(request.state, "request_id", None) or _request_id(request)
+    logger.exception(
+        "Unhandled exception on %s %s request_id=%s", request.method, request.url.path, request_id, exc_info=exc
+    )
+    response = JSONResponse(status_code=500, content={"detail": "Internal server error", "request_id": request_id})
+    response.headers[REQUEST_ID_HEADER] = request_id
     # A handler registered for the base Exception class is run by
     # Starlette's ServerErrorMiddleware, which sits OUTSIDE CORSMiddleware
     # -- so CORSMiddleware never gets a chance to add its headers to this
@@ -68,6 +102,27 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="NanoNeuron API",
         version="2026.09.13",
+        # Everything a generated client or a reviewer needs from the
+        # document itself: who to contact, the terms the API is used
+        # under, where it is served, and where the long-form reference is.
+        contact={"name": "NanoNeuron", "url": "https://www.nanoneuron.ai", "email": "vish.matale@gmail.com"},
+        terms_of_service="https://www.nanoneuron.ai/terms",
+        servers=[{"url": "https://postmortem-ai-api.vercel.app", "description": "Production"}],
+        openapi_tags=[
+            {"name": "airlock", "description": "Scan, egress, keys, credits and pricing for the paid guard."},
+            {"name": "auth", "description": "Register, log in, session, account erasure."},
+            {"name": "billing", "description": "UPI and international-wire claims, the only payment rails."},
+            {"name": "founder", "description": "Owner-only: approve claims, grant credits, business metrics."},
+            {"name": "ops", "description": "Health."},
+        ],
+        # orjson: measurably faster JSON encoding than the stdlib for the
+        # dict/list-heavy bodies this API returns (statements, stats, the
+        # OpenAPI document itself), and RFC-correct output for floats.
+        default_response_class=ORJSONResponse,
+        generate_unique_id_function=_operation_id,
+        # Keep the Authorize key across a page reload of /docs, so trying
+        # the API from the browser does not mean re-pasting it every time.
+        swagger_ui_parameters={"persistAuthorization": True, "displayRequestDuration": True},
         summary="Airlock (paid prompt-injection and exfiltration guard for AI agents) and PostMortem AI.",
         description=(
             "Airlock: `POST /v1/airlock/scan` and `POST /v1/airlock/egress` authenticate with an API key in the "
@@ -78,14 +133,11 @@ def create_app() -> FastAPI:
             "The audit log keeps a SHA-256 of what was scanned, never the content.\n\n"
             "PostMortem AI: evidence-grounded incident postmortems. Session-cookie authenticated."
         ),
-        openapi_tags=[
-            {"name": "airlock", "description": "Scan, egress, keys, credits and pricing for the paid guard."},
-            {"name": "auth", "description": "Register, log in, session, account erasure."},
-            {"name": "billing", "description": "UPI and international-wire claims, the only payment rails."},
-            {"name": "founder", "description": "Owner-only: approve claims, grant credits, business metrics."},
-        ],
         lifespan=lifespan,
     )
+    # Outermost first: gzip wraps everything below it. Bodies under 1 KB
+    # are left alone (the headers would cost more than they save).
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -103,7 +155,15 @@ def create_app() -> FastAPI:
         # else this API returns is JSON, where these headers still matter
         # (a browser that got tricked into framing/rendering a JSON response
         # as something else) without the CSP tradeoff.
+        request.state.request_id = _request_id(request)
+        started = time.perf_counter()
         response = await call_next(request)
+        # Correlation id back to the caller, and how long the app spent on
+        # the request (Server-Timing is the standard header browsers show
+        # in their network panel; customers measuring Airlock's latency
+        # get the app-side number separately from their network's).
+        response.headers[REQUEST_ID_HEADER] = request.state.request_id
+        response.headers["Server-Timing"] = f"app;dur={(time.perf_counter() - started) * 1000:.1f}"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -144,7 +204,7 @@ def create_app() -> FastAPI:
     app.include_router(postmortems_router)
     app.include_router(webhooks_router)
 
-    @app.get("/health")
+    @app.get("/health", tags=["ops"], summary="Liveness with a real database round-trip")
     async def health(database: Database = Depends(get_database)) -> JSONResponse:
         # A static {"status": "ok"} would have kept reporting healthy
         # straight through this project's own real db() outage (see

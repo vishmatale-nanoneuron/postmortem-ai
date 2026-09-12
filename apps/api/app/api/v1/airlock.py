@@ -79,6 +79,7 @@ from ...cqrs.airlock_waitlist import (
 from ...database import Database
 from ...dependencies import get_database
 from ...security.rate_limit import (
+    AIRLOCK_SCAN_WINDOW_MS,
     client_ip,
     try_record_action,
     try_record_airlock_scan_attempt,
@@ -87,6 +88,7 @@ from ...security.rate_limit import (
 from ...services.email import (
     EmailNotConfiguredError,
     build_upi_payment_link,
+    send_airlock_balance_email,
     send_airlock_payment_details_email,
 )
 from ...settings import Settings, get_settings
@@ -127,6 +129,49 @@ METERED_RESPONSES = {
 }
 
 NO_CREDITS_DETAIL = "No Airlock credits left. Buy a pack from the Airlock section of your dashboard."
+
+
+def _rate_limited() -> HTTPException:
+    """429 with Retry-After (RFC 9110 §10.2.3): the per-IP window is an hour,
+    and a well-behaved client backs off for exactly that rather than
+    guessing. The value is the window, not the precise remaining time,
+    which would cost a query to compute and reveals nothing useful."""
+    return HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=RATE_LIMITED_DETAIL,
+        headers={"Retry-After": str(AIRLOCK_SCAN_WINDOW_MS // 1000)},
+    )
+
+
+# Balance emails. Stateless on purpose: an email goes out on exactly the
+# call that crosses a threshold (the balance was at or above it before the
+# charge and below it after), so each crossing notifies once with no
+# "already notified" column to keep in sync. Two thresholds: running low,
+# and empty.
+LOW_BALANCE_THRESHOLD = 1_000
+
+
+async def _notify_balance_crossings(
+    database: Database, settings: Settings, principal: "AirlockPrincipal", remaining: int | None, charged: int
+) -> None:
+    if remaining is None or charged <= 0:
+        return
+    before = remaining + charged
+    crossed_low = before >= LOW_BALANCE_THRESHOLD > remaining
+    crossed_empty = remaining == 0
+    if not (crossed_low or crossed_empty):
+        return
+    row = await database.fetch_one("SELECT email FROM users WHERE id=%s", (principal.user_id,))
+    if not row:
+        return
+    try:
+        await run_in_threadpool(
+            send_airlock_balance_email, settings, str(row["email"]), remaining, empty=crossed_empty
+        )
+    except EmailNotConfiguredError:
+        logger.info("airlock_balance_email_skipped", extra={"reason": "email_not_configured"})
+    except Exception:
+        logger.warning("airlock_balance_email_failed", extra={"user_id": principal.user_id}, exc_info=True)
 NOT_AUTHENTICATED_DETAIL = (
     f"Airlock is a paid API. Send your key in the {KEY_HEADER} header, or sign in to use the dashboard."
 )
@@ -167,7 +212,7 @@ async def airlock_principal(
         # misconfigured or malicious client not being able to turn every
         # wrong key into a hash lookup for the whole hour.
         if not await try_record_airlock_scan_attempt(database, client_ip(request)):
-            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
+            raise _rate_limited()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or revoked Airlock key")
 
     user = await _resolve_user_from_cookie(request, database, settings)
@@ -175,7 +220,7 @@ async def airlock_principal(
         return AirlockPrincipal(user_id=user.id, api_key_id=None, is_founder=user.is_founder)
 
     if not await try_record_airlock_scan_attempt(database, client_ip(request)):
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
+        raise _rate_limited()
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=NOT_AUTHENTICATED_DETAIL)
 
 
@@ -353,6 +398,7 @@ async def scan(
     database: Database = Depends(get_database),
     principal: AirlockPrincipal = Depends(airlock_principal),
     model_provider: Callable[[], ModelProvider] = Depends(get_model_provider),
+    settings: Settings = Depends(get_settings),
 ) -> ScanOut:
     """Score untrusted content for prompt injection, before it reaches an
     agent's context window. One credit per call (five with `deep`); 402
@@ -420,6 +466,7 @@ async def scan(
             charged = 1
     latency_ms = int((time.perf_counter() - started) * 1000)
 
+    await _notify_balance_crossings(database, settings, principal, remaining, charged)
     await handle_record_scan(
         database,
         RecordScanCommand(
@@ -455,11 +502,13 @@ async def egress(
     payload: EgressIn,
     database: Database = Depends(get_database),
     principal: AirlockPrincipal = Depends(airlock_principal),
+    settings: Settings = Depends(get_settings),
 ) -> EgressOut:
     """Check an outbound call for credentials and personal data, and its
     destination against an allowlist, before the agent sends it. One
     credit per call."""
     remaining = await _charge(database, principal, "egress")
+    await _notify_balance_crossings(database, settings, principal, remaining, 0 if principal.is_founder else 1)
     started = time.perf_counter()
     verdict = check_egress(
         payload=payload.payload,
@@ -750,7 +799,11 @@ async def email_pack_details(
         database, user.id, "airlock_details_email", MAX_PAYMENT_DETAILS_EMAILS_PER_WINDOW, PAYMENT_DETAILS_EMAIL_WINDOW_MS
     )
     if not allowed:
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=RATE_LIMITED_DETAIL,
+            headers={"Retry-After": str(PAYMENT_DETAILS_EMAIL_WINDOW_MS // 1000)},
+        )
 
     if price.method == "upi":
         lines = [("UPI ID", settings.founder_upi_id), ("Payee name", settings.founder_upi_payee_name)]

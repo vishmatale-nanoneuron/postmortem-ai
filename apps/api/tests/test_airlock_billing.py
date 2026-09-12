@@ -336,13 +336,26 @@ async def test_the_openapi_contract_documents_the_paid_api(context):
     assert {"401", "402", "422", "429"} <= set(scan["responses"])
     assert "402" in scan["responses"] and "credits" in scan["responses"]["402"]["description"].lower()
     schemes = schema["components"]["securitySchemes"]
-    header = next(s for s in schemes.values() if s.get("type") == "apiKey")
-    assert header["name"] == "X-Airlock-Key"
-    assert any(s.get("scheme") == "bearer" for s in schemes.values())
-    # The route declares it uses them, so "Authorize" in /docs applies here.
+    by_kind = {(s.get("type"), s.get("in"), s.get("scheme")): s for s in schemes.values()}
+    assert by_kind[("apiKey", "header", None)]["name"] == "X-Airlock-Key"
+    assert ("http", None, "bearer") in by_kind
+    # The session cookie is declared too, so session routes say how they
+    # authenticate instead of leaving it implicit.
+    assert by_kind[("apiKey", "cookie", None)]["name"] == "session_token"
+    # The scan route declares the two key schemes, so "Authorize" in /docs
+    # applies to it; the session routes declare the cookie.
     declared = {name for entry in scan["security"] for name in entry}
-    assert declared == set(schemes) & declared and len(declared) == 2
+    assert len(declared) == 2 and all(schemes[n]["type"] in ("apiKey", "http") for n in declared)
+    keys_route = schema["paths"]["/v1/airlock/keys"]["post"]
+    assert {name for entry in keys_route["security"] for name in entry} == {"APIKeyCookie"}
     assert any(t["name"] == "airlock" for t in schema["tags"])
+    # Clean operationIds for generated clients, and the document metadata a
+    # reviewer or SDK generator needs.
+    assert scan["operationId"] == "scan"
+    assert keys_route["operationId"] == "create_key"
+    assert schema["info"]["contact"]["url"].rstrip("/") == "https://www.nanoneuron.ai"
+    assert schema["info"]["termsOfService"] == "https://www.nanoneuron.ai/terms"
+    assert schema["servers"][0]["url"] == "https://postmortem-ai-api.vercel.app"
 
     # Public reads are cacheable; metered writes are not.
     assert "max-age" in (await client.get("/v1/airlock/pricing")).headers["cache-control"]
@@ -360,3 +373,95 @@ async def test_authenticated_responses_are_still_never_cached(context):
         assert response.status_code == 200, path
         assert response.headers["cache-control"] == "private, no-store, must-revalidate", path
         assert response.headers["vary"] == "Cookie", path
+
+
+@pytest.mark.asyncio
+async def test_every_response_carries_a_request_id_and_timing(context):
+    """Correlation and app-side latency on every response: a customer can
+    quote X-Request-ID from a failed scan and it matches the log line; a
+    supplied id is echoed so their own trace id survives the hop."""
+    client, _database = context
+    fresh = await client.get("/v1/airlock/pricing")
+    assert len(fresh.headers["x-request-id"]) == 32
+    assert fresh.headers["server-timing"].startswith("app;dur=")
+    echoed = await client.get("/v1/airlock/pricing", headers={"X-Request-ID": "trace-abc-123"})
+    assert echoed.headers["x-request-id"] == "trace-abc-123"
+    # Unprintable or oversized ids are replaced, never echoed into logs.
+    junk = await client.get("/v1/airlock/pricing", headers={"X-Request-ID": "x" * 500})
+    assert junk.headers["x-request-id"] != "x" * 500
+    # Large bodies are compressed when the caller accepts it.
+    gz = await client.get("/openapi.json", headers={"Accept-Encoding": "gzip"})
+    assert gz.headers.get("content-encoding") == "gzip"
+    assert gz.status_code == 200 and "paths" in gz.json()
+
+
+@pytest.mark.asyncio
+async def test_a_rate_limited_response_says_when_to_retry(context):
+    client, _database = context
+    from app.security.rate_limit import MAX_AIRLOCK_SCANS_PER_IP
+
+    client.cookies.clear()
+    for _ in range(MAX_AIRLOCK_SCANS_PER_IP):
+        await client.post("/v1/airlock/scan", json={"content": BENIGN})
+    limited = await client.post("/v1/airlock/scan", json={"content": BENIGN})
+    assert limited.status_code == 429
+    assert limited.headers["retry-after"] == "3600"
+
+
+@pytest.mark.asyncio
+async def test_the_customer_is_emailed_when_the_balance_runs_low_and_when_it_empties(context, monkeypatch):
+    """Exactly one email per crossing, on the call that crosses: the low
+    mark once (not on every call under it) and empty once. Proved by
+    counting sends through a fake, with the balance driven across both
+    lines by real charges."""
+    client, database = context
+    import app.api.v1.airlock as airlock_module
+    from app.airlock.semantic import DEEP_SCAN_EXTRA_CREDITS
+    from app.cqrs.airlock_billing import GrantCreditsCommand, handle_grant_credits
+
+    sent: list[tuple[str, int, bool]] = []
+    monkeypatch.setattr(
+        airlock_module,
+        "send_airlock_balance_email",
+        lambda settings, to, remaining, *, empty: sent.append((to, remaining, empty)),
+    )
+    user_id = await _sign_in_as(client, CUSTOMER_EMAIL)
+    # 1,003 credits: three plain scans reach 1,000 (not yet below), the
+    # fourth crosses to 999 -> one "low" email. Then drain to zero.
+    await handle_grant_credits(
+        database, GrantCreditsCommand(user_id=user_id, credits=1_003, reason="grant", reference="t")
+    )
+    for _ in range(3):
+        assert (await client.post("/v1/airlock/scan", json={"content": BENIGN})).status_code == 200
+    assert sent == []
+    assert (await client.post("/v1/airlock/scan", json={"content": BENIGN})).status_code == 200
+    assert sent == [(CUSTOMER_EMAIL, 999, False)]
+    # Further calls under the line do not repeat the low email.
+    assert (await client.post("/v1/airlock/scan", json={"content": BENIGN})).status_code == 200
+    assert len(sent) == 1
+
+    # Drain: a fresh account with exactly 1 + extra credits, one deep scan
+    # (charged 1 + extra with the model answering) empties it -> one
+    # "empty" email; the next call is 402 and sends nothing.
+    sent.clear()
+    await _sign_in_as(client, OTHER_EMAIL)
+    other = (await client.get("/v1/auth/me")).json()["id"]
+    await handle_grant_credits(
+        database, GrantCreditsCommand(user_id=other, credits=1 + DEEP_SCAN_EXTRA_CREDITS, reason="grant", reference="t")
+    )
+    from app.api.v1.airlock import get_model_provider
+
+    class Fake:
+        model_name = "fake"
+
+        async def complete(self, request):
+            from app.ai.provider import ModelResponse
+
+            return ModelResponse(text='{"injection": false, "confidence": 0.1, "family": null, "reason": "x"}')
+
+    client._transport.app.dependency_overrides[get_model_provider] = lambda: (lambda: Fake())  # type: ignore[attr-defined]
+    deep = await client.post("/v1/airlock/scan", json={"content": BENIGN, "deep": True})
+    assert deep.status_code == 200 and deep.json()["credits_remaining"] == 0
+    assert sent == [(OTHER_EMAIL, 0, True)]
+    assert (await client.post("/v1/airlock/scan", json={"content": BENIGN})).status_code == 402
+    assert len(sent) == 1
