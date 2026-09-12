@@ -199,3 +199,99 @@ def test_rule_ids_are_unique_and_families_are_the_eight_the_page_names() -> None
         "memory_poison",
         "encoding",
     }
+
+
+# ---------------------------------------------------------------------------
+# Defects found by auditing the engine's own output, each pinned so it cannot
+# come back. These are not hypotheticals -- every one was reproduced first.
+# ---------------------------------------------------------------------------
+
+
+def test_structural_signals_alone_can_never_produce_an_unexplainable_block() -> None:
+    """Reproduced before it was fixed: a document carrying a unicode tag
+    payload, spaced-out text and white-on-white HTML scored exactly 1.00 and
+    blocked with an EMPTY rule list, because the structural bonuses were
+    added on top of the noisy-OR instead of joining it.
+
+    Two things were wrong. A block with no rule cannot be explained in an
+    audit log, which is the part of this product people buy. And 1.00 is
+    certainty -- higher than the strongest single unambiguous rule -- from
+    three circumstantial signals with no instruction anywhere in the text.
+    """
+    hidden = "".join(chr(0xE0000 + ord(character)) for character in "hello")
+    probe = "Quarterly report." + hidden + " a b c d e f g h i j k l " + '<div style="color:#ffffff">x</div>'
+
+    detection = DETECTOR.scan(probe)
+    assert detection.matches == [], "this probe is only meaningful while no rule matches it"
+    # Suspicious enough to look at, not certain enough to block.
+    assert detection.verdict == "flag"
+    assert detection.score < 0.75
+
+    # The invariant behind it, stated generally: a block always has a reason.
+    assert detection.verdict != "block" or detection.matches
+
+
+def test_no_combination_of_signals_outranks_the_strongest_single_rule() -> None:
+    """Noisy-OR's actual promise: weak evidence accumulates toward certainty
+    without ever manufacturing it. If any purely-structural score reached
+    the strongest rule's weight, the aggregate would be summing again."""
+    strongest = max(rule.weight for rule in RULES)
+    hidden = "".join(chr(0xE0000 + ord(character)) for character in "hello")
+    probe = "Report." + hidden + " a b c d e f g h i j k l " + '<div style="color:#ffffff">x</div>'
+    assert DETECTOR.scan(probe).score < strongest
+
+
+def test_one_high_sensitivity_identifier_is_surfaced_even_to_an_allowed_destination() -> None:
+    """Scoring used to be on the TOTAL count of personal data only, so four
+    credit-card numbers scored 0.00 and passed exactly like four email
+    addresses. Type matters independently of volume."""
+    allowlist = ["api.stripe.com"]
+    destination = "https://api.stripe.com/v1/charges"
+
+    ordinary = check_egress(payload="email=alice@acme.com", destination=destination, allowlist=allowlist)
+    assert ordinary.verdict == "allow", "a single email address in an outbound call is ordinary"
+
+    card = check_egress(payload="card=4111111111111111", destination=destination, allowlist=allowlist)
+    assert card.verdict == "flag"
+    assert "credit_card" in card.pii_found
+    # Flag, not block, deliberately: a payments integration really does send
+    # one card to its processor, and a guard that blocks that gets disabled.
+    assert card.verdict != "block"
+
+    export = check_egress(
+        payload="a=4111111111111111&b=4012888888881881&c=5105105105105100",
+        destination=destination,
+        allowlist=allowlist,
+    )
+    assert export.verdict == "block", "three at once is an export, not an integration"
+
+
+def test_an_empty_allowlist_means_no_destination_check_at_all() -> None:
+    """Not a bug, but the sharpest edge in the egress API: with no allowlist
+    configured, ANY destination passes the destination test -- only the
+    payload is examined. Pinned so the default can never change silently,
+    because a caller who omits the allowlist is getting half a guard."""
+    verdict = check_egress(payload="amount=1", destination="https://paste.example.net/upload", allowlist=[])
+    assert verdict.verdict == "allow"
+    assert verdict.reasons == []
+
+    # The same call, once a destination policy exists.
+    guarded = check_egress(
+        payload="amount=1", destination="https://paste.example.net/upload", allowlist=["api.stripe.com"]
+    )
+    assert guarded.verdict == "block"
+
+
+def test_the_allowlist_is_not_fooled_by_lookalike_hosts() -> None:
+    """Host matching is the whole destination control, so its bypasses are
+    worth pinning explicitly rather than trusting urlparse by reputation."""
+    allowlist = ["api.stripe.com"]
+    for destination in (
+        "https://evilapi.stripe.com/x",  # prefix lookalike
+        "https://api.stripe.com.evil.net/x",  # suffix lookalike
+        "https://api.stripe.com@evil.net/x",  # userinfo, real host is evil.net
+    ):
+        assert check_egress(payload="a=1", destination=destination, allowlist=allowlist).verdict == "block", destination
+
+    for destination in ("https://api.stripe.com/x", "https://eu.api.stripe.com/x", "https://API.STRIPE.COM/x"):
+        assert check_egress(payload="a=1", destination=destination, allowlist=allowlist).verdict == "allow", destination

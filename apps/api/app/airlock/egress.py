@@ -40,6 +40,14 @@ PII_PATTERNS = [
     ("iban", r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b"),
 ]
 
+# Not all personal data is equally bad to leak, and the original scoring
+# treated it as if it were: the only thresholds were on the TOTAL count, so
+# four credit-card numbers left an agent with score 0.00 and verdict
+# "allow", exactly like four email addresses in a mailing list. An email in
+# an outbound payload is ordinary; a card number, SSN, Aadhaar, PAN or IBAN
+# is not ordinary at any count. These are scored separately below.
+HIGH_SENSITIVITY_PII = frozenset({"credit_card", "ssn", "aadhaar", "pan_in", "iban"})
+
 _SECRETS = [(n, re.compile(p)) for n, p in SECRET_PATTERNS]
 _PII = [(n, re.compile(p)) for n, p in PII_PATTERNS]
 
@@ -107,12 +115,30 @@ def check_egress(
         if hits:
             pii[name] = hits
     total_pii = sum(pii.values())
+    # Volume, regardless of type: a big enough pile of anything personal is
+    # a bulk export.
     if total_pii >= 20:
         score = max(score, 0.80)
         reasons.append(f"bulk PII in payload ({total_pii} values)")
     elif total_pii >= 5:
         score = max(score, 0.50)
         reasons.append(f"PII in payload ({total_pii} values)")
+
+    # Sensitivity, regardless of volume. One card number leaving is worth
+    # surfacing even to an allowlisted destination -- the allowlist answers
+    # "where", never "what", which is the same reasoning that blocks an AWS
+    # key to an allowlisted host. Deliberately a flag rather than a block at
+    # low counts: a payments integration really does send a card to its
+    # processor, and a guard that blocks that outright gets switched off.
+    # Several of them at once is no longer an integration, it is an export.
+    sensitive = {name: count for name, count in pii.items() if name in HIGH_SENSITIVITY_PII}
+    sensitive_total = sum(sensitive.values())
+    if sensitive_total >= 3:
+        score = max(score, 0.80)
+        reasons.append(f"multiple high-sensitivity identifiers in payload: {', '.join(sorted(sensitive))}")
+    elif sensitive_total >= 1:
+        score = max(score, 0.50)
+        reasons.append(f"high-sensitivity identifier in payload: {', '.join(sorted(sensitive))}")
 
     verdict = "allow"
     if score >= 0.75:

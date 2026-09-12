@@ -169,9 +169,22 @@ class EgressOut(BaseModel):
     secrets_found: list[str]
     pii_found: dict
     destination: str | None
-    # The payload with credential material replaced. Returned so a caller
-    # can see exactly what would have been safe to send.
-    redacted: str
+    # False when no allowlist was supplied, in which case ANY destination
+    # passes and only the payload was examined. Returned explicitly because
+    # the alternative is a caller believing they have a destination control
+    # they never configured -- the failure mode of a security default that
+    # is silently permissive.
+    destination_checked: bool
+    # The payload with credential material and personal data replaced, so a
+    # caller can see exactly what would have been safe to send.
+    #
+    # None when there was nothing to redact. It must be Optional: the engine
+    # returns None for a clean payload, and typing it `str` made every
+    # CLEAN egress call fail response validation with a 500 -- the one path
+    # most likely to be the common case in production, and the one every
+    # test missed because they all carried a secret. Found by auditing, not
+    # by a user hitting it.
+    redacted: str | None
 
 
 @router.post("/scan", response_model=ScanOut)
@@ -259,6 +272,7 @@ async def egress(payload: EgressIn, request: Request, database: Database = Depen
         secrets_found=list(verdict.secrets_found),
         pii_found=dict(verdict.pii_found or {}),
         destination=verdict.destination,
+        destination_checked=bool(payload.allowlist),
         redacted=verdict.redacted,
     )
 

@@ -146,6 +146,9 @@ async def test_egress_blocks_a_leaking_call_and_returns_it_redacted(context):
     # payload carried a key, and a caller fixing only one is still leaking.
     assert len(body["reasons"]) == 2
 
+    # An allowlist was supplied, so the destination really was checked.
+    assert body["destination_checked"] is True
+
     # The egress decision is audited too, under its own kind.
     recorded = await database.fetch_one(
         "SELECT kind, verdict FROM airlock_scan_events WHERE kind='egress' ORDER BY created_at DESC LIMIT 1"
@@ -191,3 +194,47 @@ async def test_public_stats_are_aggregate_only(context):
     # Rule ids and counts only. Nothing here can reassemble a document.
     for entry in body["top_rules"]:
         assert set(entry) == {"rule", "count"}
+
+
+@pytest.mark.asyncio
+async def test_egress_says_so_when_no_destination_policy_was_supplied(context):
+    """Without an allowlist, any destination passes and only the payload is
+    examined. That is a defensible default, but a caller must be able to
+    tell it apart from "your destination was checked and was fine" -- so the
+    response says which one happened."""
+    client, _database = context
+    response = await client.post(
+        "/v1/airlock/egress",
+        json={"payload": "amount=1", "destination": "https://paste.example.net/upload", "allowlist": []},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["verdict"] == "allow"
+    assert body["destination_checked"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_clean_outbound_call_returns_200_not_a_500(context):
+    """The happy path, which every other egress test missed because they all
+    carried a secret. check_egress returns redacted=None when there is
+    nothing to redact, and EgressOut typed that field `str` -- so the most
+    common call in production (nothing wrong with it) failed response
+    validation and returned 500. A guard that errors on clean traffic is
+    worse than no guard: it fails closed on exactly the requests that should
+    sail through."""
+    client, _database = context
+    response = await client.post(
+        "/v1/airlock/egress",
+        json={
+            "payload": "amount=1000&currency=inr",
+            "destination": "https://api.stripe.com/v1/charges",
+            "allowlist": ["api.stripe.com"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["verdict"] == "allow"
+    assert body["score"] == 0.0
+    assert body["secrets_found"] == []
+    assert body["redacted"] is None
+    assert body["destination_checked"] is True

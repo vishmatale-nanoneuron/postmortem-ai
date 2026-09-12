@@ -189,33 +189,52 @@ class Detector:
         if not matches and not signals:
             return 0.0
 
-        product = 1.0
-        for m in matches:
-            product *= 1.0 - m.weight
-        score = 1.0 - product
+        # Everything -- rule weights, the multi-family tell, and the
+        # hidden-content signals -- goes through ONE noisy-OR. Nothing is
+        # added.
+        #
+        # The structural signals used to be additive bonuses on top of the
+        # noisy-OR, and that was a real defect, not a stylistic choice: a
+        # document carrying a unicode tag payload (+0.45), spaced-out text
+        # (+0.30) and white-on-white HTML (+0.25) reached exactly 1.00 and
+        # was blocked with `matched_rules: []`. Two things wrong with that.
+        # A block nobody can explain is unusable in an audit log, which is
+        # the part of this product people actually buy. And 1.00 means
+        # certainty -- more than the strongest single unambiguous rule
+        # (EX-002, a templated-URL markdown exfil, at 0.90) -- reached by
+        # three circumstantial signals with no instruction found anywhere in
+        # the text. Noisy-OR gives the behaviour the product claims: those
+        # three now reach 0.71, which is a flag (look at this) rather than a
+        # block (certain), and any real rule firing alongside them still
+        # pushes it over.
+        terms: list[float] = [m.weight for m in matches]
 
         # Distinct attack families in one document is a strong tell. Benign
         # text occasionally trips one family; it rarely trips three.
         families = {m.family for m in matches}
         if len(families) >= 3:
-            score = min(1.0, score + 0.15)
+            terms.append(0.15)
         elif len(families) == 2:
-            score = min(1.0, score + 0.07)
+            terms.append(0.07)
 
         # Hidden-content signals. These have almost no benign explanation in
-        # a document being fed to an agent.
+        # a document being fed to an agent, so they are weighted heavily --
+        # but as evidence, not as proof.
         if "unicode_tag_payload" in signals:
-            score = min(1.0, score + 0.45)
+            terms.append(0.45)
         if signals.get("white_on_white"):
-            score = min(1.0, score + 0.25)
+            terms.append(0.25)
         if "hidden_html" in signals:
-            score = min(1.0, score + 0.20)
+            terms.append(0.20)
         if "invisible_chars" in signals:
-            score = min(1.0, score + 0.10)
+            terms.append(0.10)
         if "spaced_obfuscation" in signals:
-            score = min(1.0, score + 0.30)
+            terms.append(0.30)
 
-        return min(1.0, score)
+        product = 1.0
+        for weight in terms:
+            product *= 1.0 - weight
+        return min(1.0, 1.0 - product)
 
 
 def sanitize(text: str, detection: Detection) -> str:

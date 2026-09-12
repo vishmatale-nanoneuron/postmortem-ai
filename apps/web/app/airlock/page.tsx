@@ -159,6 +159,13 @@ export default function AirlockPage() {
             Aadhaar, PAN, IBAN), plus an entropy check on query strings &mdash; the shape a key takes when someone
             hides it in a URL.
           </p>
+          <p className={p}>
+            Personal data is weighted by kind, not just counted. One email address in an outbound call is ordinary
+            and passes; one card number, SSN, Aadhaar, PAN or IBAN is flagged even to an allowed destination, and
+            three at once is blocked &mdash; that is an export, not an integration. The allowlist answers{" "}
+            <em>where</em>, never <em>what</em>, which is the same reason an AWS key is blocked on its way to a
+            destination you approved.
+          </p>
         </Section>
 
         <Section>
