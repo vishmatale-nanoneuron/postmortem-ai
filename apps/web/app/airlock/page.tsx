@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { SiteFooter, SiteHeader } from "../landing";
 import { AirlockMark } from "./airlock-mark";
@@ -32,7 +33,11 @@ const DESCRIPTION =
   "A guard that sits between an AI agent and untrusted content: scores inbound text for prompt injection before it reaches the context window, and checks outbound calls for credentials and PII before they leave. Free scanner, no signup. Append-only audit log.";
 
 export const metadata: Metadata = {
-  title: "Airlock — prompt injection guard for AI agents",
+  // `absolute`: app/layout.tsx applies a "%s — PostMortem AI" template to
+  // every title, which on this page produced "Airlock — ... — PostMortem
+  // AI" in the tab and in search results. The main product's page carries
+  // its own name and nothing else.
+  title: { absolute: "Airlock — prompt injection guard for AI agents" },
   description: DESCRIPTION,
   robots: { index: true, follow: true },
   alternates: { canonical: "/airlock" },
@@ -79,6 +84,96 @@ const FAMILIES: { name: string; what: string }[] = [
   { name: "Encoding", what: "Base64, rot13 and chained decode-then-obey instructions." },
 ];
 
+// Concrete, not "any AI application". Each is a shape someone has actually
+// described wanting to put this in front of; the guard column says which
+// direction matters most for that shape.
+const AGENT_SHAPES: { name: string; reads: string; guard: string }[] = [
+  {
+    name: "Support agent",
+    reads: "Customer tickets and the attachments on them, then calls refund, credit or account tools.",
+    guard: "Inbound on every ticket; outbound on every tool call that moves money or data.",
+  },
+  {
+    name: "Coding agent",
+    reads: "Issues, pull-request comments, READMEs from dependencies it did not choose.",
+    guard: "Inbound on anything fetched from a repository it does not own.",
+  },
+  {
+    name: "Research / browsing agent",
+    reads: "Whatever page a search returned, including the parts a browser would never render.",
+    guard: "Inbound on every fetched page, with the hidden-text normalisation doing most of the work.",
+  },
+  {
+    name: "Email / inbox agent",
+    reads: "Mail from anyone, with the authority to reply, forward and schedule.",
+    guard: "Outbound on every send: the destination allowlist and the credential check.",
+  },
+];
+
+// The endpoint that is actually live, called the way a first integration
+// would call it. Plain strings so a copy-paste from the page works without
+// editing.
+const CURL_SNIPPET = `curl -s https://postmortem-ai-api.vercel.app/v1/airlock/scan \\
+  -H 'content-type: application/json' \\
+  -d '{"content": "<the untrusted text>", "source": "support_ticket"}'
+
+# -> {"verdict": "block", "score": 0.8, "matches": [{"rule_id": "IO-001", ...}], ...}`;
+
+const PYTHON_SNIPPET = `import requests
+
+AIRLOCK = "https://postmortem-ai-api.vercel.app/v1/airlock"
+
+def guard(text: str, source: str) -> str:
+    r = requests.post(f"{AIRLOCK}/scan", json={"content": text, "source": source}, timeout=5)
+    if r.status_code != 200:
+        return "block"          # a guard that cannot answer is a block, not a pass
+    return r.json()["verdict"]  # "allow" | "flag" | "block"
+
+for doc in documents:
+    if guard(doc.text, "document") == "block":
+        continue                # never reaches the model's context
+    agent.ingest(doc)`;
+
+// Answered the way the rest of the page answers things: with what is true
+// of the code, and a plain "not yet" where that is the answer. Mirrored in
+// FAQPage structured data so the same answers reach search engines.
+const FAQ: { q: string; a: string }[] = [
+  {
+    q: "Does it call a model to decide?",
+    a: "No. The decision path is 30 regular expressions over normalised text and nothing else \u2014 no model, no network. That is why a scan takes milliseconds and why there is no \u201cundecided\u201d state to fail open from.",
+  },
+  {
+    q: "Do you store what I scan?",
+    a: "No. The audit row holds a SHA-256 of the content, its byte count, the verdict and the rule ids. There is no column for the content, and the public scanner stores no excerpt either.",
+  },
+  {
+    q: "What does \u201cflag\u201d mean?",
+    a: "Score between 0.40 and 0.75: suspicious enough that a person should look, not certain enough to block outright. Hidden-content signals with no matching instruction land here on purpose.",
+  },
+  {
+    q: "How accurate is it?",
+    a: "We publish the only number we have and say exactly what it is: a 43-case corpus we wrote ourselves, every rule exercised, no false alarms on 13 ordinary documents. That is a smoke test. A benchmark on public injection datasets is the next thing to build, and it will be published with the misses.",
+  },
+  {
+    q: "Can I buy it?",
+    a: "Not yet. The scanner is free. The hosted version \u2014 your own API key, thresholds, allowlist and exportable log \u2014 is what the early-access list is for, and it has no price until it exists.",
+  },
+  {
+    q: "What happens if the scanner is down?",
+    a: "You get a non-200 with no verdict. Treat it as block. A security check that defaults to \u201callow\u201d when it breaks is not a security check.",
+  },
+];
+
+const FAQ_STRUCTURED_DATA = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: FAQ.map((item) => ({
+    "@type": "Question",
+    name: item.q,
+    acceptedAnswer: { "@type": "Answer", text: item.a },
+  })),
+};
+
 function Section({
   children,
   className,
@@ -103,6 +198,11 @@ export default function AirlockPage() {
         // Static, hardcoded JSON, no user input -- safe despite dangerouslySetInnerHTML.
         dangerouslySetInnerHTML={{ __html: JSON.stringify(STRUCTURED_DATA) }}
       />
+      <script
+        type="application/ld+json"
+        // Static, hardcoded JSON, no user input -- safe despite dangerouslySetInnerHTML.
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(FAQ_STRUCTURED_DATA) }}
+      />
       <SiteHeader />
       <main className="mx-auto max-w-2xl px-4 py-10">
         <div className="mb-8">
@@ -122,6 +222,23 @@ export default function AirlockPage() {
             untrusted text goes through it before it reaches the context window, and outbound calls go through it
             before they leave.
           </p>
+          <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-2">
+            <a
+              href="#try-it"
+              className={cn(
+                buttonVariants({ size: "lg" }),
+                "h-auto px-6 py-2.5 text-sm shadow-lg shadow-accent/10 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-accent/35",
+              )}
+            >
+              Scan your own text
+            </a>
+            <a href="#how" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
+              How it decides
+            </a>
+            <a href="#integrate" className={cn(buttonVariants({ variant: "link" }), "text-sm text-ink")}>
+              One curl to integrate
+            </a>
+          </div>
         </div>
 
         {/* The demonstration, where a product video would go. Every verdict,
@@ -139,7 +256,39 @@ export default function AirlockPage() {
           and will run on whatever you paste into it.
         </p>
 
+        <Section className="border-accent/40" id="try-it">
+          <h2 className={h2}>Try it on your own text</h2>
+          <p className={p}>
+            This is the real scanner, not a demo of one. It posts to{" "}
+            <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">POST /v1/airlock/scan</code> and
+            shows exactly what the engine returned — including when it disagrees with what you expected. Free, no
+            signup, bounded per address.
+          </p>
+          <div className="mt-4">
+            <Playground />
+          </div>
+        </Section>
+
+
         <Section>
+          <h2 className={h2}>Where it goes</h2>
+          <p className={p}>
+            Anywhere an agent reads something a stranger could have written. The four shapes people describe most:
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {AGENT_SHAPES.map((shape) => (
+              <div key={shape.name} className="rounded-md bg-paper px-3.5 py-3">
+                <p className="text-sm font-medium text-ink">{shape.name}</p>
+                <p className="mt-0.5 text-sm text-muted leading-relaxed">{shape.reads}</p>
+                <p className="mt-1 text-xs text-muted">
+                  <span className="font-medium text-ink">Guard:</span> {shape.guard}
+                </p>
+              </div>
+            ))}
+          </div>
+        </Section>
+
+        <Section id="how">
           <h2 className={h2}>Two checks, in opposite directions</h2>
           <p className={p}>
             <span className="font-medium text-ink">Inbound.</span> Text is normalised first &mdash; Unicode tag
@@ -208,13 +357,33 @@ export default function AirlockPage() {
           </p>
         </Section>
 
+        <Section id="integrate">
+          <h2 className={h2}>Integrate in one call</h2>
+          <p className={p}>
+            Two endpoints, JSON in and JSON out, no key. Put the inbound check where content enters your agent&apos;s
+            context and the outbound check where it makes a call. Treat any non-200 as block.
+          </p>
+          <pre className="overflow-x-auto rounded-md bg-ink px-3.5 py-3 font-mono text-[12px] leading-relaxed text-paper">
+            {CURL_SNIPPET}
+          </pre>
+          <p className={cn(p, "mt-3")}>The same call from Python, for an agent that reads documents:</p>
+          <pre className="overflow-x-auto rounded-md bg-ink px-3.5 py-3 font-mono text-[12px] leading-relaxed text-paper">
+            {PYTHON_SNIPPET}
+          </pre>
+          <p className={cn(p, "mt-3 mb-0")}>
+            Free and bounded per address. If you need it unmetered, keyed and under your own policy, that is the
+            hosted version &mdash; see the early-access list at the bottom.
+          </p>
+        </Section>
+
         <Section>
           <h2 className={h2}>What it does with your content</h2>
           <p className={p}>
             It is the first question worth asking about a product you route untrusted text through, so:{" "}
             <span className="font-medium text-ink">the raw content is not stored.</span> An audit entry keeps a
-            SHA-256 of what was scanned, the byte count, the verdict, the rules that fired and a redacted excerpt
-            &mdash; enough to prove later what the guard saw and decided, without keeping the thing itself.
+            SHA-256 of what was scanned, the byte count, the verdict and the rules that fired &mdash; enough to
+            prove later what the guard saw and decided, without keeping the thing itself. The table has a column
+            for a redacted excerpt; the free public scanner leaves it empty.
           </p>
           <p className={p}>
             The log is append-only, and that is enforced by database triggers that reject UPDATE, DELETE{" "}
@@ -229,19 +398,6 @@ export default function AirlockPage() {
             it breaks it returns a 5xx with no verdict at all, which a caller must treat as block. A security check
             that defaults to &ldquo;allow&rdquo; when it breaks is not a security check.
           </p>
-        </Section>
-
-        <Section className="border-accent/40" id="try-it">
-          <h2 className={h2}>Try it on your own text</h2>
-          <p className={p}>
-            This is the real scanner, not a demo of one. It posts to{" "}
-            <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">POST /v1/airlock/scan</code> and
-            shows exactly what the engine returned — including when it disagrees with what you expected. Free, no
-            signup, bounded per address.
-          </p>
-          <div className="mt-4">
-            <Playground />
-          </div>
         </Section>
 
         <Section>
@@ -264,6 +420,18 @@ export default function AirlockPage() {
             starting point, not a defence. Public injection payloads go in first, and the benchmark gets published
             with them.
           </p>
+        </Section>
+
+        <Section>
+          <h2 className={h2}>Questions people ask first</h2>
+          <div className="space-y-3">
+            {FAQ.map((item) => (
+              <div key={item.q}>
+                <p className="text-sm font-medium text-ink">{item.q}</p>
+                <p className="mt-0.5 text-sm text-muted leading-relaxed">{item.a}</p>
+              </div>
+            ))}
+          </div>
         </Section>
 
         <Section className="border-accent/40">

@@ -33,22 +33,22 @@ export const metadata: Metadata = {
 
 const GROUPS: { heading: string; links: { label: string; href: string; note: string }[] }[] = [
   {
-    heading: "Product",
-    links: [
-      { label: "Home", href: "/", note: "What this is and the core loop" },
-      { label: "Docs", href: "/docs", note: "How grounding, webhooks, MCP and payments actually work" },
-      { label: "Published postmortems", href: "/postmortems", note: "Postmortems clients chose to publish publicly" },
-      { label: "System status", href: "/status", note: "A live check against the backend and database" },
-    ],
-  },
-  {
     heading: "Airlock",
     links: [
       {
         label: "Airlock — agent security",
         href: "/airlock",
-        note: "Prompt-injection and exfiltration guard for AI agents. Free scanner, no signup",
+        note: "The main product. Prompt-injection and exfiltration guard for AI agents; free scanner, no signup",
       },
+    ],
+  },
+  {
+    heading: "Product",
+    links: [
+      { label: "Home", href: "/", note: "Airlock first, then PostMortem AI and its sign-in" },
+      { label: "Docs", href: "/docs", note: "How grounding, webhooks, MCP and payments actually work" },
+      { label: "Published postmortems", href: "/postmortems", note: "Postmortems clients chose to publish publicly" },
+      { label: "System status", href: "/status", note: "A live check against the backend and database" },
     ],
   },
   {

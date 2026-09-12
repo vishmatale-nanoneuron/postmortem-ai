@@ -24,9 +24,14 @@ import { GeminiLogo, LinearLogo, StripeLogo } from "./brand-icons";
 import { HeroParticles } from "./hero-particles";
 import { ScrollReveal } from "./scroll-reveal";
 
+// PostMortem AI's own hero. Since Airlock became the front door this
+// renders as the second product on the homepage, under its own anchor so
+// the header's "PostMortem" link and every existing deep link still land
+// here. Its sign-in card (#get-started, in workspace.tsx) is unchanged --
+// it is still the only thing on the site that takes money.
 export function Hero() {
   return (
-    <div className="relative overflow-hidden">
+    <div id="postmortem" className="relative overflow-hidden scroll-mt-16">
       {/* Soft radial wash behind the hero only -- an accent-tinted glow,
           not a full-page gradient, so every other section stays on the
           plain paper background this app's design is built around. */}
@@ -54,14 +59,14 @@ export function Hero() {
           wrapper. See hero-particles.tsx for why it pauses off-screen,
           honors prefers-reduced-motion in JS, and caps its own cost. */}
       <HeroParticles className="pointer-events-none absolute inset-0 -z-10 h-[32rem] w-full" />
-      <div className="mx-auto max-w-3xl px-4 pt-20 pb-12 text-center sm:pt-28">
+      <div className="mx-auto max-w-3xl px-4 pt-16 pb-12 text-center sm:pt-20">
         <LogoMark size={40} className="mx-auto mb-5 animate-in fade-in zoom-in-95 duration-700" />
         <Badge
           variant="outline"
           className="h-auto animate-in fade-in slide-in-from-bottom-2 gap-1.5 rounded-full border-line px-3 py-1 text-[11px] text-muted duration-700"
         >
           <Sparkles className="size-3 text-accent" />
-          For DevOps, SRE, and freelance consultants
+          PostMortem AI · for DevOps, SRE, and freelance consultants
         </Badge>
         <h1 className="mt-5 animate-in fade-in slide-in-from-bottom-3 text-4xl leading-[1.1] font-semibold tracking-tight text-ink duration-700 sm:text-6xl delay-100 fill-mode-backwards">
           Postmortems that{" "}
@@ -326,54 +331,6 @@ export function WhatThisIsnt() {
   );
 }
 
-// The second product, on the first product's homepage. Deliberately placed
-// after "What this isn't" rather than in the hero: a visitor who arrived
-// here arrived for postmortems, and pushing a different product above the
-// one they came for costs conversions on both. It is also deliberately
-// small -- one paragraph and a link -- because Airlock has its own page,
-// and because it cannot be bought yet, so anything more prominent would be
-// giving the most valuable space on the site to something with no
-// checkout behind it.
-export function SecondProduct() {
-  return (
-    <ScrollReveal className="mx-auto max-w-3xl px-4 pb-20">
-      {(revealed) => (
-        <div
-          className={cn(
-            "rounded-lg border border-line bg-white p-5 shadow-sm transition-all duration-500 ease-out",
-            revealed ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0",
-          )}
-        >
-          <div className="flex items-start gap-3">
-            <AirlockMark size={20} className="mt-0.5 shrink-0" />
-            <div>
-              <div className="text-xs font-medium tracking-widest text-muted uppercase">
-                Also from NanoNeuron
-              </div>
-              <h2 className="mt-1.5 text-lg font-semibold text-ink">
-                Airlock — a guard between your agent and untrusted content
-              </h2>
-              <p className="mt-2 text-sm text-muted leading-relaxed">
-                If you run an AI agent that reads tickets, pages, PDFs or email, some of that text is written at the
-                model rather than at you. Airlock scores inbound content for prompt injection before it reaches the
-                context window, and checks outbound calls for credentials and personal data before they leave — with
-                an append-only log of every decision. The scanner is live and free — paste your own text into it,
-                no signup.
-              </p>
-              <Link
-                href="/airlock"
-                className={cn(buttonVariants({ variant: "line", size: "app" }), "mt-3.5 text-sm")}
-              >
-                Scan something
-              </Link>
-            </div>
-          </div>
-        </div>
-      )}
-    </ScrollReveal>
-  );
-}
-
 // A real gap, not cosmetic: every public page except the homepage
 // (docs, pricing, postmortems, status, privacy, terms, blog posts,
 // individual published postmortems) started directly with page content --
@@ -394,46 +351,39 @@ export function SiteHeader() {
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-paper/90 px-4 py-4 backdrop-blur-sm">
       <div className="mx-auto flex max-w-3xl items-center justify-between">
-        <Link href="/" className="flex items-center gap-2 text-sm font-semibold text-ink">
-          <LogoMark size={22} />
-          PostMortem AI
+        {/* The company, as a plain wordmark. Two products now live under
+            this domain and each has its own mark; putting one product's
+            mark here would brand the other product's pages with it. A
+            wordmark carries neither and lets the nav do the identifying. */}
+        <Link href="/" className="text-sm font-semibold tracking-tight text-ink">
+          NanoNeuron
         </Link>
-        {/* gap-3 below sm: adding a fifth item (Airlock) pushed the row
-            past 390px-wide viewports and clipped "Get started" off the
-            right edge -- measured at 419px of content in a 358px row, not
-            guessed. The gap reduction plus hiding MCP (the one item that
-            is a deep link into a /docs section rather than a page of its
-            own) brings it back under, and keeps the header one line: a
-            wrapping sticky header would eat scarce vertical space on
-            exactly the devices that have least of it. */}
+        {/* gap-2.5 below sm: measured, not guessed -- a fifth item once
+            pushed this row past 390px viewports and clipped the button off
+            the right edge. Four items, each product with its own mark, and
+            the one call to action is the thing that is free and live. */}
         <nav className="flex items-center gap-2.5 text-sm text-muted sm:gap-4">
-          <Link className="hover:text-ink hover:underline underline-offset-2" href="/docs">
-            Docs
-          </Link>
-          {/* Links into /docs's own MCP section rather than a separate
-              marketing page -- the accountability/audit-trail behavior it
-              describes (every agent tool call recorded, denials included)
-              is real and already shipped, but doesn't carry enough of its
-              own distinct content yet to justify a standalone route. */}
-          <Link className="hidden hover:text-ink hover:underline underline-offset-2 sm:inline" href="/docs#mcp">
-            MCP
-          </Link>
-          <Link className="hover:text-ink hover:underline underline-offset-2" href="/pricing">
-            Pricing
-          </Link>
-          {/* Airlock by name, not by category: it is the thing someone who
-              heard about it will look for, and it is the only nav item that
-              leaves the postmortem story. Carries its own mark so it reads
-              as a product rather than another section of this one. */}
           <Link className="flex items-center gap-1.5 hover:text-ink hover:underline underline-offset-2" href="/airlock">
             <AirlockMark size={15} />
             Airlock
           </Link>
+          <Link className="flex items-center gap-1.5 hover:text-ink hover:underline underline-offset-2" href="/#postmortem">
+            <LogoMark size={15} />
+            PostMortem
+          </Link>
+          {/* Hidden below sm: measured at 360px, the four items plus the
+              wordmark needed 388px in a 344px row. Docs is the one item
+              that is also in the footer and linked from both product
+              pages, so it is the one to drop on a phone. */}
+          <Link className="hidden hover:text-ink hover:underline underline-offset-2 sm:inline" href="/docs">
+            Docs
+          </Link>
           <Link
-            href="/#get-started"
-            className={cn(buttonVariants({ size: "sm" }), "h-auto px-3 py-1.5 text-xs")}
+            href="/airlock#try-it"
+            className={cn(buttonVariants({ size: "sm" }), "h-auto px-2.5 py-1.5 text-xs sm:px-3")}
           >
-            Get started
+            <span className="sm:hidden">Scan</span>
+            <span className="hidden sm:inline">Scan text</span>
           </Link>
         </nav>
       </div>
@@ -462,7 +412,7 @@ export function SiteFooter() {
     // the homepage: it is the one route that isn't about postmortems at
     // all, so a visitor who lands deep in the site has no other way to
     // discover it exists.
-    ["Airlock — free injection scanner", "/airlock"],
+    ["Airlock", "/airlock"],
     // "Sales and Refunds" points at the refund block on /pricing rather than a
     // page of its own, so the terms exist in exactly one place and two copies
     // can never disagree. "Site Map" is /site-map (the human list), not
@@ -476,7 +426,7 @@ export function SiteFooter() {
     <footer className="border-t border-line px-4 py-8">
       <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 text-xs text-muted">
         <span>
-          Copyright &copy; {new Date().getFullYear()} PostMortem AI. All rights reserved.
+          Copyright &copy; {new Date().getFullYear()} NanoNeuron. Airlock and PostMortem AI.
         </span>
         {/* py-1.5 on each link (not just gap on the <nav>) is what actually
             grows the tap target itself to Google's 24x24px minimum, not
