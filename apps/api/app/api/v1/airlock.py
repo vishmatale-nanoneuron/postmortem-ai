@@ -35,8 +35,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security, status
 from fastapi.concurrency import run_in_threadpool
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
 
 from ...ai.model_router import create_model_provider
@@ -110,6 +111,21 @@ router = APIRouter(prefix="/v1/airlock", tags=["airlock"])
 
 KEY_HEADER = "X-Airlock-Key"
 
+# Declared, not just parsed: these put the key in the OpenAPI document as a
+# real security scheme, so /docs gets an Authorize button and a generated
+# client knows where the key goes. auto_error=False because the route,
+# not the scheme, decides between 401 (no key, no session) and 429.
+_api_key_header = APIKeyHeader(name=KEY_HEADER, auto_error=False, description="Your Airlock API key (alk_...).")
+_bearer = HTTPBearer(auto_error=False, description="The same key as a Bearer token.")
+
+# The responses every metered route can produce, documented once.
+METERED_RESPONSES = {
+    401: {"description": "No API key or session, or an invalid/revoked key. Nothing was scanned or charged."},
+    402: {"description": "The account has no credits left. Nothing was scanned or charged; buy a pack."},
+    422: {"description": "The request body failed validation (empty or oversized content). Nothing was charged."},
+    429: {"description": "Too many unauthenticated requests from this address. Resets within the hour."},
+}
+
 NO_CREDITS_DETAIL = "No Airlock credits left. Buy a pack from the Airlock section of your dashboard."
 NOT_AUTHENTICATED_DETAIL = (
     f"Airlock is a paid API. Send your key in the {KEY_HEADER} header, or sign in to use the dashboard."
@@ -133,29 +149,25 @@ class AirlockPrincipal:
     is_founder: bool
 
 
-def _key_from_request(request: Request) -> str | None:
-    header = request.headers.get(KEY_HEADER)
-    if header:
-        return header.strip()
-    authorization = request.headers.get("authorization", "")
-    if authorization.lower().startswith("bearer "):
-        return authorization[7:].strip()
-    return None
-
-
 async def airlock_principal(
     request: Request,
+    header_key: str | None = Security(_api_key_header),
+    bearer: HTTPAuthorizationCredentials | None = Security(_bearer),
     database: Database = Depends(get_database),
     settings: Settings = Depends(get_settings),
 ) -> AirlockPrincipal:
-    secret = _key_from_request(request)
+    secret = (header_key or "").strip() or (bearer.credentials.strip() if bearer else "")
     if secret:
         resolved = await resolve_api_key(database, secret)
         if resolved is not None:
             return AirlockPrincipal(user_id=resolved.user_id, api_key_id=resolved.id, is_founder=False)
-        # An invalid key is counted against the IP before it is refused, so
-        # guessing keys costs the guesser their request budget.
-        await try_record_airlock_scan_attempt(database, client_ip(request))
+        # An invalid key is counted against the IP and, past the cap, refused
+        # with a 429 before the database is asked again. A 256-bit key cannot
+        # be guessed, so this is not about brute force; it is about a
+        # misconfigured or malicious client not being able to turn every
+        # wrong key into a hash lookup for the whole hour.
+        if not await try_record_airlock_scan_attempt(database, client_ip(request)):
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=RATE_LIMITED_DETAIL)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or revoked Airlock key")
 
     user = await _resolve_user_from_cookie(request, database, settings)
@@ -335,7 +347,7 @@ class EgressOut(BaseModel):
     credits_charged: int
 
 
-@router.post("/scan", response_model=ScanOut)
+@router.post("/scan", response_model=ScanOut, responses=METERED_RESPONSES)
 async def scan(
     payload: ScanIn,
     database: Database = Depends(get_database),
@@ -438,7 +450,7 @@ async def scan(
     )
 
 
-@router.post("/egress", response_model=EgressOut)
+@router.post("/egress", response_model=EgressOut, responses=METERED_RESPONSES)
 async def egress(
     payload: EgressIn,
     database: Database = Depends(get_database),
@@ -493,11 +505,15 @@ class ScanStatsOut(BaseModel):
 
 
 @router.get("/stats", response_model=ScanStatsOut)
-async def stats(database: Database = Depends(get_database)) -> ScanStatsOut:
+async def stats(response: Response, database: Database = Depends(get_database)) -> ScanStatsOut:
     """Public, and aggregate-only by construction (see cqrs/airlock_scan.py).
     Published rather than kept private: a scanner that tells you how often
     it fires, and which rules do the work, is easier to trust than one that
     asks you to take its accuracy on faith."""
+    # Two aggregate queries over an append-only table; a minute of shared
+    # caching at the edge is invisible to a reader and spares the database
+    # a crawler hitting the page every few seconds.
+    response.headers["Cache-Control"] = "public, max-age=60, s-maxage=60"
     counts = await handle_scan_stats_query(database)
     return ScanStatsOut(**vars(counts))
 
@@ -537,7 +553,9 @@ def _pack_prices(settings: Settings) -> list[PackPriceOut]:
 
 
 @router.get("/pricing", response_model=PricingOut)
-async def pricing(settings: Settings = Depends(get_settings)) -> PricingOut:
+async def pricing(response: Response, settings: Settings = Depends(get_settings)) -> PricingOut:
+    # Changes only with a deploy or an env var; safe to cache briefly.
+    response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"
     return PricingOut(
         scans_per_pack=settings.airlock_pack_scans,
         max_packs_per_claim=settings.airlock_max_packs_per_claim,

@@ -324,3 +324,39 @@ async def test_deleting_the_account_erases_keys_and_credits_but_not_the_audit_lo
         "SELECT count(*) AS n FROM airlock_scan_events WHERE content_sha256=%s", (digest,)
     )
     assert audit_after["n"] == audit_before["n"]
+
+
+@pytest.mark.asyncio
+async def test_the_openapi_contract_documents_the_paid_api(context):
+    """A generated client, or a buyer reading /docs, must see how to
+    authenticate and what 401/402/429 mean without reading the source."""
+    client, _database = context
+    schema = (await client.get("/openapi.json")).json()
+    scan = schema["paths"]["/v1/airlock/scan"]["post"]
+    assert {"401", "402", "422", "429"} <= set(scan["responses"])
+    assert "402" in scan["responses"] and "credits" in scan["responses"]["402"]["description"].lower()
+    schemes = schema["components"]["securitySchemes"]
+    header = next(s for s in schemes.values() if s.get("type") == "apiKey")
+    assert header["name"] == "X-Airlock-Key"
+    assert any(s.get("scheme") == "bearer" for s in schemes.values())
+    # The route declares it uses them, so "Authorize" in /docs applies here.
+    declared = {name for entry in scan["security"] for name in entry}
+    assert declared == set(schemes) & declared and len(declared) == 2
+    assert any(t["name"] == "airlock" for t in schema["tags"])
+
+    # Public reads are cacheable; metered writes are not.
+    assert "max-age" in (await client.get("/v1/airlock/pricing")).headers["cache-control"]
+    assert "max-age" in (await client.get("/v1/airlock/stats")).headers["cache-control"]
+
+
+@pytest.mark.asyncio
+async def test_authenticated_responses_are_still_never_cached(context):
+    """The public-read opt-out must not have loosened anything that carries
+    account data: the session, the balance and the keys stay no-store."""
+    client, _database = context
+    await _sign_in_as(client, CUSTOMER_EMAIL)
+    for path in ("/v1/auth/me", "/v1/airlock/credits", "/v1/airlock/keys", "/v1/billing/status"):
+        response = await client.get(path)
+        assert response.status_code == 200, path
+        assert response.headers["cache-control"] == "private, no-store, must-revalidate", path
+        assert response.headers["vary"] == "Cookie", path

@@ -65,7 +65,27 @@ def create_app() -> FastAPI:
         finally:
             await database.close()
 
-    app = FastAPI(title="PostMortem AI", lifespan=lifespan)
+    app = FastAPI(
+        title="NanoNeuron API",
+        version="2026.09.13",
+        summary="Airlock (paid prompt-injection and exfiltration guard for AI agents) and PostMortem AI.",
+        description=(
+            "Airlock: `POST /v1/airlock/scan` and `POST /v1/airlock/egress` authenticate with an API key in the "
+            "`X-Airlock-Key` header (or `Authorization: Bearer alk_...`) and spend one prepaid credit per call "
+            "(five with `\"deep\": true`). A call with no credits is refused with **402** and nothing is scanned; "
+            "a missing or invalid key is **401**; an unauthenticated flood is bounded per address with **429**. "
+            "Credits are bought as packs from the dashboard over UPI or international wire and approved by hand. "
+            "The audit log keeps a SHA-256 of what was scanned, never the content.\n\n"
+            "PostMortem AI: evidence-grounded incident postmortems. Session-cookie authenticated."
+        ),
+        openapi_tags=[
+            {"name": "airlock", "description": "Scan, egress, keys, credits and pricing for the paid guard."},
+            {"name": "auth", "description": "Register, log in, session, account erasure."},
+            {"name": "billing", "description": "UPI and international-wire claims, the only payment rails."},
+            {"name": "founder", "description": "Owner-only: approve claims, grant credits, business metrics."},
+        ],
+        lifespan=lifespan,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -104,7 +124,13 @@ def create_app() -> FastAPI:
         # postmortems) is served by the Next.js frontend's own routes with
         # their own explicit revalidate windows, not this API directly, so
         # there's no real caching benefit being given up here.
-        response.headers["Cache-Control"] = "private, no-store, must-revalidate"
+        # A route may opt out only by setting its own Cache-Control first,
+        # and only the two public, unauthenticated Airlock reads do
+        # (/v1/airlock/pricing and /stats -- see their handlers). Everything
+        # that did not say otherwise gets the safe default. Vary: Cookie is
+        # set regardless, so even an opted-out response is keyed per
+        # session by any cache that honours it.
+        response.headers.setdefault("Cache-Control", "private, no-store, must-revalidate")
         response.headers["Vary"] = "Cookie"
         return response
 
