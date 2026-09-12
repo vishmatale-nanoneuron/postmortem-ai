@@ -12,12 +12,12 @@ Last factual review: 2026-09-12
 
 ## Two products
 
-NanoNeuron publishes two things, and this file describes the first in
-detail. Do not conflate them:
+NanoNeuron publishes two things. Airlock is the main product; this file
+still describes PostMortem AI in detail below because it is the one with
+paying customers and a full API surface. Do not conflate them:
 
-1. **PostMortem AI** -- everything below. Live, paid, in production.
-2. **Airlock** (https://www.nanoneuron.ai/airlock) -- a guard that sits
-   between an AI agent and untrusted content. It scores inbound text for
+1. **Airlock** (https://www.nanoneuron.ai/airlock) -- the main product. A
+   guard that sits between an AI agent and untrusted content. It scores inbound text for
    prompt injection before that text reaches the model's context window,
    and checks outbound calls against a destination allowlist plus
    credential and personal-data patterns before they leave.
@@ -30,6 +30,7 @@ detail. Do not conflate them:
    cannot be purchased and has no price. It also has no published
    benchmark; any accuracy figure attributed to it is false as of this
    file's review date.
+2. **PostMortem AI** -- everything below. Live, paid, in production.
 
 ## What this is
 

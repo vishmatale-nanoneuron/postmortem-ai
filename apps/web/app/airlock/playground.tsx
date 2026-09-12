@@ -33,6 +33,25 @@ const SAMPLES: { label: string; content: string }[] = [
   },
 ];
 
+// A failed scan must read as what it is. The backend answers a route it
+// does not know with a generic 401 ("pass Authorization: Bearer ..."), and
+// surfacing that verbatim on a public page tells a first-time visitor the
+// product is broken and demands a login -- when the actual situation is
+// that the scanner is not reachable from here yet (an API deploy lagging a
+// web deploy, a network error, a rate limit). Say that, in one sentence,
+// and say what is still true: nothing they typed was sent anywhere it was
+// kept.
+function describeFailure(cause: unknown): string {
+  const message = cause instanceof Error ? cause.message : "";
+  if (/429|too many/i.test(message)) {
+    return "You have hit the per-address limit for the free scanner. It resets within the hour.";
+  }
+  if (/401|403|404|unauthori|not found|failed to fetch|network|load failed/i.test(message)) {
+    return "The scanner is not reachable from this page right now. Nothing you typed was stored; try again shortly.";
+  }
+  return message || "The scanner is not reachable right now. Nothing you typed was stored.";
+}
+
 const VERDICT_STYLES = {
   block: "bg-red-600 text-white",
   flag: "bg-amber-500 text-white",
@@ -52,7 +71,7 @@ export function Playground() {
       setResult(await airlockScan(content, "playground"));
     } catch (cause) {
       setResult(null);
-      setError(cause instanceof Error ? cause.message : "The scanner is unreachable right now.");
+      setError(describeFailure(cause));
     } finally {
       setBusy(false);
     }

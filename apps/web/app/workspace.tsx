@@ -32,16 +32,8 @@ import {
 } from "./api";
 import { auth, type AuthUser } from "./auth";
 import { cn } from "@/lib/utils";
-import {
-  GroundingExample,
-  Hero,
-  HowItWorks,
-  IntegrationLogos,
-  SecondProduct,
-  SiteFooter,
-  SiteHeader,
-  WhatThisIsnt,
-} from "./landing";
+import { GroundingExample, Hero, HowItWorks, IntegrationLogos, SiteFooter, SiteHeader, WhatThisIsnt } from "./landing";
+import { AirlockHero } from "./airlock/airlock-hero";
 import { usePolling } from "./use-polling";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1017,6 +1009,10 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
     <>
       <SiteHeader />
       <main>
+      {/* Airlock first: it is the main product. PostMortem AI follows as
+          its own labelled section, with the sign-in card that is still the
+          site's only paid conversion. */}
+      <AirlockHero />
       <Hero />
       <GroundingExample />
       <HowItWorks />
@@ -1132,7 +1128,6 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
         </Card>
       </div>
       <WhatThisIsnt />
-      <SecondProduct />
       </main>
       <SiteFooter />
     </>

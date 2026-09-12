@@ -15,6 +15,13 @@ import { describe, expect, it } from "vitest";
 // test is what fails, and the page must be re-checked against the engine
 // rather than left quoting a stale count.
 const PAGE = readFileSync(join(__dirname, "..", "app", "airlock", "page.tsx"), "utf8");
+// Airlock copy now also lives on the homepage (the hero and the header), so
+// the rules below are checked against every file that carries it -- or the
+// front door becomes the one place they are not enforced.
+const HERO = readFileSync(join(__dirname, "..", "app", "airlock", "airlock-hero.tsx"), "utf8");
+const LANDING = readFileSync(join(__dirname, "..", "app", "landing.tsx"), "utf8");
+const HOME_META = readFileSync(join(__dirname, "..", "app", "page.tsx"), "utf8");
+const AIRLOCK_COPY = [PAGE, HERO, LANDING, HOME_META];
 // Hard-wrapped at ~72 columns, so a phrase that must appear in it can
 // straddle a newline. Compared with whitespace collapsed, which is what
 // "says the same thing" actually means for a prose file.
@@ -60,10 +67,38 @@ describe("/airlock", () => {
     // The scanner is live now, but the commercial product around it -- keys,
     // metering, billing -- is not. No price, no checkout, and no `offers` in
     // the structured data: a price in a rich result the page itself doesn't
-    // make would be the worst version of this mistake.
-    expect(PAGE).not.toContain("$0.001");
-    expect(PAGE).not.toContain('"offers"');
-    expect(PAGE).not.toContain("offers:");
+    // make would be the worst version of this mistake. Checked on every file
+    // that carries Airlock copy, including the homepage.
+    for (const source of AIRLOCK_COPY) {
+      expect(source).not.toContain("$0.001");
+      expect(source).not.toContain("$2k");
+      expect(source).not.toContain("per scan");
+      expect(source).not.toContain('"offers"');
+      expect(source).not.toContain("offers:");
+    }
+  });
+
+  it("makes no accuracy claim anywhere Airlock is mentioned", () => {
+    for (const source of AIRLOCK_COPY) {
+      for (const forbidden of ["precision rate", "% accurate", "99.", "false-positive rate of", "accuracy of"]) {
+        expect(source).not.toContain(forbidden);
+      }
+    }
+  });
+
+  it("leads the site with Airlock and keeps PostMortem AI reachable", () => {
+    // The user's decision: Airlock is the main product. The homepage hero
+    // and the header both say so -- and the product that takes money is
+    // still one click away, under an anchor the header links to.
+    expect(HERO).toContain("Free scanner · live");
+    expect(LANDING).toContain('href="/airlock"');
+    expect(LANDING).toContain('href="/#postmortem"');
+    expect(LANDING).toContain('id="postmortem"');
+    expect(HOME_META).toContain("Airlock and PostMortem AI");
+    // The homepage must not override the site-wide identity search engines
+    // have indexed -- that is a separate decision. Layout is untouched.
+    const LAYOUT = readFileSync(join(__dirname, "..", "app", "layout.tsx"), "utf8");
+    expect(LAYOUT).toContain('template: "%s — PostMortem AI"');
   });
 
   it("draws the line between what runs and what does not", () => {
