@@ -101,6 +101,20 @@ class Settings(BaseSettings):
     subscription_price_gbp: int = Field(default=12, alias="SUBSCRIPTION_PRICE_GBP")
     subscription_price_eur: int = Field(default=14, alias="SUBSCRIPTION_PRICE_EUR")
 
+    # Airlock is sold as prepaid packs of scans, one price per currency,
+    # bought over the same manual UPI/wire rails as the subscription. Per
+    # currency rather than converted from one base price for the same reason
+    # the subscription is: a customer pays a round number in their own money,
+    # and the founder verifies a round number against a bank alert.
+    airlock_pack_scans: int = Field(default=10_000, alias="AIRLOCK_PACK_SCANS")
+    airlock_pack_price_inr: int = Field(default=999, alias="AIRLOCK_PACK_PRICE_INR")
+    airlock_pack_price_usd: int = Field(default=15, alias="AIRLOCK_PACK_PRICE_USD")
+    airlock_pack_price_gbp: int = Field(default=12, alias="AIRLOCK_PACK_PRICE_GBP")
+    airlock_pack_price_eur: int = Field(default=14, alias="AIRLOCK_PACK_PRICE_EUR")
+    # Bounds one claim. Ten packs is 100,000 scans -- past that, a customer
+    # is talking to the founder anyway.
+    airlock_max_packs_per_claim: int = Field(default=10, alias="AIRLOCK_MAX_PACKS_PER_CLAIM")
+
     wire_usd_correspondent_bank: str = Field(default="", alias="WIRE_USD_CORRESPONDENT_BANK")
     wire_usd_correspondent_swift: str = Field(default="", alias="WIRE_USD_CORRESPONDENT_SWIFT")
     wire_usd_nostro_account: str = Field(default="", alias="WIRE_USD_NOSTRO_ACCOUNT")

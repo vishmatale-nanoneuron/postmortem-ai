@@ -1,6 +1,7 @@
 import calendar
 import logging
 import time
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from starlette.concurrency import run_in_threadpool
@@ -8,12 +9,14 @@ from pydantic import BaseModel, Field
 
 from ...auth import User, current_founder
 from ...cqrs.activity import ActivityLogFilter, handle_activity_log_query
+from ...cqrs.airlock_billing import GrantCreditsCommand, handle_grant_credits
 from ...cqrs.airlock_waitlist import handle_waitlist_counts_query
 from ...database import Database
 from ...dependencies import get_database
 from ...services.billing import activate_manual_subscription, record_claim_event
 from ...services.email import (
     EmailNotConfiguredError,
+    send_airlock_credits_approved_email,
     send_client_claim_approved_email,
     send_client_claim_rejected_email,
 )
@@ -269,11 +272,16 @@ class PaymentClaimOut(BaseModel):
     # really arrived, shown to the founder as a signal, never a substitute
     # for the founder's own approve click.
     bank_verified: bool
+    # 'postmortem' or 'airlock' -- decides what approving grants: a
+    # subscription period, or scan_credits credits. Shown at the click for
+    # the same reason billing_period is.
+    product: str = "postmortem"
+    scan_credits: int | None = None
 
 
 _CLAIM_SELECT = """SELECT c.id::text, c.user_id::text, u.email, c.method, c.currency,
                            c.amount_inr AS amount, c.reference, c.status, c.created_at, c.bank_verified,
-                           c.billing_period
+                           c.billing_period, c.product, c.scan_credits
                     FROM payment_claims c JOIN users u ON u.id = c.user_id"""
 
 
@@ -289,7 +297,7 @@ async def list_payment_claims(
 
 
 async def _notify_client(
-    settings: Settings, claim_id: str, to_email: str, method: str, *, approved: bool
+    settings: Settings, claim_id: str, to_email: str, method: str, *, approved: bool, product: str = "postmortem"
 ) -> None:
     """Tell the client what happened to their claim. Best-effort by the same
     reasoning as billing.py's submission emails: the decision is already
@@ -303,7 +311,10 @@ async def _notify_client(
     them the outcome had arrived. On a rail where a human approves by hand,
     hours later, that meant polling the dashboard was the only way to learn
     your access had turned on -- or that it hadn't."""
-    send = send_client_claim_approved_email if approved else send_client_claim_rejected_email
+    if approved:
+        send = send_airlock_credits_approved_email if product == "airlock" else send_client_claim_approved_email
+    else:
+        send = send_client_claim_rejected_email
     outcome = "approved" if approved else "rejected"
     try:
         # run_in_threadpool, matching billing.py and auth.py: resend's client
@@ -371,14 +382,35 @@ async def approve_payment_claim(
         # Grants 365 days for an annual claim, 30 otherwise. The period
         # comes from the stored claim, never from the approving request,
         # so what is granted is exactly what the client paid for.
-        await activate_manual_subscription(tx, claim["user_id"], str(claim["billing_period"]))
-        await record_claim_event(tx, claim_id, "approved", founder.email)
+        if str(claim.get("product") or "postmortem") == "airlock":
+            # An Airlock claim buys scans, not time. The number comes from
+            # the stored claim (migration 0032's CHECK guarantees it is set),
+            # never from the approving request, for the same reason the
+            # subscription period does.
+            credits = int(claim["scan_credits"])
+            await handle_grant_credits(
+                tx,
+                GrantCreditsCommand(
+                    user_id=str(claim["user_id"]), credits=credits, reason="purchase", reference=f"claim:{claim_id}"
+                ),
+            )
+            await record_claim_event(tx, claim_id, "approved", founder.email, f"{credits} Airlock scans granted")
+        else:
+            await activate_manual_subscription(tx, claim["user_id"], str(claim["billing_period"]))
+            await record_claim_event(tx, claim_id, "approved", founder.email)
 
     # Best-effort, and deliberately after the transaction above has
     # committed: the access grant is the real outcome and must never be
     # rolled back or 500 because Resend is down or unconfigured. Same
     # pattern as billing.py's claim-submission emails.
-    await _notify_client(settings, claim_id, str(claim["email"]), str(claim["method"]), approved=True)
+    await _notify_client(
+        settings,
+        claim_id,
+        str(claim["email"]),
+        str(claim["method"]),
+        approved=True,
+        product=str(claim.get("product") or "postmortem"),
+    )
     return PaymentClaimOut(**{**claim, "status": "approved"})
 
 
@@ -532,3 +564,50 @@ async def founder_activity_log(
         ],
         next_cursor=page.next_cursor,
     )
+
+
+# ---------------------------------------------------------------------------
+# Airlock credits, granted by hand. The paid path is approve_payment_claim
+# above; this is for everything that is not a payment -- a refund credited
+# back as scans, a goodwill top-up after an outage, a pilot for a prospect.
+# Founder-only, and every grant is a ledger line with the note attached, so
+# a balance can always be explained.
+# ---------------------------------------------------------------------------
+
+
+class AirlockGrantIn(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    credits: int = Field(ge=1, le=1_000_000)
+    reason: Literal["grant", "refund", "adjustment"] = "grant"
+    note: str = Field(min_length=1, max_length=200)
+
+
+class AirlockGrantOut(BaseModel):
+    email: str
+    credits: int
+    balance: int
+
+
+@router.post("/airlock/grant", response_model=AirlockGrantOut)
+async def grant_airlock_credits(
+    payload: AirlockGrantIn,
+    database: Database = Depends(get_database),
+    founder: User = Depends(current_founder),
+) -> AirlockGrantOut:
+    row = await database.fetch_one("SELECT id::text, email FROM users WHERE lower(email)=%s", (payload.email.strip().lower(),))
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No account with that email")
+    balance = await handle_grant_credits(
+        database,
+        GrantCreditsCommand(
+            user_id=row["id"],
+            credits=payload.credits,
+            reason=payload.reason,
+            reference=f"{founder.email}: {payload.note.strip()}",
+        ),
+    )
+    logger.info(
+        "airlock_credits_granted",
+        extra={"user_id": row["id"], "credits": payload.credits, "reason": payload.reason},
+    )
+    return AirlockGrantOut(email=row["email"], credits=payload.credits, balance=balance)
