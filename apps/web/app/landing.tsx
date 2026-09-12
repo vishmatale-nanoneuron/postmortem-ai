@@ -20,7 +20,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { LogoMark } from "./logo-mark";
 import { AirlockMark } from "./airlock/airlock-mark";
-import { GeminiLogo, LinearLogo, StripeLogo } from "./brand-icons";
+import { GeminiLogo, LinearLogo } from "./brand-icons";
 import { HeroParticles } from "./hero-particles";
 import { ScrollReveal } from "./scroll-reveal";
 
@@ -250,7 +250,7 @@ export function HowItWorks() {
 
 // A real "who we integrate with" bar -- not a "trusted by" customer-logo
 // wall. Every logo here is a service this app actually calls in production
-// (Stripe for billing, Google Gemini as the drafting model) or an account
+// (Google Gemini as the drafting model) or an account
 // can actually connect (Linear, via IntegrationsSettings in workspace.tsx).
 // Deliberately doesn't include Slack: this app has a real Slack webhook
 // integration too, but Slack's mark isn't in the CC0 icon set this file
@@ -259,7 +259,6 @@ export function HowItWorks() {
 // once so the CSS marquee (globals.css) can loop seamlessly; aria-hidden on
 // the duplicate keeps a screen reader from announcing each logo twice.
 const integrations = [
-  { name: "Stripe", Icon: StripeLogo },
   { name: "Linear", Icon: LinearLogo },
   { name: "Google Gemini", Icon: GeminiLogo },
 ];

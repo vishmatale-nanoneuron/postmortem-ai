@@ -254,8 +254,7 @@ drafted action item through open / in_progress / done / dropped; `GET
 (the caller's own account_activity_log rows, source-tagged web vs.
 mcp_agent -- see Agent accountability above).
 
-Billing (`/v1/billing`): `POST /checkout`, `POST /portal`, `GET /status`,
-`GET /card/pricing`, `POST /webhook` (Stripe, signature-verified),
+Billing (`/v1/billing`): `GET /status`,
 `GET /upi/pricing` (public), `GET /upi/info` (founder-only — the real UPI
 ID is never returned in an API response to a client account),
 `POST /upi/email-details` (self-serve: emails the real UPI ID to the
@@ -335,15 +334,10 @@ Australia, Singapore, UAE, Saudi Arabia, Qatar, Oman, Malaysia,
 Hong Kong, France) can pay via UPI in INR instead, instantly and
 with none of the correspondent-bank fees a wire incurs. The wire
 payment-details email says so explicitly.
-A third path — Stripe Checkout,
-self-serve, instant activation on webhook receipt, cancel/manage via the
-Stripe Customer Portal — is fully built and code-complete but not yet
-switched on for real payments (the production Stripe key is currently
-test-mode; `card_pricing`'s own `configured` check requires a live-mode
-key, confirmed by inspecting a real live checkout session before that
-check existed). It will appear as an option automatically once live keys
-are set, with no other change needed. Manual claims are matched to real
-bank alerts
+There is no third path: the card-processor integration that used to
+exist was removed on 2026-09-13 on the owner's decision, so UPI and wire
+are the only rails and nothing renews unless the customer pays again.
+Manual claims are matched to real bank alerts
 automatically (verification only — a founder's explicit approval is the only
 thing that ever activates access, regardless of automated verification).
 Every real payment endpoint verifies against the provider's own record
@@ -450,12 +444,12 @@ dashboard -- approval is what grants the credits, in the same transaction
 that marks the claim approved. The debit is a conditional UPDATE on a
 balance row with `CHECK (balance >= 0)`, so concurrent scans cannot
 double-spend (tested: 50 concurrent scans against 10 credits yield exactly
-10 successes and 40 402s). Card payments are not available. The founder's
+10 successes and 40 402s). There is no card processor. The founder's
 own account is the only one not metered.
 
 **Geography and language.** The API is global (HTTPS from anywhere, no
 region restriction) and model-agnostic. Payment from any country by SWIFT
-wire in USD/GBP/EUR, or by UPI within India; no card payments yet. The 30
+wire in USD/GBP/EUR, or by UPI within India -- the only rails. The 30
 rules match English phrasing; the deep scan classifies content in any
 language. Outbound patterns cover international formats (E.164 phone,
 IBAN, card, email) plus US SSN and Indian Aadhaar/PAN.
@@ -471,7 +465,7 @@ from this site's own FastAPI backend under `/v1/airlock`. The playground at
 https://www.nanoneuron.ai/airlock calls the real endpoint from the
 signed-in account's credits.
 
-NOT BUILT -- card payments, server-side per-tenant thresholds and egress
+NOT BUILT -- server-side per-tenant thresholds and egress
 allowlists (both are per-call parameters today), any support or uptime
 commitment, and a self-hosted build; the early-access list on that page is
 for the self-hosted build only.

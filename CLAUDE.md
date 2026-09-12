@@ -81,7 +81,7 @@ projects under the `nanoneuronais-projects` team:
   code problem.
 - **Vercel "Sensitive" env vars are permanently write-only — confirmed the
   hard way**: every env var set via `vercel env add` on this project
-  (`DATABASE_URL`, `STRIPE_SECRET_KEY`, the UPI/wire settings, etc.)
+  (`DATABASE_URL`, the UPI/wire settings, etc.)
   defaults to Sensitive visibility. Once saved that way, its value can
   never be read back again by anyone or anything — not `vercel env ls`,
   not `vercel env pull` (prints `[SENSITIVE]` as a literal string, which
@@ -267,19 +267,14 @@ routes (list/summary/get) stay reachable so a lapsed account can still see
 its own history. Founders are exempt (see "Founder access" above). Two
 independent payment paths feed the same `users.subscription_status` field:
 
-- **Stripe** (`apps/api/app/api/v1/billing.py`, `/v1/billing/checkout`,
-  `/portal`, `/webhook`) — built and tested against a real Stripe sandbox
-  via the Vercel Marketplace integration, but **not live**: going live
-  needs Indian business KYC (a PAN) that hasn't been completed. All three
-  `STRIPE_*` settings are `Optional` for exactly this reason — unset in
-  production, and those three routes 503 with a pointer to UPI rather than
-  the app failing to boot. Webhook handles `checkout.session.completed`,
-  `customer.subscription.updated`/`.deleted`, `invoice.payment_failed`;
-  signature-verified via `STRIPE_WEBHOOK_SECRET`; no hardcoded
-  `payment_method_types` (Stripe determines eligible methods dynamically
-  from Dashboard settings — this is also why enabling UPI as a Stripe
-  payment method later needs no code change, only Dashboard config, once
-  KYC is done).
+- **Card processor: removed on 2026-09-13 on the owner's instruction**
+  ("use only wire and UPI"). The Stripe checkout/portal/webhook routes,
+  the `stripe` dependency, the `STRIPE_*` settings and the card tab are
+  gone; the `users.stripe_customer_id`/`stripe_subscription_id` columns
+  are dropped by migration `0033`. Do not reintroduce a card rail without
+  the owner's explicit decision. (The Airlock egress engine still
+  *detects* leaked `sk_live_` Stripe keys in outbound payloads — that is a
+  credential pattern, not an integration.)
 - **Manual, human-verified** (`payment_claims` table, `0007`/`0008`
   migrations) — the actual live path today. A client pays directly and
   submits a transaction reference; the founder reviews and
@@ -365,9 +360,8 @@ invented, uncited claim that survives `ground_draft`.
 - Production migrations 0006-0008 (subscription/payment-claims tables) not
   yet confirmed applied — see "Production migrations 0006-0008 status" at
   the top of this file for why and how to check.
-- Stripe billing is built and tested (sandbox) but not live — needs Indian
-  business KYC (PAN). Manual UPI/wire payment is the real live path; see
-  "Billing / payments" above.
+- There is no card processor (removed 2026-09-13). Manual UPI/wire
+  payment is the only path; see "Billing / payments" above.
 - `npm audit` on `apps/web` shows two remaining high-severity transitive
   vulnerabilities (`postcss`, `sharp`, pulled in by Next.js's build
   tooling) whose fix requires Next.js 16 (a breaking major-version jump).

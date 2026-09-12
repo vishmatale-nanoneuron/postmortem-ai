@@ -87,8 +87,8 @@ export default function TermsPage() {
         <>
           <h2 className={h2}>Billing and cancellation</h2>
           <p className={p}>
-            Card subscriptions (via Stripe) can be cancelled anytime from the Stripe customer portal, linked from
-            your account settings -- self-serve, no email required. Manual UPI/wire payments are reviewed and
+            All payments are manual UPI or international wire transfers; there is no card processor and no
+            recurring charge -- nothing renews unless you make another payment. Payments are reviewed and
             approved by the founder directly; to cancel a pending manual claim before it&apos;s approved, use the
             withdraw option on that claim, or email directly. There is no automated refund system for manual
             payments -- if something goes wrong with one, email directly and it will be handled personally, not by

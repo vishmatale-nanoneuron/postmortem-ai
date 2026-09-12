@@ -50,7 +50,7 @@ _current_user: contextvars.ContextVar[User | None] = contextvars.ContextVar("mcp
 # Column names redacted from run_read_only_sql results regardless of which
 # table they come from -- credential-shaped columns are never readable
 # through this tool, full stop, not just "not selected by default."
-_REDACTED_COLUMNS = {"password_hash", "stripe_customer_id", "stripe_subscription_id"}
+_REDACTED_COLUMNS = {"password_hash"}
 
 # Tools whose shared REST route body already writes its own
 # account_activity_log row on success (with a real source= passed
@@ -302,7 +302,7 @@ def build_mcp_server(get_database: Callable[[], Database], settings: Settings) -
     @_audited("approve_payment_claim")
     async def approve_payment_claim(claim_id: str) -> dict:
         """Approve a payment claim -- grants the account an active
-        subscription immediately, the same as a Stripe webhook would."""
+        subscription (or, for an Airlock pack, its scan credits) immediately."""
         database = get_database()
         founder = require_mcp_founder()
         # settings= is required since these routes gained it for the

@@ -235,7 +235,7 @@ async def login(
             # this worker's whole event loop for the duration of every
             # single login attempt; run_in_threadpool is the correct fix
             # for a genuinely blocking call, the same reasoning already
-            # applied to Stripe/Resend elsewhere in this file, CPU-bound
+            # applied to Resend elsewhere in this file, CPU-bound
             # rather than I/O-bound this time.
             password_matches = await run_in_threadpool(verify_password, payload.password, stored_hash)
             succeeded = bool(row) and password_matches

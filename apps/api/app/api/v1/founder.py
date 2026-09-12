@@ -94,7 +94,6 @@ async def founder_summary(
                count(*) AS signups,
                count(*) FILTER (WHERE free_incident_id IS NOT NULL) AS tried_free_incident,
                count(*) FILTER (WHERE subscription_status <> 'none') AS ever_paid,
-               count(*) FILTER (WHERE stripe_subscription_id IS NOT NULL) AS ever_paid_via_stripe,
                count(*) FILTER (
                    WHERE subscription_status IN ('active', 'trialing')
                      AND (current_period_end IS NULL OR current_period_end > extract(epoch FROM now()))
@@ -154,9 +153,8 @@ async def founder_summary(
     # work; nothing measured what they cost against what came in. Two
     # windows: this calendar month (UTC) -- the one that answers "are we
     # losing money right now" -- and all time. Revenue is approved manual
-    # claims only, attributed to the day the founder approved them; Stripe
-    # amounts are not stored locally, so they are not included and the
-    # card says so. NULL token counts (a failed call before the model
+    # claims only, attributed to the day the founder approved them -- the
+    # only rails there are. NULL token counts (a failed call before the model
     # answered, or a provider that reported no usage) are skipped by
     # sum() silently, so the number of such runs is returned alongside --
     # a spend figure that quietly excludes some calls is the same kind of
@@ -244,7 +242,6 @@ async def founder_summary(
             "signups": (funnel or {}).get("signups", 0),
             "tried_free_incident": (funnel or {}).get("tried_free_incident", 0),
             "ever_paid": (funnel or {}).get("ever_paid", 0),
-            "ever_paid_via_stripe": (funnel or {}).get("ever_paid_via_stripe", 0),
             "currently_paying": (funnel or {}).get("currently_paying", 0),
             "approved_manual_claims": (approved_claims or {}).get("total", 0),
         },

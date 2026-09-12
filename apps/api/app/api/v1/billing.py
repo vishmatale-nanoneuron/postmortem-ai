@@ -1,9 +1,12 @@
-"""Real Stripe subscription billing -- Checkout for signup, the Customer
-Portal for self-service management, and a signature-verified webhook as the
-actual source of truth for subscription state (per Stripe's own guidance:
-a subscription integration isn't complete without one -- renewals, failed
-payments, and cancellations happen asynchronously and are otherwise
-invisible to this backend).
+"""Billing: the manual UPI and international-wire rails, and nothing else.
+
+No payment gateway, no card processor. A client pays the founder's UPI ID
+or bank account directly and submits the transaction reference; the founder
+reviews and approves from the founder dashboard (api/v1/founder.py), which
+is the only thing that ever grants access. The card-processor integration
+that used to live here was removed on 2026-09-13 on the owner's instruction;
+it had only ever run in test mode in production and no real customer was
+ever billed through it.
 """
 
 import logging
@@ -11,8 +14,7 @@ import secrets
 import time
 
 import resend.exceptions
-import stripe
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
 from typing import Literal
 
@@ -64,125 +66,10 @@ RATE_LIMITED_DETAIL = "Too many requests. Try again later."
 MAX_PAYMENT_DETAILS_EMAILS_PER_WINDOW = 5
 PAYMENT_DETAILS_EMAIL_WINDOW_MS = 60 * 60 * 1000
 
-# Subscription lifecycle events only -- checkout completing, a renewal or
-# plan change, and cancellation/non-renewal. invoice.payment_failed is
-# handled too so a past-due account is reflected immediately rather than
-# waiting for Stripe's own retry schedule to eventually fire
-# customer.subscription.updated.
-HANDLED_EVENTS = {
-    "checkout.session.completed",
-    "customer.subscription.updated",
-    "customer.subscription.deleted",
-    "invoice.payment_failed",
-}
-
-
-class CheckoutOut(BaseModel):
-    url: str
-
-
 class BillingStatusOut(BaseModel):
     subscription_status: str
     current_period_end: int | None
     has_active_subscription: bool
-
-
-def _is_live_stripe_key(key: str | None) -> bool:
-    """Stripe's real key taxonomy (docs.stripe.com/keys) has two live
-    prefixes, not one: `sk_live_` (a full secret key) and `rk_live_` (a
-    restricted key -- scoped to specific permissions, and Stripe's own
-    documentation recommends using one over a full secret key wherever
-    possible, precisely because a leak of a restricted key risks far
-    less). An earlier version of this check only accepted `sk_live_` --
-    a real, genuinely live `rk_live_` key (the more secure option Stripe
-    itself recommends, and what Vercel's own Stripe Marketplace
-    integration may provision) would have been misreported as
-    not-configured here, the same false-negative shape as the original
-    test-mode bug this check exists to catch, just in the opposite
-    direction. Test-mode keys (`sk_test_`, `rk_test_`) are still
-    correctly rejected either way."""
-    return bool(key) and (key.startswith("sk_live_") or key.startswith("rk_live_"))
-
-
-def _client(settings: Settings) -> stripe.StripeClient:
-    # A test-mode key (sk_test_...) would create a real, real-shaped
-    # Checkout Session that opens unmistakably TestMode once a real
-    # visitor reaches it -- unable to process real money, confirmed live
-    # against a real session before this fix, silently, with no error
-    # anywhere in this flow. Refusing to even create the session here
-    # (not just hiding the frontend's "Card" tab via card_pricing's own
-    # _is_live_stripe_key check above) closes the same gap for any other
-    # caller of this endpoint -- MCP, a stale cached frontend build, a
-    # direct API call -- not just the one UI surface that happens to
-    # check first.
-    if not _is_live_stripe_key(settings.stripe_secret_key):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Card payments are not available yet -- use UPI or wire instead (/v1/billing/upi/info, /v1/billing/wire/info)",
-        )
-    return stripe.StripeClient(api_key=settings.stripe_secret_key)
-
-
-async def _get_or_create_customer(
-    database: Database, client: stripe.StripeClient, user: User, existing_customer_id: str | None
-) -> str:
-    if existing_customer_id:
-        return existing_customer_id
-    # create_async, not create -- these routes are async def, and the sync
-    # Stripe SDK call would otherwise block this worker's whole event loop
-    # for the real network round-trip to Stripe, stalling every other
-    # concurrent request on it. stripe==11.4.1 provides a real native async
-    # client (not a threadpool wrapper), so this is a straight correctness
-    # fix, not a workaround.
-    customer = await client.customers.create_async(params={"email": user.email, "metadata": {"user_id": user.id}})
-    await database.execute("UPDATE users SET stripe_customer_id=%s WHERE id=%s", (customer.id, user.id))
-    return customer.id
-
-
-@router.post("/checkout", response_model=CheckoutOut)
-async def create_checkout_session(
-    database: Database = Depends(get_database),
-    settings: Settings = Depends(get_settings),
-    user: User = Depends(current_user),
-) -> CheckoutOut:
-    if user.has_active_subscription:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already subscribed")
-
-    row = await database.fetch_one("SELECT stripe_customer_id FROM users WHERE id=%s", (user.id,))
-    client = _client(settings)
-    customer_id = await _get_or_create_customer(database, client, user, (row or {}).get("stripe_customer_id"))
-
-    session = await client.checkout.sessions.create_async(
-        params={
-            "mode": "subscription",
-            "customer": customer_id,
-            # No payment_method_types -- Stripe determines eligible payment
-            # methods dynamically from Dashboard settings.
-            "line_items": [{"price": settings.stripe_price_id, "quantity": 1}],
-            "success_url": f"{settings.frontend_url}/?checkout=success",
-            "cancel_url": f"{settings.frontend_url}/?checkout=cancelled",
-        }
-    )
-    assert session.url is not None
-    return CheckoutOut(url=session.url)
-
-
-@router.post("/portal", response_model=CheckoutOut)
-async def create_portal_session(
-    database: Database = Depends(get_database),
-    settings: Settings = Depends(get_settings),
-    user: User = Depends(current_user),
-) -> CheckoutOut:
-    row = await database.fetch_one("SELECT stripe_customer_id FROM users WHERE id=%s", (user.id,))
-    customer_id = (row or {}).get("stripe_customer_id")
-    if not customer_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No billing account yet")
-
-    client = _client(settings)
-    session = await client.billing_portal.sessions.create_async(
-        params={"customer": customer_id, "return_url": settings.frontend_url}
-    )
-    return CheckoutOut(url=session.url)
 
 
 @router.get("/status", response_model=BillingStatusOut)
@@ -198,91 +85,6 @@ async def billing_status(user: User = Depends(current_user)) -> BillingStatusOut
         current_period_end=user.current_period_end,
         has_active_subscription=user.has_active_subscription,
     )
-
-
-class CardPricingOut(BaseModel):
-    configured: bool
-
-
-@router.get("/card/pricing", response_model=CardPricingOut)
-async def card_pricing(settings: Settings = Depends(get_settings)) -> CardPricingOut:
-    """Public, unauthenticated -- same shape/purpose as /upi/pricing and
-    /wire/pricing below: lets the frontend decide whether to show a 'Card'
-    option at all, without needing to be signed in (or triggering the 503
-    from POST /checkout) just to find out Stripe isn't configured in this
-    environment. The real Stripe integration (checkout/portal/webhook above)
-    existed for a long time with no frontend surface calling it at all --
-    every client only ever saw the manual UPI/wire tabs, so self-serve card
-    payment and self-serve subscription management (cancel, update card,
-    view invoices via the Customer Portal) were both effectively dead code
-    from a client's perspective. This endpoint is what lets the frontend
-    turn that back on safely, everywhere it's actually configured.
-
-    'configured' means genuinely able to charge a real card, not just "a
-    key is present" -- confirmed live against a real checkout session
-    before this fix that a test-mode secret key (sk_test_...) produces a
-    real-looking, real-shaped Checkout Session that is unmistakably
-    TestMode once opened, silently unable to process real money while
-    every doc/UI surface described card payment as live. Stripe's own
-    stable key prefix convention (see _is_live_stripe_key) is the one
-    place this is actually knowable server-side without an extra config
-    flag to remember to flip later -- this self-corrects the moment real
-    live keys are set, with nothing else to update."""
-    return CardPricingOut(configured=_is_live_stripe_key(settings.stripe_secret_key) and bool(settings.stripe_price_id))
-
-
-async def _apply_subscription(database: Database, customer_id: str, subscription: stripe.Subscription) -> None:
-    updated = await database.execute(
-        """UPDATE users SET stripe_subscription_id=%s, subscription_status=%s, current_period_end=%s
-           WHERE stripe_customer_id=%s""",
-        (subscription.id, subscription.status, subscription.current_period_end, customer_id),
-    )
-    if not updated:
-        # A webhook can arrive for a customer this backend doesn't
-        # recognize (e.g. a Dashboard-created test event) -- log and move
-        # on rather than raising, since raising would make Stripe retry a
-        # webhook that will never succeed.
-        logger.warning("Stripe webhook for unknown customer_id=%s", customer_id)
-
-
-@router.post("/webhook")
-async def stripe_webhook(
-    request: Request,
-    database: Database = Depends(get_database),
-    settings: Settings = Depends(get_settings),
-) -> dict[str, bool]:
-    if not settings.stripe_webhook_secret:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stripe is not configured")
-
-    payload = await request.body()
-    signature = request.headers.get("stripe-signature", "")
-    try:
-        event = stripe.Webhook.construct_event(payload, signature, settings.stripe_webhook_secret)
-    except (ValueError, stripe.SignatureVerificationError) as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook signature") from exc
-
-    if event["type"] not in HANDLED_EVENTS:
-        return {"ok": True}
-
-    client = _client(settings)
-    data = event["data"]["object"]
-
-    if event["type"] == "checkout.session.completed":
-        customer_id = data["customer"]
-        subscription_id = data.get("subscription")
-        if subscription_id:
-            subscription = await client.subscriptions.retrieve_async(subscription_id)
-            await _apply_subscription(database, customer_id, subscription)
-    elif event["type"] in ("customer.subscription.updated", "customer.subscription.deleted"):
-        await _apply_subscription(database, data["customer"], data)
-    elif event["type"] == "invoice.payment_failed":
-        subscription_id = data.get("subscription")
-        if subscription_id:
-            subscription = await client.subscriptions.retrieve_async(subscription_id)
-            await _apply_subscription(database, data["customer"], subscription)
-
-    logger.info("stripe_webhook_handled type=%s", event["type"])
-    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

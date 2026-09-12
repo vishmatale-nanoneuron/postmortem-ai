@@ -21,9 +21,9 @@ import { WaitlistForm } from "./waitlist-form";
 //    balance. There is no free tier. The price quoted below is fetched from
 //    the backend's own /v1/airlock/pricing at render time and falls back to
 //    pricing-defaults.ts, which a test pins to the backend's settings.
-//    What does not exist yet: card payments (the rails are UPI and wire,
-//    approved by hand), an SLA, and a self-hosted build -- the waitlist is
-//    for that last one.
+//    The rails are UPI and wire, approved by hand -- no card processor, by
+//    the owner's decision. What does not exist yet: an SLA and a self-hosted
+//    build -- the waitlist is for that last one.
 // 2. Every number below was produced by running the code, not taken from a
 //    description of it: 30 rules across 8 families (apps/api/app/airlock/
 //    rules.py), block at 0.75 / flag at 0.40 (airlock/detector.py), 11
@@ -227,11 +227,11 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "How do I pay?",
-    a: "From your dashboard: choose a currency and how many packs, have the payee details emailed to your own address, pay, and submit the transaction reference. The founder verifies the payment by hand \u2014 usually within the day \u2014 and the credits land on your account the moment it is approved, with an email to say so. Card payments are not available yet.",
+    a: "From your dashboard: choose a currency and how many packs, have the payee details emailed to your own address, pay, and submit the transaction reference. The founder verifies the payment by hand \u2014 usually within the day \u2014 and the credits land on your account the moment it is approved, with an email to say so. UPI and wire are the only rails; there is no card processor.",
   },
   {
     q: "Does it work outside India, and outside English?",
-    a: "The API is global: HTTPS from anywhere, no region restriction, and it scores text rather than any vendor\u2019s model, so it sits in front of Claude, GPT, Gemini, Llama or your own. Pay from any country by SWIFT wire in USD, GBP or EUR, or by UPI in India; card payments are not available yet. The 30 rules match English phrasing \u2014 an injection written in another language will not trip them \u2014 which is exactly what the deep scan is for: Gemini reads any language. The outbound check covers international formats (E.164 phone numbers, IBAN, card numbers, email) plus US SSN and Indian Aadhaar and PAN.",
+    a: "The API is global: HTTPS from anywhere, no region restriction, and it scores text rather than any vendor\u2019s model, so it sits in front of Claude, GPT, Gemini, Llama or your own. Pay from any country by SWIFT wire in USD, GBP or EUR, or by UPI in India \u2014 those are the only rails. The 30 rules match English phrasing \u2014 an injection written in another language will not trip them \u2014 which is exactly what the deep scan is for: Gemini reads any language. The outbound check covers international formats (E.164 phone numbers, IBAN, card numbers, email) plus US SSN and Indian Aadhaar and PAN.",
   },
   {
     q: "What happens if the scanner is down?",
@@ -406,8 +406,8 @@ export default async function AirlockPage() {
             <span className="font-medium text-ink">How buying works:</span> create an account, open the Airlock
             section of your dashboard, pick a currency and pack count, have the payee details emailed to your own
             address, pay, and submit the transaction reference. The founder verifies it by hand &mdash; usually
-            within the day &mdash; and the credits appear the moment it is approved, with an email to say so. Card
-            payments are not available yet.
+            within the day &mdash; and the credits appear the moment it is approved, with an email to say so. UPI and
+            wire are the only rails; there is no card processor.
             {!live && (
               <span className="text-muted"> (Prices shown are the configured defaults; the live pricing endpoint was unreachable when this page rendered.)</span>
             )}
@@ -579,10 +579,10 @@ export default async function AirlockPage() {
             <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">/v1/airlock/egress</code>.
           </p>
           <p className={p}>
-            <span className="font-medium text-ink">Not built yet:</span> card payments (the rails are UPI and
-            international wire, verified by hand), server-side per-tenant thresholds and allowlists (both are
-            per-call parameters today), any support or uptime commitment, and a self-hosted build. That last one is
-            what the early-access list below is for.
+            <span className="font-medium text-ink">Not built yet:</span> server-side per-tenant thresholds and
+            allowlists (both are per-call parameters today), any support or uptime commitment, and a self-hosted
+            build. That last one is what the early-access list below is for. Not planned: card payments &mdash; UPI
+            and international wire, verified by hand, are the rails by decision.
           </p>
           <p className={p}>
             The next thing worth building is not features either, it is the corpus: 30 hand-written rules is a

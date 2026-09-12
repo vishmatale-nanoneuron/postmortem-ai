@@ -1,7 +1,7 @@
 """Cloudflare Turnstile verification -- bot/script signup protection.
 
 Optional, same "unconfigured means disabled" stance as every other
-not-yet-provisioned integration in this codebase (Stripe, UPI, wire,
+not-yet-provisioned integration in this codebase (UPI, wire,
 alerting): TURNSTILE_SECRET_KEY unset means verify_turnstile always
 succeeds without a real check, so this doesn't block local dev or a
 deploy that hasn't set up a real Turnstile site yet. Once a real secret
