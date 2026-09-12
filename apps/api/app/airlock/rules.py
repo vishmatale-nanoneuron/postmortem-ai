@@ -276,6 +276,8 @@ RULES: list[Rule] = [
 ]
 
 RULES_BY_ID = {r.id: r for r in RULES}
+# The eight families, derived from the rules rather than listed twice.
+FAMILIES = frozenset(r.family for r in RULES)
 
 # Invisible / bidi characters used to hide payloads from human reviewers.
 INVISIBLE_CHARS = {

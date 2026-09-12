@@ -212,13 +212,17 @@ async def handle_grant_credits(database: Database | Transaction, command: GrantC
 @dataclass(frozen=True)
 class DebitCreditCommand:
     user_id: str
-    reason: str  # 'scan' | 'egress'
+    reason: str  # 'scan' | 'deep_scan' | 'egress'
     api_key_id: str | None = None
+    # A plain scan is 1; a deep scan is 1 + DEEP_SCAN_EXTRA_CREDITS. Always
+    # taken in one debit so a caller either affords the whole call or none
+    # of it.
+    credits: int = 1
 
 
 async def handle_debit_credit(database: Database, command: DebitCreditCommand) -> int:
-    """Spends exactly one credit and returns the balance after. Raises
-    InsufficientCredits -- and writes nothing -- when there is none to spend.
+    """Spends `credits` and returns the balance after. Raises
+    InsufficientCredits -- and writes nothing -- when the balance is short.
 
     The conditional UPDATE is the whole concurrency story: Postgres takes a
     row lock on the balance row, so concurrent debits for one account
@@ -227,20 +231,22 @@ async def handle_debit_credit(database: Database, command: DebitCreditCommand) -
     observe 1 and both decrement. The ledger row is written in the same
     transaction, so a balance can never move without a line explaining it.
     """
+    if command.credits <= 0:
+        raise ValueError("credits must be positive")
     now = _now_ms()
     async with database.transaction() as tx:
         row = await tx.fetch_one(
-            """UPDATE airlock_credit_balances SET balance = balance - 1, updated_at = %s
-               WHERE user_id = %s AND balance >= 1
+            """UPDATE airlock_credit_balances SET balance = balance - %s, updated_at = %s
+               WHERE user_id = %s AND balance >= %s
                RETURNING balance""",
-            (now, command.user_id),
+            (command.credits, now, command.user_id, command.credits),
         )
         if row is None:
             raise InsufficientCredits()
         await tx.execute(
             """INSERT INTO airlock_credit_ledger (user_id, api_key_id, delta, reason, reference, created_at)
-               VALUES (%s, %s, -1, %s, NULL, %s)""",
-            (command.user_id, command.api_key_id, command.reason, now),
+               VALUES (%s, %s, %s, %s, NULL, %s)""",
+            (command.user_id, command.api_key_id, -command.credits, command.reason, now),
         )
         return int(row["balance"])
 

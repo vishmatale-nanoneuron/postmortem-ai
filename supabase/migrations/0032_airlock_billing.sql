@@ -84,7 +84,7 @@ DO $$
 BEGIN
     ALTER TABLE public.airlock_credit_ledger
         ADD CONSTRAINT airlock_credit_ledger_reason_check
-        CHECK (reason IN ('purchase', 'grant', 'scan', 'egress', 'refund', 'adjustment'));
+        CHECK (reason IN ('purchase', 'grant', 'scan', 'deep_scan', 'egress', 'refund', 'adjustment'));
 EXCEPTION
     WHEN duplicate_object THEN NULL;
 END $$;

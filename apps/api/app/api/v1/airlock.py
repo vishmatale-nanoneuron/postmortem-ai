@@ -38,12 +38,22 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, EmailStr, Field
 
+from ...ai.model_router import create_model_provider
+from ...ai.provider import ModelProvider
 from ...airlock import Detector, check_egress
 from ...airlock.rules import RULES_BY_ID
+from ...airlock.semantic import (
+    DEEP_SCAN_EXTRA_CREDITS,
+    SEMANTIC_MAX_WEIGHT,
+    SEMANTIC_RULE_ID,
+    combine,
+    semantic_opinion,
+)
 from ...auth import User, _resolve_user_from_cookie, current_founder, current_user
 from ...cqrs.airlock_billing import (
     MAX_ACTIVE_KEYS_PER_USER,
     DebitCreditCommand,
+    GrantCreditsCommand,
     InsufficientCredits,
     IssueApiKeyCommand,
     RevokeApiKeyCommand,
@@ -51,6 +61,7 @@ from ...cqrs.airlock_billing import (
     handle_api_keys_query,
     handle_credit_balance_query,
     handle_debit_credit,
+    handle_grant_credits,
     handle_issue_api_key,
     handle_ledger_query,
     handle_revoke_api_key,
@@ -155,17 +166,26 @@ async def airlock_principal(
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=NOT_AUTHENTICATED_DETAIL)
 
 
-async def _charge(database: Database, principal: AirlockPrincipal, reason: str) -> int | None:
-    """Spends one credit, or raises the 402. Returns the balance after, or
-    None when nothing was charged (the founder)."""
+async def _charge(database: Database, principal: AirlockPrincipal, reason: str, credits: int = 1) -> int | None:
+    """Spends `credits` in one debit, or raises the 402. Returns the balance
+    after, or None when nothing was charged (the founder)."""
     if principal.is_founder:
         return None
     try:
         return await handle_debit_credit(
-            database, DebitCreditCommand(user_id=principal.user_id, reason=reason, api_key_id=principal.api_key_id)
+            database,
+            DebitCreditCommand(
+                user_id=principal.user_id, reason=reason, api_key_id=principal.api_key_id, credits=credits
+            ),
         )
     except InsufficientCredits:
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=NO_CREDITS_DETAIL) from None
+
+
+def get_model_provider(settings: Settings = Depends(get_settings)) -> ModelProvider:
+    """The same Gemini provider (with the same circuit breaker and optional
+    fallback) that drafts postmortems. A dependency so tests can swap it."""
+    return create_model_provider(settings)
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +261,10 @@ class ScanIn(BaseModel):
     # Free-form label for where the content came from ("support_ticket",
     # "web"). Recorded on the audit row; never interpreted.
     source: str | None = Field(default=None, max_length=64)
+    # Ask Gemini for a second opinion after the rules have run. Costs
+    # DEEP_SCAN_EXTRA_CREDITS more, sends the content to Google's API, and
+    # can only make the verdict stricter -- see airlock/semantic.py.
+    deep: bool = False
 
 
 class MatchOut(BaseModel):
@@ -264,6 +288,13 @@ class ScanOut(BaseModel):
     latency_ms: int
     # Balance after this call. None when the call was not charged (founder).
     credits_remaining: int | None
+    # What this call cost. 1, or 1 + DEEP_SCAN_EXTRA_CREDITS for a deep scan
+    # that got its second opinion; back to 1 if Gemini was unavailable and
+    # the extra was refunded. 0 for the founder.
+    credits_charged: int
+    # Present only on a deep scan: the model's answer, its confidence, the
+    # weight it contributed, or status "unavailable" with weight 0.
+    semantic: dict | None = None
 
 
 class EgressIn(BaseModel):
@@ -296,6 +327,7 @@ class EgressOut(BaseModel):
     # by a user hitting it.
     redacted: str | None
     credits_remaining: int | None
+    credits_charged: int
 
 
 @router.post("/scan", response_model=ScanOut)
@@ -303,52 +335,101 @@ async def scan(
     payload: ScanIn,
     database: Database = Depends(get_database),
     principal: AirlockPrincipal = Depends(airlock_principal),
+    provider: ModelProvider = Depends(get_model_provider),
 ) -> ScanOut:
     """Score untrusted content for prompt injection, before it reaches an
-    agent's context window. One credit per call; 402 with nothing scanned
-    when there is none."""
+    agent's context window. One credit per call (five with `deep`); 402
+    with nothing scanned when the balance is short."""
     # Charge before scanning, not after: a caller with no credits gets the
     # 402 without the engine running for them, and a caller with credits is
     # charged for exactly the calls that return a verdict. The detector is
     # pure and does not fail, so there is no "charged but no answer" path.
-    remaining = await _charge(database, principal, "scan")
+    # A deep scan is taken as one debit for the whole price, so a caller
+    # either affords the second opinion or is told so up front.
+    cost = 1 + DEEP_SCAN_EXTRA_CREDITS if payload.deep else 1
+    remaining = await _charge(database, principal, "deep_scan" if payload.deep else "scan", cost)
+    charged = 0 if principal.is_founder else cost
+
     started = time.perf_counter()
     detection = _DETECTOR.scan(payload.content)
+    verdict, score = detection.verdict, detection.score
+    matched_rules = [match.rule_id for match in detection.matches]
+    matches = [
+        MatchOut(
+            rule_id=match.rule_id,
+            family=match.family,
+            weight=match.weight,
+            description=RULES_BY_ID[match.rule_id].description if match.rule_id in RULES_BY_ID else "",
+        )
+        for match in detection.matches
+    ]
+    families = list(detection.families)
+    semantic: dict | None = None
+
+    if payload.deep:
+        opinion = await semantic_opinion(provider, payload.content)
+        semantic = opinion.as_dict()
+        if opinion.status == "ok":
+            score, verdict = combine(detection.score, opinion)
+            if opinion.weight > 0:
+                # The model's contribution appears alongside the rules, under
+                # its own id, so the audit row and the response both say the
+                # classifier had a hand in this verdict.
+                matched_rules.append(SEMANTIC_RULE_ID)
+                matches.append(
+                    MatchOut(
+                        rule_id=SEMANTIC_RULE_ID,
+                        family=opinion.family or "AI",
+                        weight=opinion.weight,
+                        description=opinion.reason
+                        or f"Gemini classified this as an injection attempt (max weight {SEMANTIC_MAX_WEIGHT}).",
+                    )
+                )
+                if opinion.family and opinion.family not in families:
+                    families.append(opinion.family)
+        elif not principal.is_founder:
+            # The customer paid for a second opinion that did not arrive.
+            # Refund exactly the extra, leave the ordinary scan charged, and
+            # say so in the response.
+            remaining = await handle_grant_credits(
+                database,
+                GrantCreditsCommand(
+                    user_id=principal.user_id,
+                    credits=DEEP_SCAN_EXTRA_CREDITS,
+                    reason="refund",
+                    reference="deep scan: second opinion unavailable",
+                ),
+            )
+            charged = 1
     latency_ms = int((time.perf_counter() - started) * 1000)
 
     await handle_record_scan(
         database,
         RecordScanCommand(
             kind="ingress",
-            verdict=detection.verdict,
-            score=detection.score,
+            verdict=verdict,
+            score=score,
             content_sha256=detection.content_sha256,
             content_bytes=detection.content_bytes,
-            matched_rules=[match.rule_id for match in detection.matches],
+            matched_rules=matched_rules,
             source=payload.source,
             latency_ms=latency_ms,
             # No excerpt: see RecordScanCommand.excerpt and 0031's header.
         ),
     )
     return ScanOut(
-        verdict=detection.verdict,
-        score=round(detection.score, 4),
-        matches=[
-            MatchOut(
-                rule_id=match.rule_id,
-                family=match.family,
-                weight=match.weight,
-                description=RULES_BY_ID[match.rule_id].description if match.rule_id in RULES_BY_ID else "",
-            )
-            for match in detection.matches
-        ],
-        families=list(detection.families),
+        verdict=verdict,
+        score=round(score, 4),
+        matches=matches,
+        families=families,
         # Signal *names* and what was found, which is the explanatory half.
         signals={key: value for key, value in (detection.signals or {}).items()},
         content_sha256=detection.content_sha256,
         content_bytes=detection.content_bytes,
         latency_ms=latency_ms,
         credits_remaining=remaining,
+        credits_charged=charged,
+        semantic=semantic,
     )
 
 
@@ -393,6 +474,7 @@ async def egress(
         destination_checked=bool(payload.allowlist),
         redacted=verdict.redacted,
         credits_remaining=remaining,
+        credits_charged=0 if principal.is_founder else 1,
     )
 
 
@@ -433,6 +515,9 @@ class PackPriceOut(BaseModel):
 class PricingOut(BaseModel):
     scans_per_pack: int
     max_packs_per_claim: int
+    # Credits per call. A deep scan adds a Gemini second opinion.
+    credits_per_scan: int = 1
+    credits_per_deep_scan: int = 1 + DEEP_SCAN_EXTRA_CREDITS
     prices: list[PackPriceOut]
 
 
