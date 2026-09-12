@@ -43,9 +43,12 @@ describe("/airlock", () => {
     }
   });
 
-  it("reports the 18-case result as a self-authored smoke test, never as a benchmark", () => {
-    expect(PAGE).toContain("18-case suite we wrote ourselves");
-    expect(PAGE).toContain("That is a smoke test, not a benchmark.");
+  it("reports the corpus result as a self-authored smoke test, never as a benchmark", () => {
+    expect(PAGE).toContain("43-case corpus we wrote ourselves");
+    expect(PAGE).toContain("It is still a smoke test, not a benchmark.");
+    // The coverage claim is the one that carries weight, so it is pinned
+    // alongside the disclaimer rather than left to drift apart from it.
+    expect(PAGE).toContain("every one of the 30 rules is exercised");
     // The words that would turn an 18-case suite into a false accuracy
     // claim. None of them belong on this page until a real benchmark runs.
     for (const forbidden of ["precision rate", "% accurate", "99.", "false-positive rate of", "accuracy of"]) {
@@ -97,7 +100,10 @@ describe("/airlock", () => {
     // facts, which is the rule landing.tsx's header comment already sets
     // for PostMortem AI.
     expect(LLMS_FULL).toContain("30 weighted rules across 8 attack families");
-    expect(LLMS_FULL).toContain("not a benchmark");
+    // Case-insensitive: the file says "NOT a benchmark" for emphasis and
+    // the page says "not a benchmark" in prose. What must not drift is
+    // that the disclaimer is present in both, not its capitalisation.
+    expect(LLMS_FULL.toLowerCase()).toContain("not a benchmark");
     // The status split, in both directions. Either half going missing turns
     // the file into a different claim than the page makes.
     expect(LLMS_FULL).toContain("RUNNING NOW");
