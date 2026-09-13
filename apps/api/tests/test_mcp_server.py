@@ -4,19 +4,17 @@ ASGITransport (no real network server needed) but exercising the actual
 wire protocol -- initialize handshake, tools/list, tools/call -- not a
 shortcut around it. Real Postgres via TEST_DATABASE_URL.
 
-Known noise, not a real failure: every test here also reports a teardown
-ERROR ("Attempted to exit cancel scope in a different task", or an
-"Event loop is closed" psycopg_pool warning depending on run). This is an
-anyio/pytest-asyncio artifact of driving FastMCP's own background task
-group (session_manager.run()) across an in-process ASGITransport rather
-than a real socket -- confirmed harmless: the actual test body and every
-assertion in it complete and pass before teardown runs, reproduced
-consistently across multiple runs and two different fixture structures.
-Production is unaffected -- it runs over real per-request ASGI hosting on
-Vercel, not this in-process test harness's specific teardown ordering.
+These used to error in teardown on every test ("Attempted to exit cancel
+scope in a different task"): the fixture held the app lifespan -- and with
+it FastMCP's anyio task group -- across pytest-asyncio's fixture boundary,
+and anyio requires the task that entered a cancel scope to be the one that
+exits it. CI ran this file under `|| true` for that reason. The fixture now
+drives the lifespan from one dedicated task (see `context`), the errors are
+gone, and the file is a normal fatal part of the suite.
 """
 
 import json
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
@@ -87,10 +85,37 @@ async def context(monkeypatch: pytest.MonkeyPatch):
     # The MCP session manager's own lifespan (session_manager.run()) --
     # and this app's own database pool -- only start inside create_app()'s
     # lifespan context, which AsyncClient(transport=ASGITransport(...))
-    # does NOT enter on its own; drive it explicitly, and do everything
-    # (registration included) inside it, so there is exactly one pool for
-    # the whole test.
-    async with application.router.lifespan_context(application):
+    # does NOT enter on its own; drive it explicitly, so there is exactly
+    # one pool for the whole test.
+    #
+    # Driven from ONE dedicated task, not around the fixture's `yield`:
+    # pytest-asyncio finalises an async-generator fixture in a different
+    # task from the one that ran its setup, and the session manager holds
+    # an anyio task group whose cancel scope must be exited by the task
+    # that entered it. Holding the lifespan across the yield made every
+    # test in this file "pass, then error in teardown" -- which CI could
+    # only cope with by running the file under `|| true`, a gate that
+    # could never fail. Entering and exiting inside the same task is what
+    # anyio asks for; the fixture merely waits for it.
+    started, stop = asyncio.Event(), asyncio.Event()
+    failure: list[BaseException] = []
+
+    async def run_lifespan() -> None:
+        try:
+            async with application.router.lifespan_context(application):
+                started.set()
+                await stop.wait()
+        except BaseException as error:  # surfaced below rather than lost in a task
+            failure.append(error)
+            started.set()
+            raise
+
+    lifespan_task = asyncio.create_task(run_lifespan())
+    await started.wait()
+    if failure:
+        raise failure[0]
+
+    try:
         async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as http:
             founder_register = await http.post(
                 "/v1/auth/register", json={"email": FOUNDER_EMAIL, "password": "correct-horse-battery"}
@@ -107,9 +132,11 @@ async def context(monkeypatch: pytest.MonkeyPatch):
             client_token = http.cookies.get("session_token")
             assert client_token
 
-            yield application, founder_token, client_token
-
-    get_settings.cache_clear()
+        yield application, founder_token, client_token
+    finally:
+        stop.set()
+        await lifespan_task
+        get_settings.cache_clear()
 
 
 def _mcp_http_client_factory(app):
