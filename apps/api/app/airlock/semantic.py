@@ -169,16 +169,22 @@ async def semantic_opinion(provider_factory: Callable[[], ModelProvider], conten
     )
 
 
-def combine(rule_score: float, opinion: SemanticOpinion) -> tuple[float, str]:
+def combine(
+    rule_score: float,
+    opinion: SemanticOpinion,
+    block_threshold: float = BLOCK_THRESHOLD,
+    flag_threshold: float = FLAG_THRESHOLD,
+) -> tuple[float, str]:
     """Noisy-OR of the rule engine's score and the model's weight -- the
     same aggregation the rules use among themselves (detector._aggregate),
     so a deep scan's number means the same thing as a normal scan's. Returns
     (score, verdict); the verdict can only be equal to or stricter than the
-    rule engine's own, because the weight is never negative."""
+    rule engine's own, because the weight is never negative. The thresholds
+    are the account's policy, the same ones the rules were judged against."""
     score = round(1.0 - (1.0 - rule_score) * (1.0 - opinion.weight), 4)
     verdict = "allow"
-    if score >= BLOCK_THRESHOLD:
+    if score >= block_threshold:
         verdict = "block"
-    elif score >= FLAG_THRESHOLD:
+    elif score >= flag_threshold:
         verdict = "flag"
     return score, verdict

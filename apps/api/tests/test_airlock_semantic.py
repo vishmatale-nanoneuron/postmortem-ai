@@ -203,15 +203,32 @@ async def test_the_model_can_raise_a_verdict(context):
 
 @pytest.mark.asyncio
 async def test_the_model_cannot_lower_a_verdict(context):
+    """Rules-blocked content stays blocked whatever the model says. The
+    model can only raise, so when the rules already block it is not even
+    asked -- the caller pays the ordinary price and the response says why.
+    A benign opinion is asserted to be irrelevant in the one place it could
+    otherwise matter: the semantic weight is 0 and the score is the rules'."""
     client, database, provider = context
-    await _funded(client, database, 20)
+    user_id = await _funded(client, database, 20)
     provider.answer = {"injection": False, "confidence": 0.99, "family": None, "reason": "looks fine to me"}
     deep = await client.post("/v1/airlock/scan", json={"content": RULE_BLOCKED, "deep": True})
     body = deep.json()
     assert body["verdict"] == "block"
     assert body["score"] >= 0.75
+    assert body["semantic"]["status"] == "skipped"
     assert body["semantic"]["weight"] == 0.0
     assert [m["rule_id"] for m in body["matches"]] == ["IO-001"]
+    assert provider.calls == 0, "nothing to gain from the model; it was not called"
+    assert body["credits_charged"] == 1
+    assert body["credits_remaining"] == 19
+    assert await _balance(database, user_id) == 19
+    # The ledger says 'scan', not 'deep_scan': the customer was not sold a
+    # second opinion that could not have changed anything.
+    line = await database.fetch_one(
+        "SELECT reason, delta FROM airlock_credit_ledger WHERE user_id=%s ORDER BY created_at DESC LIMIT 1",
+        (user_id,),
+    )
+    assert (line["reason"], line["delta"]) == ("scan", -1)
 
 
 @pytest.mark.asyncio
@@ -222,10 +239,11 @@ async def test_an_unavailable_model_refunds_the_extra_and_says_so(context):
     provider.fail = True
     user_id = await _funded(client, database, 10)
 
-    deep = await client.post("/v1/airlock/scan", json={"content": RULE_BLOCKED, "deep": True})
+    # Benign on rules, so the model IS asked (and fails).
+    deep = await client.post("/v1/airlock/scan", json={"content": BENIGN, "deep": True})
     assert deep.status_code == 200, deep.text
     body = deep.json()
-    assert body["verdict"] == "block", "the rule verdict stands on its own"
+    assert body["verdict"] == "allow", "the rule verdict stands on its own"
     assert body["semantic"] == {
         "status": "unavailable",
         "injection": False,

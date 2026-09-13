@@ -16,6 +16,7 @@ import { firstError, paymentReferenceSchema } from "../validation";
 import { usePolling } from "../use-polling";
 import { AirlockMark } from "./airlock-mark";
 import { PendingClaim } from "../pending-claim";
+import { PolicyEditor, UsagePanel } from "./policy-panel";
 
 // The panel is live, not a snapshot: it re-reads the balance, the keys and
 // the claims every POLL_MS while the tab is visible (and immediately on
@@ -95,8 +96,10 @@ export function AirlockPanel({ isFounder }: { isFounder: boolean }) {
         )}
 
         <Keys />
+        <PolicyEditor />
         {/* The founder is not metered, so there is nothing for them to buy. */}
         {!isFounder && <BuyCredits onChanged={refresh} />}
+        {!isFounder && <UsagePanel />}
         {credits && credits.statement.length > 0 && <Statement entries={credits.statement} />}
       </Card>
     </section>

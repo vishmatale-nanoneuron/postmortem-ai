@@ -15,6 +15,7 @@ import hashlib
 import re
 import time
 import unicodedata
+from collections.abc import Collection
 from dataclasses import dataclass, field
 
 from .rules import INVISIBLE_CHARS, RULES, TAG_BLOCK, Rule
@@ -135,7 +136,12 @@ class Detector:
         text: str,
         block_threshold: float = 0.75,
         flag_threshold: float = 0.40,
+        muted: Collection[str] = (),
     ) -> Detection:
+        """`muted` is per call, not per instance, so one compiled Detector
+        serves every account: a muted rule is skipped before its regex runs,
+        which costs nothing, where a Detector per account would recompile
+        30 patterns on every request."""
         started = time.perf_counter()
         raw = text or ""
         sha = hashlib.sha256(raw.encode("utf-8", "ignore")).hexdigest()
@@ -144,6 +150,8 @@ class Detector:
         matches: list[Match] = []
 
         for rule, compiled in self._compiled:
+            if muted and rule.id in muted:
+                continue
             m = compiled.search(normalized)
             if m:
                 start = max(0, m.start() - 60)

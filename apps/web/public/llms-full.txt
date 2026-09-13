@@ -396,8 +396,12 @@ content. Two directions:
   hijack, delimiter break, exfiltration, tool abuse, authority spoof, memory
   poison, encoding). Scores combine with noisy-OR rather than addition, so
   several weak signals cannot sum to false certainty. Block at 0.75, flag at
-  0.40.
-- **Outbound.** Destination checked against an allowlist; payload checked
+  0.40 by default; each account can set its own thresholds and mute rules
+  (policy, below). With `"sanitize": true` the response also carries a
+  `sanitized` copy of the content with hidden characters, hidden HTML and
+  the strongest matches removed, at no extra charge.
+- **Outbound.** Destination checked against an allowlist (the call's list
+  merged with the account policy's standing list); payload checked
   against 11 credential patterns (AWS access key and secret, Anthropic,
   OpenAI, GitHub, Slack, Google, Stripe, private keys, JWTs, bearer tokens)
   and 7 personal-data patterns (email, E.164 phone, credit card, SSN,
@@ -417,18 +421,38 @@ rejecting TRUNCATE. The second is not redundant: TRUNCATE fires no row-level
 trigger, and was verified to empty the table silently before it was added.
 
 By default there is no model call and no network request in the decision
-path, so the scanner has no undecided state; a failure is a 5xx carrying no
-verdict and no charge, which a caller must treat as block. There is no CSV
-export endpoint yet -- `GET /v1/airlock/stats` returns aggregates only.
+path, so the scanner has no undecided state; a failure is a 5xx that
+carries `"verdict": "block"` in its body and no charge -- the guard fails
+closed, and a client that reads the body before the status agrees with one
+that does not. `GET /v1/airlock/stats` returns public aggregates only; the
+customer's own usage is at `GET /v1/airlock/usage` (per day, per key) and
+`GET /v1/airlock/usage.csv` (every ledger line), both drawn from the credit
+ledger, never the audit log, because the audit log has no account column.
+
+**Policy (per account, migration 0034).** `GET /v1/airlock/policy` (key or
+session) returns `block_threshold`, `flag_threshold`, `muted_rules` and
+`egress_allowlist`; `PUT` replaces it and `DELETE` resets it, from a
+signed-in session only. A key can read the policy it runs under and cannot
+change it, so a leaked key cannot raise the block threshold and switch the
+guard off. Muted rules are skipped before their pattern runs; the policy
+row is fetched in the same query as the key, so a keyed scan pays no extra
+round trip. Every scan response names the policy applied. The rule
+vocabulary (id, family, weight, description; not the patterns) is public
+at `GET /v1/airlock/rules`.
 
 **Deep scan (opt-in per call, `"deep": true`, 5 credits).** After the rules
 run, the same Gemini provider that drafts postmortems (app/airlock/
 semantic.py) classifies the content and its answer enters the same noisy-OR
 as one more weighted term, capped at 0.85 -- below the strongest single
 rule. It can only raise a verdict, never lower one: its weight is zero
-unless it says "injection". If Gemini is unavailable or answers
-unparseably, the response says `semantic.status: "unavailable"`, the rule
-verdict stands, and the 4 extra credits are refunded as a ledger line. A
+unless it says "injection". When the rules alone already block, the model
+is not asked (it could not change anything), the call is charged as an
+ordinary scan (1 credit) and the response says `semantic.status:
+"skipped"`. There is deliberately no lower bound: the paraphrased attack
+that scores 0.00 on rules is the case the second opinion exists for. If
+Gemini is unavailable or answers unparseably, the response says
+`semantic.status: "unavailable"`, the rule verdict stands, and the 4 extra
+credits are refunded as a ledger line. A
 deep scan sends the content to Google's Gemini API; the audit row still
 holds only the hash. The classifier's contribution is recorded as rule id
 `AI-001`.
@@ -479,17 +503,22 @@ IBAN, card, email) plus US SSN and Indian Aadhaar/PAN.
 misreported.** Two halves, and they differ:
 
 RUNNING NOW -- the detection engine, the egress check, the Gemini deep
-scan, the append-only audit log, API keys (hashed, revocable), prepaid
-credits with an atomic per-call meter, a readable ledger, pack purchase via
-UPI/wire claims, and the dashboard to buy, mint and revoke -- all served
-from this site's own FastAPI backend under `/v1/airlock`. The playground at
+scan, sanitize-on-request, the append-only audit log, API keys (hashed,
+revocable), prepaid credits with an atomic per-call meter, a per-account
+policy (thresholds, muted rules, standing egress allowlist), the public
+rule list, usage by day and key with CSV export, a readable ledger, pack
+purchase via UPI/wire claims, fail-closed 5xx bodies, and the dashboard to
+buy, mint, revoke and tune -- all served from this site's own FastAPI
+backend under `/v1/airlock`. The playground at
 https://www.nanoneuron.ai/airlock calls the real endpoint from the
 signed-in account's credits.
 
-NOT BUILT -- server-side per-tenant thresholds and egress
-allowlists (both are per-call parameters today), any support or uptime
-commitment, and a self-hosted build; the early-access list on that page is
-for the self-hosted build only.
+NOT BUILT -- a proxy mode (Airlock fetching a URL or forwarding a call on
+the caller's behalf, so the check cannot be skipped), alert webhooks, any
+support or uptime commitment, and a self-hosted build; the early-access
+list on that page is for the self-hosted build only. NOT PLANNED -- a free
+plan or trial (every scan is paid, including the first), and any card
+processor (UPI and international wire are the only rails).
 
 **On accuracy claims:** the repository contains a 43-case corpus written by
 us -- 30 attacks (at least one per rule, including payloads hidden in

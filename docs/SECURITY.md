@@ -112,12 +112,32 @@ posture is stricter than the rest of the product's:
   once at creation, and a revoked key answers exactly like a wrong one.
   Both schemes are declared in the OpenAPI document.
 - **Metering cannot double-spend.** One credit per call (five with
-  `"deep": true`) is taken by a single conditional `UPDATE` on a balance
-  row with `CHECK (balance >= 0)`, in the same transaction as the ledger
-  line; Postgres serialises concurrent debits on the row lock. Proven by
+  `"deep": true`, one when the rules already block and the model is not
+  asked) is taken by a single conditional `UPDATE` on a balance row with
+  `CHECK (balance >= 0)`, in the same transaction as the ledger line;
+  Postgres serialises concurrent debits on the row lock. Proven by
   `tests/test_airlock_billing.py`: fifty concurrent scans against ten
   credits yield exactly ten 200s and forty 402s. A refused call (401, 402,
   422, 429) or a 5xx charges nothing.
+- **Fails closed.** A 5xx on `/v1/airlock/scan` or `/v1/airlock/egress`
+  carries `"verdict": "block"` in its body (`main.py`'s unhandled-exception
+  handler consults `FAIL_CLOSED_PATHS`), so a client that reads the body
+  before the status still reads a block. Other routes' 500s are undecorated.
+  Pinned by `tests/test_airlock_policy.py`.
+- **Policy is written by people, read by keys.** The per-account policy
+  (`airlock_policies`, migration 0034: thresholds, muted rules, standing
+  egress allowlist) is readable with a key and writable only from a
+  signed-in session. A leaked key can therefore see the policy it runs
+  under but cannot raise the block threshold to 1.0, mute every rule, or
+  allowlist a host -- switching the guard off needs the dashboard
+  password. Rule ids are validated against the live rule list, allowlist
+  entries must be hostnames, and `flag <= block` is a database `CHECK`.
+  The per-call `allowlist` on an egress call is unioned with the policy's,
+  never substituted for it.
+- **Usage exports come from the ledger, not the audit log.** `GET
+  /v1/airlock/usage` and `/usage.csv` read `airlock_credit_ledger`, which
+  is attributed and cascades with the account. The audit log has no
+  account column and cannot be exported per customer by construction.
 - **Content is never stored.** The audit table (`airlock_scan_events`,
   migration 0031) has a SHA-256, byte count, verdict and rule ids -- no
   content column, no account column, no IP. It is append-only by two

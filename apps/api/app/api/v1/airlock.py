@@ -27,23 +27,27 @@ not exist yet. It answers 202 whether the address was new or already on
 the list, so the response can never be used to learn who signed up.
 """
 
+import csv
 import hashlib
+import io
 import logging
 import secrets
 import time
+from datetime import UTC, datetime
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, Security, status
+from fastapi.responses import StreamingResponse
 from fastapi.concurrency import run_in_threadpool
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
 
 from ...ai.model_router import create_model_provider
 from ...ai.provider import ModelProvider
-from ...airlock import Detector, check_egress
-from ...airlock.rules import RULES_BY_ID
+from ...airlock import Detector, check_egress, sanitize
+from ...airlock.rules import RULES, RULES_BY_ID
 from ...airlock.semantic import (
     DEEP_SCAN_EXTRA_CREDITS,
     SEMANTIC_MAX_WEIGHT,
@@ -65,9 +69,22 @@ from ...cqrs.airlock_billing import (
     handle_debit_credit,
     handle_grant_credits,
     handle_issue_api_key,
+    handle_ledger_lines_query,
     handle_ledger_query,
     handle_revoke_api_key,
+    handle_usage_query,
     resolve_api_key,
+)
+from ...cqrs.airlock_policy import (
+    DEFAULT_POLICY,
+    MAX_ALLOWLIST_HOSTS,
+    MAX_MUTED_RULES,
+    InvalidPolicy,
+    Policy,
+    SetPolicyCommand,
+    handle_policy_query,
+    handle_reset_policy,
+    handle_set_policy,
 )
 from ...cqrs.airlock_scan import RecordScanCommand, handle_record_scan, handle_scan_stats_query
 from ...cqrs.airlock_waitlist import (
@@ -112,6 +129,12 @@ _DETECTOR = Detector()
 router = APIRouter(prefix="/v1/airlock", tags=["airlock"])
 
 KEY_HEADER = "X-Airlock-Key"
+
+# Fail closed. The page tells integrators to treat any non-200 as a block;
+# the 500 body says so itself, so a client that parses the body before the
+# status (they exist) still reads "block". main.py's unhandled-exception
+# handler consults this set. Nothing else about the 500 changes.
+FAIL_CLOSED_PATHS = frozenset({"/v1/airlock/scan", "/v1/airlock/egress"})
 
 # Declared, not just parsed: these put the key in the OpenAPI document as a
 # real security scheme, so /docs gets an Authorize button and a generated
@@ -192,6 +215,9 @@ class AirlockPrincipal:
     # demo or a test from the founder's own account should not need a
     # purchase from themselves.
     is_founder: bool
+    # The account's thresholds, muted rules and standing allowlist. Comes
+    # with the key lookup for the API; one extra read for the playground.
+    policy: Policy = DEFAULT_POLICY
 
 
 async def airlock_principal(
@@ -205,7 +231,9 @@ async def airlock_principal(
     if secret:
         resolved = await resolve_api_key(database, secret)
         if resolved is not None:
-            return AirlockPrincipal(user_id=resolved.user_id, api_key_id=resolved.id, is_founder=False)
+            return AirlockPrincipal(
+                user_id=resolved.user_id, api_key_id=resolved.id, is_founder=False, policy=resolved.policy
+            )
         # An invalid key is counted against the IP and, past the cap, refused
         # with a 429 before the database is asked again. A 256-bit key cannot
         # be guessed, so this is not about brute force; it is about a
@@ -217,7 +245,8 @@ async def airlock_principal(
 
     user = await _resolve_user_from_cookie(request, database, settings)
     if user is not None:
-        return AirlockPrincipal(user_id=user.id, api_key_id=None, is_founder=user.is_founder)
+        policy = await handle_policy_query(database, user.id)
+        return AirlockPrincipal(user_id=user.id, api_key_id=None, is_founder=user.is_founder, policy=policy)
 
     if not await try_record_airlock_scan_attempt(database, client_ip(request)):
         raise _rate_limited()
@@ -327,6 +356,12 @@ class ScanIn(BaseModel):
     # DEEP_SCAN_EXTRA_CREDITS more, sends the content to Google's API, and
     # can only make the verdict stricter -- see airlock/semantic.py.
     deep: bool = False
+    # Also return the content with hidden characters, hidden HTML and the
+    # highest-weight matches removed (airlock/detector.sanitize) -- for a
+    # pipeline that would rather pass on a defanged document than drop it.
+    # No extra charge; off by default so an ordinary verdict is not twice
+    # the size of the content it judged.
+    sanitize: bool = False
 
 
 class MatchOut(BaseModel):
@@ -355,8 +390,17 @@ class ScanOut(BaseModel):
     # the extra was refunded. 0 for the founder.
     credits_charged: int
     # Present only on a deep scan: the model's answer, its confidence, the
-    # weight it contributed, or status "unavailable" with weight 0.
+    # weight it contributed; status "unavailable" with weight 0 when the
+    # model could not be asked; status "skipped" when the rules already
+    # blocked and the model could not have changed the verdict.
     semantic: dict | None = None
+    # The content after airlock/detector.sanitize, when `sanitize` was
+    # requested. None otherwise.
+    sanitized: str | None = None
+    # The thresholds this verdict was judged against and the rules that were
+    # not consulted -- the account's policy (PUT /policy), so a verdict can
+    # be explained without a second call.
+    policy: dict = Field(default_factory=dict)
 
 
 class EgressIn(BaseModel):
@@ -372,11 +416,11 @@ class EgressOut(BaseModel):
     secrets_found: list[str]
     pii_found: dict
     destination: str | None
-    # False when no allowlist was supplied, in which case ANY destination
-    # passes and only the payload was examined. Returned explicitly because
-    # the alternative is a caller believing they have a destination control
-    # they never configured -- the failure mode of a security default that
-    # is silently permissive.
+    # False when no allowlist was supplied on the call OR in the account's
+    # policy, in which case ANY destination passes and only the payload was
+    # examined. Returned explicitly because the alternative is a caller
+    # believing they have a destination control they never configured --
+    # the failure mode of a security default that is silently permissive.
     destination_checked: bool
     # The payload with credential material and personal data replaced, so a
     # caller can see exactly what would have been safe to send.
@@ -401,21 +445,36 @@ async def scan(
     settings: Settings = Depends(get_settings),
 ) -> ScanOut:
     """Score untrusted content for prompt injection, before it reaches an
-    agent's context window. One credit per call (five with `deep`); 402
-    with nothing scanned when the balance is short."""
-    # Charge before scanning, not after: a caller with no credits gets the
-    # 402 without the engine running for them, and a caller with credits is
-    # charged for exactly the calls that return a verdict. The detector is
-    # pure and does not fail, so there is no "charged but no answer" path.
-    # A deep scan is taken as one debit for the whole price, so a caller
-    # either affords the second opinion or is told so up front.
-    cost = 1 + DEEP_SCAN_EXTRA_CREDITS if payload.deep else 1
-    remaining = await _charge(database, principal, "deep_scan" if payload.deep else "scan", cost)
+    agent's context window. One credit per call (five with `deep`, unless
+    the rules alone already block, when the model is not asked and one
+    credit is charged); 402 with nothing returned when the balance is
+    short. Any 5xx carries `verdict: "block"`: fail closed."""
+    policy = principal.policy
+    started = time.perf_counter()
+    # The rules run before the charge, not after: the price of a deep scan
+    # depends on what the rules found (see below), and the engine is pure,
+    # bounded by MAX_SCAN_CHARS and a few milliseconds -- not worth a
+    # second round trip to price first. A caller with no credits still gets
+    # a 402 with no verdict in it.
+    detection = _DETECTOR.scan(
+        payload.content,
+        block_threshold=policy.block_threshold,
+        flag_threshold=policy.flag_threshold,
+        muted=policy.muted_rules,
+    )
+    verdict, score = detection.verdict, detection.score
+
+    # A deep scan is only worth its price when the model can move the
+    # verdict. It can only raise one (semantic.combine), so once the rules
+    # already say block there is nothing for it to do: skip the call, charge
+    # the ordinary price, and say so. The other direction is deliberately
+    # NOT bounded -- the paraphrased attack that scores 0.00 on rules is the
+    # case the second opinion exists for.
+    ask_model = payload.deep and verdict != "block"
+    cost = 1 + DEEP_SCAN_EXTRA_CREDITS if ask_model else 1
+    remaining = await _charge(database, principal, "deep_scan" if ask_model else "scan", cost)
     charged = 0 if principal.is_founder else cost
 
-    started = time.perf_counter()
-    detection = _DETECTOR.scan(payload.content)
-    verdict, score = detection.verdict, detection.score
     matched_rules = [match.rule_id for match in detection.matches]
     matches = [
         MatchOut(
@@ -429,11 +488,17 @@ async def scan(
     families = list(detection.families)
     semantic: dict | None = None
 
-    if payload.deep:
+    if payload.deep and not ask_model:
+        semantic = {
+            "status": "skipped",
+            "reason": "The rules already block this content; a second opinion can only raise a verdict.",
+            "weight": 0.0,
+        }
+    elif ask_model:
         opinion = await semantic_opinion(model_provider, payload.content)
         semantic = opinion.as_dict()
         if opinion.status == "ok":
-            score, verdict = combine(detection.score, opinion)
+            score, verdict = combine(detection.score, opinion, policy.block_threshold, policy.flag_threshold)
             if opinion.weight > 0:
                 # The model's contribution appears alongside the rules, under
                 # its own id, so the audit row and the response both say the
@@ -464,6 +529,7 @@ async def scan(
                 ),
             )
             charged = 1
+    sanitized = sanitize(payload.content, detection) if payload.sanitize else None
     latency_ms = int((time.perf_counter() - started) * 1000)
 
     await _notify_balance_crossings(database, settings, principal, remaining, charged)
@@ -494,7 +560,18 @@ async def scan(
         credits_remaining=remaining,
         credits_charged=charged,
         semantic=semantic,
+        sanitized=sanitized,
+        policy=_policy_summary(policy),
     )
+
+
+def _policy_summary(policy: Policy) -> dict:
+    return {
+        "block_threshold": policy.block_threshold,
+        "flag_threshold": policy.flag_threshold,
+        "muted_rules": list(policy.muted_rules),
+        "default": policy.is_default,
+    }
 
 
 @router.post("/egress", response_model=EgressOut, responses=METERED_RESPONSES)
@@ -510,10 +587,15 @@ async def egress(
     remaining = await _charge(database, principal, "egress")
     await _notify_balance_crossings(database, settings, principal, remaining, 0 if principal.is_founder else 1)
     started = time.perf_counter()
+    # The standing allowlist from the account's policy plus whatever the
+    # call names. A union, never a replacement: a per-call list can widen
+    # what the policy allows for one call, and cannot silently drop the
+    # policy's entries.
+    allowlist = list(dict.fromkeys([*principal.policy.egress_allowlist, *payload.allowlist]))
     verdict = check_egress(
         payload=payload.payload,
         destination=payload.destination,
-        allowlist=list(payload.allowlist),
+        allowlist=allowlist,
     )
     latency_ms = int((time.perf_counter() - started) * 1000)
 
@@ -537,7 +619,7 @@ async def egress(
         secrets_found=list(verdict.secrets_found),
         pii_found=dict(verdict.pii_found or {}),
         destination=verdict.destination,
-        destination_checked=bool(payload.allowlist),
+        destination_checked=bool(allowlist),
         redacted=verdict.redacted,
         credits_remaining=remaining,
         credits_charged=0 if principal.is_founder else 1,
@@ -565,6 +647,190 @@ async def stats(response: Response, database: Database = Depends(get_database)) 
     response.headers["Cache-Control"] = "public, max-age=60, s-maxage=60"
     counts = await handle_scan_stats_query(database)
     return ScanStatsOut(**vars(counts))
+
+
+# ---------------------------------------------------------------------------
+# Rules. Public: the ids, families, weights and descriptions are the
+# vocabulary every verdict is written in, and a customer muting a rule
+# from the dashboard needs the list to choose from. The patterns
+# themselves are not served -- they are the engine, not the contract.
+# ---------------------------------------------------------------------------
+
+
+class RuleOut(BaseModel):
+    id: str
+    family: str
+    weight: float
+    description: str
+
+
+class RulesOut(BaseModel):
+    count: int
+    families: list[str]
+    rules: list[RuleOut]
+
+
+@router.get("/rules", response_model=RulesOut)
+async def list_rules(response: Response) -> RulesOut:
+    """Every rule the scanner runs, in the order it runs them. Changes only
+    with a deploy, so cached like /pricing."""
+    response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"
+    return RulesOut(
+        count=len(RULES),
+        families=sorted({rule.family for rule in RULES}),
+        rules=[RuleOut(id=r.id, family=r.family, weight=r.weight, description=r.description) for r in RULES],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Policy. Readable with a key (an SDK can show what it is running under);
+# writable only from a signed-in session, like keys: a leaked key must not
+# be able to raise the block threshold to 1.0 and switch the guard off.
+# ---------------------------------------------------------------------------
+
+
+class PolicyIn(BaseModel):
+    block_threshold: float = Field(default=0.75, gt=0, le=1)
+    flag_threshold: float = Field(default=0.40, gt=0, le=1)
+    muted_rules: list[str] = Field(default_factory=list, max_length=MAX_MUTED_RULES)
+    egress_allowlist: list[str] = Field(default_factory=list, max_length=MAX_ALLOWLIST_HOSTS)
+
+
+class PolicyOut(PolicyIn):
+    # True while the account has never saved a policy (the defaults apply).
+    default: bool
+    updated_at: int | None
+
+
+def _policy_out(policy: Policy) -> PolicyOut:
+    return PolicyOut(
+        block_threshold=policy.block_threshold,
+        flag_threshold=policy.flag_threshold,
+        muted_rules=list(policy.muted_rules),
+        egress_allowlist=list(policy.egress_allowlist),
+        default=policy.is_default,
+        updated_at=policy.updated_at,
+    )
+
+
+@router.get("/policy", response_model=PolicyOut, responses={401: METERED_RESPONSES[401], 429: METERED_RESPONSES[429]})
+async def get_policy(principal: AirlockPrincipal = Depends(airlock_principal)) -> PolicyOut:
+    """The policy every scan and egress call on this account is judged
+    under. Not metered."""
+    return _policy_out(principal.policy)
+
+
+@router.put("/policy", response_model=PolicyOut)
+async def put_policy(
+    payload: PolicyIn,
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> PolicyOut:
+    """Replaces the whole policy. Rule ids must exist (GET /rules);
+    allowlist entries must be hostnames or host suffixes; flag_threshold
+    cannot exceed block_threshold. Takes effect on the next call."""
+    try:
+        policy = await handle_set_policy(
+            database,
+            SetPolicyCommand(
+                user_id=user.id,
+                block_threshold=payload.block_threshold,
+                flag_threshold=payload.flag_threshold,
+                muted_rules=payload.muted_rules,
+                egress_allowlist=payload.egress_allowlist,
+            ),
+        )
+    except InvalidPolicy as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from None
+    return _policy_out(policy)
+
+
+@router.delete("/policy", response_model=PolicyOut)
+async def reset_policy(
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> PolicyOut:
+    """Back to the defaults."""
+    return _policy_out(await handle_reset_policy(database, user.id))
+
+
+# ---------------------------------------------------------------------------
+# Usage. The customer's own ledger, by day and by key, and as CSV. This is
+# attributed data (it is theirs, and erased with the account), which is
+# why it comes from the ledger and not from the audit log: the audit log
+# holds no account column on purpose, so it can stay append-only while
+# deletion stays an erasure.
+# ---------------------------------------------------------------------------
+
+MAX_USAGE_DAYS = 366
+MAX_EXPORT_ROWS = 50_000
+
+
+class UsageDayOut(BaseModel):
+    day: str  # YYYY-MM-DD, UTC
+    key_prefix: str | None
+    scans: int
+    deep_scans: int
+    egress: int
+    refunds: int
+    # Net credits spent that day on that key (positive number).
+    credits: int
+
+
+class UsageOut(BaseModel):
+    days: int
+    total_credits: int
+    rows: list[UsageDayOut]
+
+
+@router.get("/usage", response_model=UsageOut, responses={401: METERED_RESPONSES[401], 429: METERED_RESPONSES[429]})
+async def usage(
+    days: int = Query(default=30, ge=1, le=MAX_USAGE_DAYS),
+    database: Database = Depends(get_database),
+    principal: AirlockPrincipal = Depends(airlock_principal),
+) -> UsageOut:
+    """Calls per day per key over the last `days` days. Not metered."""
+    rows = await handle_usage_query(database, principal.user_id, days=days)
+    out = [UsageDayOut(**vars(row)) for row in rows]
+    return UsageOut(days=days, total_credits=sum(row.credits for row in out), rows=out)
+
+
+@router.get(
+    "/usage.csv",
+    responses={
+        200: {"content": {"text/csv": {}}, "description": "One ledger line per row, newest first."},
+        401: METERED_RESPONSES[401],
+        429: METERED_RESPONSES[429],
+    },
+)
+async def usage_csv(
+    days: int = Query(default=90, ge=1, le=MAX_USAGE_DAYS),
+    database: Database = Depends(get_database),
+    principal: AirlockPrincipal = Depends(airlock_principal),
+) -> StreamingResponse:
+    """Every ledger line (purchases, grants, each metered call, refunds)
+    for the last `days` days as CSV -- for a spreadsheet, or an auditor.
+    Capped at MAX_EXPORT_ROWS lines; narrow the window for more."""
+    lines = await handle_ledger_lines_query(database, principal.user_id, days=days, limit=MAX_EXPORT_ROWS)
+
+    def rows():
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["timestamp_utc", "reason", "delta", "key_prefix", "reference"])
+        yield buffer.getvalue()
+        for line in lines:
+            buffer.seek(0)
+            buffer.truncate()
+            stamp = datetime.fromtimestamp(line.created_at / 1000, tz=UTC).isoformat(timespec="seconds")
+            writer.writerow([stamp, line.reason, line.delta, line.key_prefix or "", line.reference or ""])
+            yield buffer.getvalue()
+
+    today = datetime.now(tz=UTC).date().isoformat()
+    return StreamingResponse(
+        rows(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="airlock-usage-{today}.csv"'},
+    )
 
 
 # ---------------------------------------------------------------------------
