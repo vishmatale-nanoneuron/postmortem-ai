@@ -470,6 +470,15 @@ resolves where), and carry `"verdict": "block"`. An application error
 after any charge refunds that charge on the ledger. Deep scan adds 4 credits, refunded when the rules
 already block.
 
+**Rule pages.** Every detection rule has its own page at
+https://www.nanoneuron.ai/airlock/rules/<id lower-cased> (index at
+/airlock/rules): what it catches, its weight and what that weight means
+under noisy-OR, its family, its language (the 1xx series is German), how
+many injections it fired on in the public benchmark, and how to mute it
+for an account. Generated at build time from apps/web/app/airlock/rules.json,
+which a test pins to apps/api/app/airlock/rules.py; the patterns are never
+published there.
+
 **SDKs.** Official clients in the repository under sdk/python (package
 `nanoneuron-airlock`, `from airlock import Airlock` / `AsyncAirlock`; httpx
 only) and sdk/typescript (package `nanoneuron-airlock`, `new Airlock({ apiKey

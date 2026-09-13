@@ -46,3 +46,14 @@ def test_the_published_numbers_are_the_honest_shape() -> None:
     assert len(published["misses"]) == overall["injections"] - overall["caught"]
     assert published["license"] == "CC BY 4.0" and "deepset" in published["dataset"]
     assert published["engine"]["deep_scan"] is False
+
+
+def test_the_website_rule_pages_match_the_engine() -> None:
+    """apps/web/app/airlock/rules.json feeds /airlock/rules/[id]; it must be
+    exactly what rules.py says, and must never carry a pattern."""
+    import export_rules
+
+    web = json.loads((API_ROOT.parent / "web" / "app" / "airlock" / "rules.json").read_text(encoding="utf-8"))
+    assert web == export_rules.export(), "re-run scripts/export_rules.py and commit rules.json"
+    assert all("pattern" not in rule for rule in web["rules"])
+    assert all(rule["description"] for rule in web["rules"])

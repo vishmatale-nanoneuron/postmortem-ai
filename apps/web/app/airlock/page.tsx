@@ -491,7 +491,8 @@ export default async function AirlockPage() {
             characters decoded, invisible characters stripped, HTML comments and hidden elements pulled out, letter
             s p a c i n g collapsed &mdash; because an injection that survives only until someone looks at the raw
             bytes is the whole trick. The normalised text is then scored against{" "}
-            <span className="font-medium text-ink">30 weighted rules across 8 attack families</span>. Scores combine
+            <span className="font-medium text-ink">{RULE_COUNT} weighted rules across 8 attack families</span>{" "}
+            (<Link className="underline underline-offset-2" href="/airlock/rules">every rule, in the open</Link>). Scores combine
             with noisy-OR, not addition: three weak signals raise suspicion without three of them being able to
             manufacture certainty. At 0.75 the verdict is block; at 0.40, flag.
           </p>
