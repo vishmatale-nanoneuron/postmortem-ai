@@ -68,17 +68,17 @@ export function Hero() {
           <Sparkles className="size-3 text-accent" />
           PostMortem AI · for DevOps, SRE, and freelance consultants
         </Badge>
-        <h1 className="mt-5 animate-in fade-in slide-in-from-bottom-3 text-4xl leading-[1.1] font-semibold tracking-tight text-ink duration-700 sm:text-6xl delay-100 fill-mode-backwards">
+        <h1 className="mt-5 animate-in slide-in-from-bottom-3 text-4xl leading-[1.1] font-semibold tracking-tight text-ink duration-700 sm:text-6xl delay-100">
           Postmortems that{" "}
           <span className="hero-gradient-text bg-gradient-to-r from-accent via-accent/70 to-accent/60 bg-clip-text text-transparent">
             cite their evidence.
           </span>
         </h1>
-        <p className="mx-auto mt-5 max-w-xl animate-in fade-in slide-in-from-bottom-3 text-lg text-muted duration-700 delay-200 fill-mode-backwards">
+        <p className="mx-auto mt-5 max-w-xl animate-in slide-in-from-bottom-3 text-lg text-muted duration-700">
           Skip the Friday-afternoon postmortem slog — get an AI-drafted writeup where every claim traces back to a
           real, recorded entry. Anything the evidence doesn&apos;t support is marked unsupported, never invented.
         </p>
-        <div className="mt-9 flex animate-in fade-in slide-in-from-bottom-3 flex-wrap items-center justify-center gap-x-4 gap-y-3 duration-700 delay-300 fill-mode-backwards">
+        <div className="mt-9 flex animate-in slide-in-from-bottom-3 flex-wrap items-center justify-center gap-x-4 gap-y-3 duration-700">
           <a
             href="#get-started"
             className={cn(
