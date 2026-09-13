@@ -69,7 +69,7 @@ export default function DocsPage() {
         <>
           <h2 className={h2}>Airlock API</h2>
           <p className={p}>
-            Two endpoints, JSON in and JSON out, on{" "}
+            Two decision endpoints plus policy, rules and usage, JSON in and JSON out, on{" "}
             <code className={code}>https://postmortem-ai-api.vercel.app</code>. The interactive reference (every
             field, every response code, an Authorize button that takes your key) is the{" "}
             <a className="underline underline-offset-2" href="https://postmortem-ai-api.vercel.app/docs" target="_blank" rel="noopener noreferrer">
@@ -86,8 +86,9 @@ export default function DocsPage() {
           <p className={p}>
             <span className="font-medium text-ink">Credits.</span> One credit per call to{" "}
             <code className={code}>POST /v1/airlock/scan</code> or <code className={code}>POST /v1/airlock/egress</code>;
-            five for a scan with <code className={code}>&quot;deep&quot;: true</code>. Taken before the engine runs, atomically.
-            An empty balance is <code className={code}>402</code> with nothing scanned; a refused or failed call
+            five for a scan with <code className={code}>&quot;deep&quot;: true</code> (one when the rules alone already
+            block -- the model is not asked what it cannot change). Taken atomically, in one debit.
+            An empty balance is <code className={code}>402</code> with no verdict returned; a refused or failed call
             (<code className={code}>401</code>, <code className={code}>402</code>, <code className={code}>422</code>,{" "}
             <code className={code}>429</code>, any <code className={code}>5xx</code>) spends nothing. Every response carries{" "}
             <code className={code}>credits_remaining</code> and <code className={code}>credits_charged</code>; you are
@@ -95,26 +96,52 @@ export default function DocsPage() {
             from the dashboard by UPI or international wire.
           </p>
           <p className={p}>
-            <span className="font-medium text-ink">Scan.</span> Body <code className={code}>{"{ content, source?, deep? }"}</code>{" "}
-            (content up to 50,000 characters). Returns <code className={code}>verdict</code> (allow · flag · block),{" "}
-            <code className={code}>score</code> (block at 0.75, flag at 0.40), <code className={code}>matches</code> (rule id,
-            family, weight, description), <code className={code}>signals</code> (what normalisation uncovered),{" "}
-            <code className={code}>content_sha256</code>, <code className={code}>latency_ms</code>, and on a deep scan{" "}
-            <code className={code}>semantic</code> (the model&apos;s answer, confidence and weight, or{" "}
-            <code className={code}>status: &quot;unavailable&quot;</code> with the extra credits refunded).
+            <span className="font-medium text-ink">Scan.</span> Body{" "}
+            <code className={code}>{"{ content, source?, deep?, sanitize? }"}</code> (content up to 50,000 characters).
+            Returns <code className={code}>verdict</code> (allow · flag · block), <code className={code}>score</code>{" "}
+            (judged against your policy&apos;s thresholds; block at 0.75 and flag at 0.40 by default),{" "}
+            <code className={code}>matches</code> (rule id, family, weight, description), <code className={code}>signals</code>{" "}
+            (what normalisation uncovered), <code className={code}>policy</code> (the thresholds and muted rules
+            applied), <code className={code}>content_sha256</code>, <code className={code}>latency_ms</code>; with{" "}
+            <code className={code}>sanitize</code>, a <code className={code}>sanitized</code> copy with hidden characters,
+            hidden HTML and the strongest matches removed, at no extra charge; and on a deep scan{" "}
+            <code className={code}>semantic</code> (the model&apos;s answer, confidence and weight;{" "}
+            <code className={code}>status: &quot;unavailable&quot;</code> with the extra credits refunded; or{" "}
+            <code className={code}>status: &quot;skipped&quot;</code> when the rules already blocked).
           </p>
           <p className={p}>
             <span className="font-medium text-ink">Egress.</span> Body{" "}
             <code className={code}>{"{ payload, destination?, allowlist? }"}</code>. Returns the verdict, the credential
-            and personal-data patterns found, <code className={code}>destination_checked</code> (false when no allowlist
-            was supplied -- then any destination passes), and <code className={code}>redacted</code>, the payload with
-            secrets and personal data replaced, or null when there was nothing to redact.
+            and personal-data patterns found, <code className={code}>destination_checked</code> (false when neither the
+            call nor your policy supplied an allowlist -- then any destination passes), and{" "}
+            <code className={code}>redacted</code>, the payload with secrets and personal data replaced, or null when
+            there was nothing to redact. The call&apos;s allowlist is merged with the policy&apos;s, never substituted
+            for it.
+          </p>
+          <p className={p}>
+            <span className="font-medium text-ink">Policy.</span> <code className={code}>GET /v1/airlock/policy</code>{" "}
+            (key or session) returns the account&apos;s <code className={code}>block_threshold</code>,{" "}
+            <code className={code}>flag_threshold</code>, <code className={code}>muted_rules</code> and{" "}
+            <code className={code}>egress_allowlist</code>; <code className={code}>PUT</code> replaces it and{" "}
+            <code className={code}>DELETE</code> resets it, both from a signed-in session only -- a key cannot
+            change the policy it runs under, so a leaked key cannot switch the guard off. The rule vocabulary is
+            public at <code className={code}>GET /v1/airlock/rules</code> (id, family, weight, description; not the
+            patterns).
+          </p>
+          <p className={p}>
+            <span className="font-medium text-ink">Usage.</span> <code className={code}>GET /v1/airlock/usage?days=30</code>{" "}
+            is your calls per day per key; <code className={code}>GET /v1/airlock/usage.csv?days=90</code> is every
+            ledger line (purchases, grants, each metered call, refunds) as a CSV download. Both are your own ledger,
+            not the audit log -- the audit log has no account column, which is what lets it stay append-only while
+            deleting your account remains an erasure. Neither is metered.
           </p>
           <p className={p}>
             <span className="font-medium text-ink">Operational.</span> Every response carries{" "}
             <code className={code}>X-Request-ID</code> (yours is echoed if you send one) and{" "}
             <code className={code}>Server-Timing</code>; every <code className={code}>429</code> carries{" "}
-            <code className={code}>Retry-After</code>. Treat any non-200 as block. The audit log keeps a SHA-256 of
+            <code className={code}>Retry-After</code>. Treat any non-200 as block; a <code className={code}>5xx</code> on
+            the scan or egress path says <code className={code}>&quot;verdict&quot;: &quot;block&quot;</code> in its own body,
+            so a client that reads the body first agrees. The audit log keeps a SHA-256 of
             what was scanned, never the content and never your account; the standard scan makes no model call.
             Public aggregate counts are at <code className={code}>GET /v1/airlock/stats</code>, prices at{" "}
             <code className={code}>GET /v1/airlock/pricing</code>.

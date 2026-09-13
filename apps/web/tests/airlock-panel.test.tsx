@@ -34,6 +34,26 @@ vi.mock("../app/api", () => ({
     submitClaim: vi.fn(),
     myClaims: vi.fn().mockResolvedValue([]),
     emailDetails: vi.fn(),
+    rules: vi.fn().mockResolvedValue({
+      count: 2,
+      families: ["exfiltration", "instruction_override"],
+      rules: [
+        { id: "IO-001", family: "instruction_override", weight: 0.8, description: "Classic override phrasing." },
+        { id: "EX-003", family: "exfiltration", weight: 0.75, description: "Asks for the system prompt." },
+      ],
+    }),
+    policy: vi.fn().mockResolvedValue({
+      block_threshold: 0.75,
+      flag_threshold: 0.4,
+      muted_rules: [],
+      egress_allowlist: [],
+      default: true,
+      updated_at: null,
+    }),
+    setPolicy: vi.fn(),
+    resetPolicy: vi.fn(),
+    usage: vi.fn().mockResolvedValue({ days: 30, total_credits: 0, rows: [] }),
+    usageCsv: vi.fn(),
   },
   airlockScan: vi.fn(),
   AirlockScanError: class AirlockScanError extends Error {
@@ -131,5 +151,75 @@ describe("Playground, signed out", () => {
     expect(screen.getByRole("link", { name: "Sign in or create an account" }).getAttribute("href")).toBe("/");
     expect(screen.getByRole("link", { name: "See pricing" }).getAttribute("href")).toBe("#pricing");
     expect(screen.queryByRole("button", { name: /Scan it/ })).toBeNull();
+  });
+});
+
+describe("PolicyEditor", () => {
+  beforeEach(() => {
+    vi.mocked(airlock.setPolicy).mockReset();
+  });
+
+  it("shows the defaults, and saves exactly what the form holds", async () => {
+    const { PolicyEditor } = await import("../app/airlock/policy-panel");
+    vi.mocked(airlock.setPolicy).mockResolvedValue({
+      block_threshold: 0.6,
+      flag_threshold: 0.4,
+      muted_rules: ["IO-001"],
+      egress_allowlist: ["api.example.com"],
+      default: false,
+      updated_at: 1,
+    });
+    render(<PolicyEditor />);
+    expect(await screen.findByText("Engine defaults")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const block = screen.getByLabelText("Block at or above");
+    await userEvent.clear(block);
+    await userEvent.type(block, "0.6");
+    await userEvent.click(await screen.findByLabelText("Mute IO-001"));
+    await userEvent.type(
+      screen.getByLabelText(/Egress allowlist/),
+      "api.example.com",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Save policy" }));
+
+    await waitFor(() => expect(airlock.setPolicy).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(airlock.setPolicy).mock.calls[0]![0]).toEqual({
+      block_threshold: 0.6,
+      flag_threshold: 0.4,
+      muted_rules: ["IO-001"],
+      egress_allowlist: ["api.example.com"],
+    });
+    expect(await screen.findByText(/Saved\. Applies to the next call/)).toBeTruthy();
+    // The summary now reflects the saved policy, not the defaults.
+    expect(screen.getByText(/Block ≥ 0\.60 · flag ≥ 0\.40 · 1 muted · 1 allowlisted/)).toBeTruthy();
+  });
+
+  it("surfaces the API's validation message instead of swallowing it", async () => {
+    const { PolicyEditor } = await import("../app/airlock/policy-panel");
+    vi.mocked(airlock.setPolicy).mockRejectedValue(new Error("flag_threshold must be in (0, block_threshold]"));
+    render(<PolicyEditor />);
+    await screen.findByText("Engine defaults");
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save policy" }));
+    expect(await screen.findByText("flag_threshold must be in (0, block_threshold]")).toBeTruthy();
+  });
+});
+
+describe("UsagePanel", () => {
+  it("renders the rows the API returned, with the total", async () => {
+    const { UsagePanel } = await import("../app/airlock/policy-panel");
+    vi.mocked(airlock.usage).mockResolvedValueOnce({
+      days: 30,
+      total_credits: 14,
+      rows: [
+        { day: "2026-09-13", key_prefix: "alk_abcdefgh", scans: 9, deep_scans: 1, egress: 0, refunds: 0, credits: 14 },
+      ],
+    });
+    render(<UsagePanel />);
+    expect(await screen.findByText("2026-09-13")).toBeTruthy();
+    expect(screen.getByText("alk_abcdefgh…")).toBeTruthy();
+    expect(screen.getByText("Total, 30 days")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Download CSV" })).toBeTruthy();
   });
 });

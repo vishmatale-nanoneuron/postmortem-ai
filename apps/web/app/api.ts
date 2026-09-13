@@ -513,18 +513,25 @@ export type AirlockScan = {
   // Balance after this call; null when the call was not charged (founder).
   credits_remaining: number | null;
   // 1, 5 for a deep scan, back to 1 if Gemini was unavailable and the
-  // extra was refunded, 0 for the founder.
+  // extra was refunded, 1 when the rules already blocked and the model
+  // was not asked, 0 for the founder.
   credits_charged: number;
-  // Only on a deep scan: the model's answer, or status "unavailable".
+  // Only on a deep scan: the model's answer, status "unavailable", or
+  // status "skipped" (the rules already blocked; nothing for it to raise).
   semantic: {
-    status: "ok" | "unavailable";
-    injection: boolean;
-    confidence: number;
-    family: string | null;
+    status: "ok" | "unavailable" | "skipped";
+    injection?: boolean;
+    confidence?: number;
+    family?: string | null;
     reason: string;
-    model: string;
+    model?: string;
     weight: number;
   } | null;
+  // The content with hidden characters, hidden HTML and the strongest
+  // matches removed. Only when the scan asked for it.
+  sanitized: string | null;
+  // The account policy this verdict was judged under.
+  policy: { block_threshold: number; flag_threshold: number; muted_rules: string[]; default: boolean };
 };
 
 export class AirlockScanError extends Error {
@@ -536,12 +543,17 @@ export class AirlockScanError extends Error {
   }
 }
 
-export async function airlockScan(content: string, source?: string, deep = false): Promise<AirlockScan> {
+export async function airlockScan(
+  content: string,
+  source?: string,
+  deep = false,
+  sanitize = false,
+): Promise<AirlockScan> {
   const response = await fetch(`${API_BASE}/v1/airlock/scan`, {
     method: "POST",
     credentials: "include",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ content, source: source ?? null, deep }),
+    body: JSON.stringify({ content, source: source ?? null, deep, sanitize }),
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
@@ -595,8 +607,55 @@ export type AirlockCredits = {
 
 export type AirlockCurrency = "INR" | "USD" | "GBP" | "EUR";
 
+export type AirlockPolicy = {
+  block_threshold: number;
+  flag_threshold: number;
+  muted_rules: string[];
+  egress_allowlist: string[];
+  // True while the account has never saved one (the engine defaults apply).
+  default: boolean;
+  updated_at: number | null;
+};
+
+export type AirlockPolicyIn = Omit<AirlockPolicy, "default" | "updated_at">;
+
+export type AirlockRule = { id: string; family: string; weight: number; description: string };
+
+export type AirlockRules = { count: number; families: string[]; rules: AirlockRule[] };
+
+export type AirlockUsageRow = {
+  day: string;
+  key_prefix: string | null;
+  scans: number;
+  deep_scans: number;
+  egress: number;
+  refunds: number;
+  credits: number;
+};
+
+export type AirlockUsage = { days: number; total_credits: number; rows: AirlockUsageRow[] };
+
 export const airlock = {
   pricing: airlockPricing,
+  rules: () => request<AirlockRules>("/v1/airlock/rules"),
+  policy: () => request<AirlockPolicy>("/v1/airlock/policy"),
+  setPolicy: (policy: AirlockPolicyIn) =>
+    request<AirlockPolicy>("/v1/airlock/policy", { method: "PUT", body: JSON.stringify(policy) }),
+  resetPolicy: () => request<AirlockPolicy>("/v1/airlock/policy", { method: "DELETE" }),
+  usage: (days = 30) => request<AirlockUsage>(`/v1/airlock/usage?days=${days}`),
+  // The CSV is fetched with the session cookie and handed back as text;
+  // the caller turns it into a download. A plain <a href> to the API
+  // would be a cross-site navigation that some browsers send cookieless.
+  usageCsv: async (days = 90): Promise<{ filename: string; text: string }> => {
+    const response = await fetch(`${API_BASE}/v1/airlock/usage.csv?days=${days}`, { credentials: "include" });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(readableDetail(body.detail) ?? `Request failed: ${response.status}`);
+    }
+    const disposition = response.headers.get("content-disposition") ?? "";
+    const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? "airlock-usage.csv";
+    return { filename, text: await response.text() };
+  },
   keys: () => request<AirlockApiKey[]>("/v1/airlock/keys"),
   createKey: (label: string) =>
     request<AirlockCreatedKey>("/v1/airlock/keys", { method: "POST", body: JSON.stringify({ label }) }),

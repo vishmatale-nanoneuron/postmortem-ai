@@ -244,7 +244,11 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "How much does it cost?",
-    a: "Prepaid packs of 10,000 scan credits: \u20b9999 by UPI in India, or $15 / \u00a312 / \u20ac14 by international wire. One credit per scan or egress check, five for a deep scan. Credits do not expire. There is no free tier and no monthly fee; buy a pack, mint a key, call the API.",
+    a: "Prepaid packs of 10,000 scan credits: \u20b9999 by UPI in India, or $15 / \u00a312 / \u20ac14 by international wire. One credit per scan or egress check, five for a deep scan (one when the rules already block, so you are never charged for an opinion that could not change the verdict). Credits do not expire. There is no free tier and no monthly fee; buy a pack, mint a key, call the API.",
+  },
+  {
+    q: "Can I tune it for my own documents?",
+    a: "Yes, per account. From the Policy card in your dashboard set your own block and flag thresholds, mute any rule that fires on your legitimate content (a legal team whose contracts trip the authority-spoof rules, say), and keep a standing egress allowlist so every call does not have to repeat it. The policy applies to every key on the account and can only be changed from a signed-in session, never with a key \u2014 a leaked key cannot switch the guard off. Every scan response names the policy it was judged under.",
   },
   {
     q: "How do I pay?",
@@ -256,7 +260,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "What happens if the scanner is down?",
-    a: "You get a non-200 with no verdict and you are not charged. Treat it as block. A security check that defaults to \u201callow\u201d when it breaks is not a security check.",
+    a: "You get a non-200 and you are not charged. Treat it as block \u2014 and a 5xx from the scan or egress path says \u201cverdict: block\u201d in its own body, so a client that parses the body first agrees. A security check that defaults to \u201callow\u201d when it breaks is not a security check.",
   },
 ];
 
@@ -597,17 +601,22 @@ export default async function AirlockPage() {
           <h2 className={h2}>What runs, and what doesn&apos;t</h2>
           <p className={p}>
             <span className="font-medium text-ink">Running now:</span> the detection engine, the egress check, the
-            Gemini deep scan, the append-only audit log, API keys, prepaid credits with a per-call meter that
-            cannot double-spend, a ledger you can read back, and the dashboard to buy, mint and revoke &mdash; all
-            served from this site&apos;s own backend at{" "}
+            Gemini deep scan, a sanitized copy on request, the append-only audit log, API keys, prepaid credits with
+            a per-call meter that cannot double-spend, a per-account policy (your own block and flag thresholds,
+            muted rules, a standing egress allowlist), the rule list, a usage table with CSV export, a ledger you
+            can read back, and the dashboard to buy, mint, revoke and tune &mdash; all served from this site&apos;s
+            own backend at{" "}
             <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">/v1/airlock/scan</code> and{" "}
-            <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">/v1/airlock/egress</code>.
+            <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">/v1/airlock/egress</code>. A failure
+            on either path answers with <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">verdict: block</code>{" "}
+            in the body: the guard fails closed.
           </p>
           <p className={p}>
-            <span className="font-medium text-ink">Not built yet:</span> server-side per-tenant thresholds and
-            allowlists (both are per-call parameters today), any support or uptime commitment, and a self-hosted
-            build. That last one is what the early-access list below is for. Not planned: card payments &mdash; UPI
-            and international wire, verified by hand, are the rails by decision.
+            <span className="font-medium text-ink">Not built yet:</span> a proxy mode where Airlock fetches the
+            page or forwards the call for you (today you fetch, then ask), alert webhooks, any support or uptime
+            commitment, and a self-hosted build. That last one is what the early-access list below is for. Not
+            planned: card payments &mdash; UPI and international wire, verified by hand, are the rails by decision;
+            and no free plan &mdash; every scan is paid for, including the first.
           </p>
           <p className={p}>
             The next thing worth building is not features either, it is the corpus: 30 hand-written rules is a

@@ -180,12 +180,16 @@ describe("/airlock", () => {
     expect(PAGE).toContain("What runs, and what doesn");
     expect(PAGE).toContain("Running now:");
     expect(PAGE).toContain("Not built yet:");
-    for (const live of ["API keys", "prepaid credits", "deep scan", "append-only audit log"]) {
+    for (const live of ["API keys", "prepaid credits", "deep scan", "append-only audit log", "per-account policy", "CSV export", "fails closed"]) {
       expect(PAGE.toLowerCase()).toContain(live.toLowerCase());
     }
-    for (const missing of ["card payments", "self-hosted"]) {
+    for (const missing of ["card payments", "self-hosted", "proxy mode", "alert webhooks", "no free plan"]) {
       expect(PAGE.toLowerCase()).toContain(missing);
     }
+    // Per-tenant policy shipped (migration 0034); the page must not still
+    // list it as missing.
+    expect(PAGE).not.toContain("per-tenant thresholds");
+    expect(PAGE).toContain("Can I tune it for my own documents?");
     // The FAQ must not still say it cannot be bought.
     expect(PAGE).not.toContain("Can I buy it?");
     expect(PAGE).not.toContain("Not yet. The scanner is free.");

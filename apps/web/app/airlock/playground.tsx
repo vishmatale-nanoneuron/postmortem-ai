@@ -70,6 +70,7 @@ const VERDICT_STYLES = {
 export function Playground() {
   const [content, setContent] = React.useState(SAMPLES[0]!.content);
   const [deep, setDeep] = React.useState(false);
+  const [sanitize, setSanitize] = React.useState(false);
   const [result, setResult] = React.useState<AirlockScan | null>(null);
   const [error, setError] = React.useState<ReturnType<typeof describeFailure> | null>(null);
   const [busy, setBusy] = React.useState(false);
@@ -87,7 +88,7 @@ export function Playground() {
     setBusy(true);
     setError(null);
     try {
-      setResult(await airlockScan(content, "playground", deep));
+      setResult(await airlockScan(content, "playground", deep, sanitize));
     } catch (cause) {
       setResult(null);
       setError(describeFailure(cause));
@@ -165,6 +166,10 @@ export function Playground() {
           <input type="checkbox" checked={deep} onChange={(e) => setDeep(e.target.checked)} />
           Deep scan &mdash; ask Gemini for a second opinion
         </label>
+        <label className="flex items-center gap-1.5 text-xs text-muted">
+          <input type="checkbox" checked={sanitize} onChange={(e) => setSanitize(e.target.checked)} />
+          Sanitize &mdash; also return a defanged copy
+        </label>
         <span className="text-xs text-muted">
           {deep
             ? "Deep scan sends this text to Google's Gemini API; we still store only a hash."
@@ -201,7 +206,9 @@ export function Playground() {
             </span>
             <span className="font-mono text-sm text-ink">{result.score.toFixed(2)}</span>
             <span className="text-xs text-muted">
-              block at 0.75 · flag at 0.40 · {result.latency_ms} ms · {result.content_bytes} bytes
+              block at {result.policy.block_threshold.toFixed(2)} · flag at {result.policy.flag_threshold.toFixed(2)}
+              {result.policy.muted_rules.length > 0 && ` · ${result.policy.muted_rules.length} muted`} · {result.latency_ms}{" "}
+              ms · {result.content_bytes} bytes
               {result.credits_remaining !== null && ` · ${result.credits_remaining.toLocaleString("en-US")} credits left`}
             </span>
           </div>
@@ -211,7 +218,9 @@ export function Playground() {
               <span className="font-medium text-ink">Gemini:</span>{" "}
               {result.semantic.status === "ok"
                 ? `${result.semantic.injection ? "injection" : "not an injection"} · confidence ${Number(result.semantic.confidence).toFixed(2)} · weight ${Number(result.semantic.weight).toFixed(2)}${result.semantic.reason ? ` · ${String(result.semantic.reason)}` : ""}`
-                : "second opinion unavailable — the rule verdict stands and the extra credits were refunded"}
+                : result.semantic.status === "skipped"
+                  ? "not asked — the rules already block, and a second opinion can only raise a verdict; charged as a plain scan"
+                  : "second opinion unavailable — the rule verdict stands and the extra credits were refunded"}
             </p>
           )}
 
@@ -242,6 +251,15 @@ export function Playground() {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {result.sanitized !== null && (
+            <div className="mt-3 border-t border-line pt-2.5">
+              <p className="mb-1 text-xs font-medium text-ink">Sanitized copy — what a pipeline could pass on instead</p>
+              <pre className="max-h-40 overflow-auto rounded-md border border-line bg-white p-2 font-mono text-[11.5px] leading-relaxed break-words whitespace-pre-wrap text-ink">
+                {result.sanitized}
+              </pre>
             </div>
           )}
 

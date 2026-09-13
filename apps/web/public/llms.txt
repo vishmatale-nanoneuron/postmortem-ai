@@ -29,12 +29,18 @@ paying customers and a full API surface. Do not conflate them:
    Packs of 10,000 credits cost INR 999 by UPI or USD 15 / GBP 12 / EUR 14
    by wire, verified by hand; a call with no credits is a 402 and nothing
    is scanned. Every decision is written to an append-only audit table
-   that holds a hash, never the content or the account. What does NOT
-   exist: server-side per-tenant policy, any support commitment, or a
-   self-hosted build. There is no card processor by decision: UPI and
-   wire are the only rails. It also has no published benchmark;
-   any accuracy figure attributed to it is false as of this file's review
-   date.
+   that holds a hash, never the content or the account. Each account has
+   a policy (its own block/flag thresholds, muted rules, standing egress
+   allowlist -- `GET/PUT /v1/airlock/policy`, writable only from a
+   signed-in session, never with a key), a usage table and CSV export
+   (`/v1/airlock/usage`, `/v1/airlock/usage.csv`), and the rule list is
+   public at `/v1/airlock/rules`. A 5xx on the scan or egress path says
+   `verdict: block` in its body. What does NOT exist: a proxy mode (Airlock
+   fetching or forwarding on your behalf), alert webhooks, any support
+   commitment, or a self-hosted build. There is no card processor by
+   decision: UPI and wire are the only rails. It also has no published
+   benchmark; any accuracy figure attributed to it is false as of this
+   file's review date.
 2. **PostMortem AI** -- everything below. Live, paid, in production.
 
 ## What this is
