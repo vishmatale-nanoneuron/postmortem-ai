@@ -91,7 +91,8 @@ export default function DocsPage() {
             debit, before the engine runs.
             An empty balance is <code className={code}>402</code> with no verdict returned; a refused or failed call
             (<code className={code}>401</code>, <code className={code}>402</code>, <code className={code}>422</code>,{" "}
-            <code className={code}>429</code>, any <code className={code}>5xx</code>) spends nothing. Every response carries{" "}
+            <code className={code}>429</code>) spends nothing, and an application error after the charge
+            (<code className={code}>500</code>) refunds it on the ledger. Every response carries{" "}
             <code className={code}>credits_remaining</code> and <code className={code}>credits_charged</code>; you are
             emailed once when the balance drops below 1,000 and once when it reaches zero. Packs of 10,000 are bought
             from the dashboard by UPI or international wire.
@@ -131,7 +132,8 @@ export default function DocsPage() {
             sanitized on flag, <code className={code}>null</code> on block. <code className={code}>stage</code> says
             which check decided. Two credits (four more with <code className={code}>deep</code>, refunded when the
             rules already block). A URL that will never be fetched is <code className={code}>422</code>; a public
-            URL that could not be reached is <code className={code}>502</code>; both refund everything and carry{" "}
+            URL that could not be reached is <code className={code}>502</code>; both refund the scan credit, keep
+            one for the attempt (so a refused fetch is never a free probe), and carry{" "}
             <code className={code}>&quot;verdict&quot;: &quot;block&quot;</code>. Nothing of yours &mdash; no
             headers, no cookies &mdash; is sent to the page.
           </p>

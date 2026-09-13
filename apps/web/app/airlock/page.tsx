@@ -249,7 +249,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "What is proxy mode?",
-    a: "Instead of fetching a page and then asking Airlock about it, your agent asks Airlock to fetch it: POST /v1/airlock/proxy/fetch with the URL. Airlock checks the destination as an outbound call (your allowlist, credential material in the query string), retrieves the page from its own address, scans it under your policy, and returns the visible text only if the verdict allows \u2014 sanitized on a flag, nothing at all on a block. The fetch refuses anything that is not the public internet: loopback, private and link-local ranges, cloud metadata, and redirects into them, with the connection pinned to the address that was checked. Two credits, the fetch and the scan.",
+    a: "Instead of fetching a page and then asking Airlock about it, your agent asks Airlock to fetch it: POST /v1/airlock/proxy/fetch with the URL. Airlock checks the destination as an outbound call (your allowlist, credential material in the query string), retrieves the page from its own address, scans it under your policy, and returns the visible text only if the verdict allows \u2014 sanitized on a flag, nothing at all on a block. The fetch refuses anything that is not the public internet: loopback, private and link-local ranges, cloud metadata, and redirects into them, with the connection pinned to the address that was checked. Two credits, the fetch and the scan; a fetch that is refused or unreachable keeps one for the attempt and refunds the other.",
   },
   {
     q: "Can I tune it for my own documents?",

@@ -452,8 +452,10 @@ is scanned under the account policy (script/style stripped, hidden elements
 and comments kept for the normaliser) and the visible text is returned on
 allow, sanitized on flag, null on block; `stage` says whether the egress
 check or the ingress scan decided. A URL that will never be fetched is 422,
-an unreachable public URL is 502; both refund everything and carry
-`"verdict": "block"`. Deep scan adds 4 credits, refunded when the rules
+an unreachable public URL is 502; both refund the scan credit, keep one
+credit for the attempt (a refused fetch is never a free probe of what
+resolves where), and carry `"verdict": "block"`. An application error
+after any charge refunds that charge on the ledger. Deep scan adds 4 credits, refunded when the rules
 already block.
 
 **Policy (per account, migration 0034).** `GET /v1/airlock/policy` (key or

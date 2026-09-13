@@ -400,9 +400,14 @@ async def test_the_url_is_checked_as_an_outbound_call_before_any_fetch(context):
 
 
 @pytest.mark.asyncio
-async def test_a_fetch_that_cannot_be_made_is_refunded_and_says_block(context):
+async def test_a_fetch_that_cannot_be_made_costs_the_attempt_and_says_block(context):
+    """Nothing was scanned, so the scan credit and the deep extra come
+    back; the attempt itself stays charged, so a funded key cannot use the
+    two distinguishable refusals (422 non-public vs 502 unresolvable) as a
+    free oracle for what internal names exist."""
     client, database, transport = context
-    user_id, key = await _customer(client, database, credits=10)
+    user_id, key = await _customer(client, database, credits=20)
+    expected = 20
     for url, status in [
         ("http://169.254.169.254/latest/meta-data/", 422),
         ("http://bounce-private.example/", 422),
@@ -413,14 +418,50 @@ async def test_a_fetch_that_cannot_be_made_is_refunded_and_says_block(context):
         response = await client.post("/v1/airlock/proxy/fetch", json={"url": url, "deep": True}, headers=_keyed(key))
         assert response.status_code == status, (url, response.text)
         body = response.json()
-        assert body["verdict"] == "block" and body["stage"] == "fetch" and body["credits_charged"] == 0
-        assert await _balance(database, user_id) == 10, url
+        assert body["verdict"] == "block" and body["stage"] == "fetch" and body["credits_charged"] == 1
+        expected -= 1
+        assert await _balance(database, user_id) == expected, url
     assert response.headers["cache-control"].startswith("private, no-store")
-    # The refunds are on the ledger, paired with the charges.
+    # The refunds are on the ledger, paired with the charges: 6 taken, 5 back.
     lines = await database.fetch_all(
         "SELECT reason, delta FROM airlock_credit_ledger WHERE user_id=%s AND reason <> 'grant' ORDER BY created_at", (user_id,)
     )
-    assert [(line["reason"], line["delta"]) for line in lines][:2] == [("deep_scan", -6), ("refund", 6)]
+    assert [(line["reason"], line["delta"]) for line in lines][:2] == [("deep_scan", -6), ("refund", 5)]
+
+
+@pytest.mark.asyncio
+async def test_an_application_error_after_the_charge_refunds_and_still_fails_closed(context, monkeypatch: pytest.MonkeyPatch):
+    """The customer does not pay for our bug. The 500 goes out fail-closed
+    (verdict: block) and the charge comes back on the ledger."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.api.v1 import airlock as airlock_module
+
+    client, database, transport = context
+    user_id, key = await _customer(client, database, credits=10)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("audit write failed")
+
+    monkeypatch.setattr(airlock_module, "handle_record_scan", broken)
+    application = client._transport.app  # type: ignore[attr-defined]
+    async with AsyncClient(transport=ASGITransport(app=application, raise_app_exceptions=False), base_url="http://test") as quiet:
+        for path, body in [
+            ("/v1/airlock/proxy/fetch", {"url": "https://benign.example/"}),
+            ("/v1/airlock/scan", {"content": "hello there", "deep": True}),
+            ("/v1/airlock/egress", {"payload": "hello"}),
+        ]:
+            response = await quiet.post(path, json=body, headers=_keyed(key))
+            assert response.status_code == 500, (path, response.text)
+            assert response.json()["verdict"] == "block"
+            assert await _balance(database, user_id) == 10, path
+            # The last ledger line is the refund for our failure (on the
+            # deep scan, after the earlier refund of the unavailable model's
+            # extra), and the balance is exactly where it started.
+            latest = await database.fetch_one(
+                "SELECT reason, reference FROM airlock_credit_ledger WHERE user_id=%s ORDER BY created_at DESC LIMIT 1", (user_id,)
+            )
+            assert latest["reason"] == "refund" and "application error" in latest["reference"], (path, latest)
 
 
 @pytest.mark.asyncio
