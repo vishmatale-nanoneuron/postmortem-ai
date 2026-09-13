@@ -91,8 +91,10 @@ export default function PrivacyPage() {
             sends that one piece of content to Google (Gemini) for classification -- and we still keep only the
             hash. Payments are UPI or bank wire made directly
             to the founder&apos;s account -- there is no card processor, and no payment instrument of yours ever
-            reaches our servers, only the transaction reference you submit. Password-reset emails are sent via Resend, which
-            sees only the email address and the reset link, nothing about your incidents. The database itself is
+            reaches our servers, only the transaction reference you submit. Transactional emails (password resets, payment
+            details you request, payment confirmations, Airlock balance notices, and at most one reminder if you sign
+            up and never pay -- never a repeat) are sent via Resend, which sees only the email address and the message,
+            nothing about your incidents. The database itself is
             hosted by Supabase, the application by Vercel. None of these are chosen or paid to promote your data
             further -- they process it only to do the specific job listed here.
           </p>

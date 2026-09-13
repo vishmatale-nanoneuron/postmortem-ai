@@ -52,40 +52,62 @@ def send_password_reset_email(settings: Settings, to_email: str, reset_url: str)
     logger.info("password_reset_email_sent")
 
 
-def send_free_incident_nudge_email(settings: Settings, to_email: str, incident_title: str, user_id: str) -> None:
-    """The one automated nudge this app sends toward a purchase decision --
-    deliberately just a reminder that the account exists and what it drew
-    on real evidence, with a plain link to pricing. Never a fabricated
-    urgency claim ("only 2 spots left", a countdown, a discount that isn't
-    real) -- this app's own core invariant against inventing anything not
-    literally true extends to how it asks for money, not just what it
-    drafts."""
+def send_purchase_reminder_email(settings: Settings, to_email: str, user_id: str, *, days_since_signup: int) -> None:
+    """The one automated nudge this app sends toward a purchase decision,
+    for an account that signed up, never paid for either product, and has
+    had at least a day. Sent at most once per account, ever.
+
+    Both products are paid from the first use, so the email does the job a
+    trial would have done: it points at the real output (the worked example
+    drafted from a public outage; the live engine replay on /airlock), the
+    prices, and how to pay from anywhere. Never a fabricated urgency claim
+    ("only 2 spots left", a countdown, a discount that isn't real) -- this
+    app's own core invariant against inventing anything not literally true
+    extends to how it asks for money, not just what it drafts."""
     if not settings.resend_api_key or not settings.resend_email_domain:
         raise EmailNotConfiguredError("RESEND_API_KEY/RESEND_EMAIL_DOMAIN are not configured")
 
     resend.api_key = settings.resend_api_key
-    pricing_url = f"{settings.frontend_url}/pricing"
+    site = settings.frontend_url
+    when = "yesterday" if days_since_signup <= 1 else f"{days_since_signup} days ago"
     # Idempotency key is scoped to the user, not a per-send fingerprint --
-    # this email is meant to go out at most once ever per account (enforced
-    # by free_incident_reminder_sent_at at the call site), so any retry of
-    # the same logical send should always collapse to the same Resend send,
-    # never produce a second one.
+    # this email goes out at most once ever per account (enforced by
+    # free_incident_reminder_sent_at at the call site), so any retry of the
+    # same logical send collapses to the same Resend send.
     resend.Emails.send(
         {
-            "from": f"PostMortem AI <noreply@{settings.resend_email_domain}>",
+            "from": f"NanoNeuron <noreply@{settings.resend_email_domain}>",
             "to": [to_email],
-            "subject": "Your free postmortem is ready -- here's what's next",
+            "subject": "Before you decide: the real output, and how to pay from anywhere",
             "html": (
-                f'<p>Your free postmortem for "<strong>{incident_title}</strong>" is drafted and grounded in the '
-                "evidence you recorded. You can keep reading it and refining the evidence anytime.</p>"
-                "<p>To publish it as a permanent, citable record, or to start a second incident, you'll need a "
-                f'subscription -- see <a href="{pricing_url}">pricing</a> for the options.</p>'
-                "<p>If you have questions before deciding, just reply to this email.</p>"
+                f"<p>You created a NanoNeuron account {when} and have not started anything yet. Both products "
+                "are paid from the first use -- there is no free tier -- so here is the honest way to judge them "
+                "before paying:</p>"
+                f'<p><strong>PostMortem AI</strong> -- read <a href="{site}/blog/github-outage-demo">the full '
+                "postmortem it drafted from a real public outage</a>. Every claim cites a recorded piece of "
+                "evidence; anything the evidence does not say is left out rather than made up. That is exactly "
+                "the output you would get on your own incidents.</p>"
+                f'<p><strong>Airlock</strong> -- <a href="{site}/airlock">the Airlock page</a> replays the real '
+                "detection engine on captured injection attempts: the rules that fired, the scores, the verdicts. "
+                "It also fetches and screens URLs before your agent reads them.</p>"
+                f'<p><strong>Prices.</strong> PostMortem AI: \u20b9{settings.subscription_price_inr}/month, or '
+                f"${settings.subscription_price_usd} / \u00a3{settings.subscription_price_gbp} / "
+                f"\u20ac{settings.subscription_price_eur} -- <a href=\"{site}/pricing\">details</a>. Airlock: "
+                f"{settings.airlock_pack_scans:,} scan credits for \u20b9{settings.airlock_pack_price_inr} / "
+                f"${settings.airlock_pack_price_usd} / \u00a3{settings.airlock_pack_price_gbp} / "
+                f'\u20ac{settings.airlock_pack_price_eur} -- <a href="{site}/airlock#pricing">details</a>.</p>'
+                "<p><strong>Paying from anywhere.</strong> UPI in India; an international bank wire in USD, GBP or "
+                "EUR from any other country. The payee details are emailed to you from your dashboard, and the "
+                "founder verifies each payment by hand, usually the same day, with a confirmation email when it "
+                "lands. A wire costs the sender a bank fee, so for Airlock it is worth buying several packs at "
+                "once, and for PostMortem AI the annual plan (two months free) is the sensible choice.</p>"
+                "<p>This is the only reminder you will get from us. If you have a question, reply to this email "
+                "and it reaches the founder directly.</p>"
             ),
         },
-        {"idempotency_key": f"free-incident-nudge/{user_id}"},
+        {"idempotency_key": f"purchase-reminder/{user_id}"},
     )
-    logger.info("free_incident_nudge_email_sent")
+    logger.info("purchase_reminder_email_sent")
 
 
 def build_upi_payment_link(upi_id: str, payee_name: str, amount_inr: int) -> str:
@@ -411,7 +433,9 @@ def send_airlock_payment_details_email(
     )
     charge_note = (
         "<p style=\"font-size:13px;color:#555\">Send with the OUR charge code so the full amount arrives; "
-        "a wire that lands short cannot be matched to your claim.</p>"
+        "a wire that lands short cannot be matched to your claim. Your bank will charge you a fee for the "
+        "wire (commonly USD 15-40); the amount above already covers several packs if you chose them, and "
+        "buying more packs per wire is the way to keep that fee a small share of what you pay.</p>"
         if method == "wire"
         else ""
     )

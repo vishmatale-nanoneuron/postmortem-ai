@@ -356,10 +356,12 @@ before keep working on that one incident (never publishing it, never a second)
 -- a promise the site made them at the time is kept. To judge the output
 before paying, read https://www.nanoneuron.ai/blog/github-outage-demo, a full
 postmortem the tool drafted from a real public outage; the 14-day refund on
-the first charge is the safety net. An account that drafted a real postmortem
-on a legacy free incident and never subscribed receives exactly one automated
-reminder email, at least 24 hours after that draft — a plain link to pricing,
-never a repeat send and never a fabricated urgency claim.
+the first charge is the safety net. An account that signed up at least a
+day ago and has never paid for either product (no subscription, no payment
+claim in any state, no Airlock credits) receives exactly one automated
+reminder email, ever: the worked example, the prices, and how to pay from
+any country — never a repeat send and never a fabricated urgency claim.
+Accounts with a payment claim in flight are excluded on purpose.
 Refunds: email vish.matale@gmail.com within 14 days of the first charge
 and it's refunded — a manual, founder-processed action on every payment
 rail, the same review discipline as approving a payment in the first

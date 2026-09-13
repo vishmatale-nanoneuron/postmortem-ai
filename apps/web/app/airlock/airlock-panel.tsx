@@ -343,7 +343,9 @@ function BuyCredits({ onChanged }: { onChanged: () => void | Promise<void> }) {
       <h3 className="mb-1 text-sm font-semibold">Buy credits</h3>
       <p className="mb-2 text-xs text-muted">
         {pricing.scans_per_pack.toLocaleString("en-US")} scans per pack. Credits do not expire. UPI for INR;
-        international SWIFT wire for USD, GBP and EUR (wire fees make larger orders the sensible choice there).
+        international SWIFT wire for USD, GBP and EUR from any country. Your bank charges a fee per wire
+        (commonly $15&ndash;40), so by wire it is worth buying several packs at once &mdash; up to{" "}
+        {pricing.max_packs_per_claim} per payment; for more, email the founder.
       </p>
 
       <fieldset
