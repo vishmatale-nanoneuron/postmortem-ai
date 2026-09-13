@@ -165,6 +165,12 @@ posture is stricter than the rest of the product's:
   connection attempted. It is metered (2 credits; a refused attempt still
   costs 1), so a drained key cannot make Airlock fetch anything and a
   funded one pays to probe.
+- **Invoices never carry payee account details.** `GET
+  /v1/billing/claims/{id}/invoice` (owner-only; a neighbour is 404) renders
+  the proforma/receipt from the claim row and the seller settings; the
+  bank account number and UPI ID stay email-on-request, as before. The page
+  at `/invoice/{id}` is `noindex` and fetches with the session cookie, so
+  nothing about a claim is in the HTML.
 - **Usage exports come from the ledger, not the audit log.** `GET
   /v1/airlock/usage` and `/usage.csv` read `airlock_credit_ledger`, which
   is attributed and cascades with the account. The audit log has no

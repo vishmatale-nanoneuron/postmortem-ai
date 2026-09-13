@@ -37,6 +37,8 @@ import { AirlockHero } from "./airlock/airlock-hero";
 import { AirlockPanel } from "./airlock/airlock-panel";
 import { PendingClaim } from "./pending-claim";
 import { usePolling } from "./use-polling";
+import { Receipts } from "./receipts";
+import { guessRail } from "./locale-currency";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -1315,6 +1317,13 @@ function SubscribeGate({
   const [tab, setTab] = useState<"upi" | "wire">("upi");
   const [status, setStatus] = useState<BillingStatus | null>(null);
 
+  // Open on the rail that applies to the visitor (UPI only moves rupees;
+  // everyone else wires). Guessed from the browser locale after mount,
+  // nothing stored; both tabs stay one click away.
+  useEffect(() => {
+    setTab(guessRail());
+  }, []);
+
   // Distinguishes a brand new unpaid account from one whose real, once-
   // active subscription lapsed -- otherwise a client who paid before sees
   // the exact same "Subscribe to use..." copy as someone who never has,
@@ -1516,6 +1525,7 @@ function UpiPayment() {
           A previous reference was rejected -- double-check the amount and UPI ID, then resubmit.
         </p>
       )}
+      <Receipts claims={claims} />
       {error && (
         <p role="status" className="mt-3 text-sm text-red-600">
           {error}
@@ -1692,6 +1702,7 @@ function WirePayment() {
           A previous reference was rejected -- double-check the amount and account details, then resubmit.
         </p>
       )}
+      <Receipts claims={claims} />
       {error && (
         <p role="status" className="mt-3 text-sm text-red-600">
           {error}

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { billing, type Claim } from "./api";
@@ -81,7 +82,10 @@ export function PendingClaim({ claim, onChanged }: { claim: Claim; onChanged: ()
       <p>
         Reference <span className="font-medium text-ink">{claim.reference}</span> submitted, awaiting review.
       </p>
-      <div className="mt-1.5 flex gap-3">
+      <div className="mt-1.5 flex flex-wrap gap-3">
+        <Link className="text-xs underline underline-offset-2" href={`/invoice/${claim.id}`} target="_blank" rel="noopener">
+          Proforma invoice
+        </Link>
         <button className="text-xs underline underline-offset-2" disabled={busy} type="button" onClick={() => setEditing(true)}>
           Edit
         </button>

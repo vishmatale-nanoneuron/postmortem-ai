@@ -314,6 +314,8 @@ def send_client_claim_confirmation(
                 "approval. You'll be able to see the outcome in your dashboard, typically within a day.</p>"
                 "<p>If the reference above has a typo, you can correct it or withdraw the claim from the "
                 "payment tab in your dashboard as long as it's still pending.</p>"
+                f'<p>Need a document for your finance team? Your <a href="{settings.frontend_url}/invoice/{claim_id}">'
+                "proforma invoice</a> is ready now, and becomes the receipt once the payment is verified.</p>"
             ),
         },
         {"idempotency_key": f"claim-confirmation/{claim_id}"},
@@ -351,6 +353,8 @@ def send_client_claim_approved_email(settings: Settings, claim_id: str, to_email
                 "straight away. Every claim in a draft cites a real evidence entry you recorded; anything "
                 "the evidence doesn't support is marked unsupported rather than invented, and publishing "
                 "always records you as the named approver.</p>"
+                f'<p>Your <a href="{settings.frontend_url}/invoice/{claim_id}">receipt</a> is in your dashboard, '
+                "printable, with the amount, reference and date the payment was verified.</p>"
                 "<p>If anything looks wrong with your account, reply to this email.</p>"
             ),
         },
@@ -481,6 +485,8 @@ def send_airlock_credits_approved_email(settings: Settings, claim_id: str, to_em
                 "<p>To start scanning: open the Airlock section of your dashboard, create an API key (it is shown "
                 "once, so copy it), and call <code>POST /v1/airlock/scan</code> with the key in an "
                 "<code>X-Airlock-Key</code> header. Every response tells you how many credits remain.</p>"
+                f'<p>Your <a href="{settings.frontend_url}/invoice/{claim_id}">receipt</a> is in your dashboard, '
+                "printable, with the amount, reference and date the payment was verified.</p>"
                 "<p>If anything looks wrong with your balance, reply to this email.</p>"
             ),
         },
