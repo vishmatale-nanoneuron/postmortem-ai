@@ -29,18 +29,18 @@ export function AirlockHero() {
               Paid API · live
             </span>
           </div>
-          <h1 className="mt-5 animate-in fade-in slide-in-from-bottom-3 text-4xl leading-[1.1] font-semibold tracking-tight text-ink duration-700 delay-100 fill-mode-backwards sm:text-6xl">
+          <h1 className="mt-5 animate-in slide-in-from-bottom-3 text-4xl leading-[1.1] font-semibold tracking-tight text-ink duration-700 delay-100 sm:text-6xl">
             Your agent reads things{" "}
             <span className="hero-gradient-text bg-gradient-to-r from-accent via-accent/70 to-accent/60 bg-clip-text text-transparent">
               you didn&apos;t write.
             </span>
           </h1>
-          <p className="mx-auto mt-5 max-w-xl animate-in fade-in slide-in-from-bottom-3 text-lg text-muted duration-700 delay-200 fill-mode-backwards">
+          <p className="mx-auto mt-5 max-w-xl animate-in slide-in-from-bottom-3 text-lg text-muted duration-700">
             A support ticket, a web page, a PDF, an email. Any of them can carry a sentence aimed at the model rather
             than at you. Airlock sits between your agent and that content &mdash; scoring what comes in for prompt
             injection, and checking what goes out for credentials and personal data.
           </p>
-          <div className="mt-8 flex animate-in fade-in slide-in-from-bottom-3 flex-wrap items-center justify-center gap-x-4 gap-y-3 duration-700 delay-300 fill-mode-backwards">
+          <div className="mt-8 flex animate-in slide-in-from-bottom-3 flex-wrap items-center justify-center gap-x-4 gap-y-3 duration-700">
             <Link
               href="/airlock#try-it"
               className={cn(
