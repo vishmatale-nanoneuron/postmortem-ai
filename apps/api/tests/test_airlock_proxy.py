@@ -455,13 +455,16 @@ async def test_an_application_error_after_the_charge_refunds_and_still_fails_clo
             assert response.status_code == 500, (path, response.text)
             assert response.json()["verdict"] == "block"
             assert await _balance(database, user_id) == 10, path
-            # The last ledger line is the refund for our failure (on the
-            # deep scan, after the earlier refund of the unavailable model's
-            # extra), and the balance is exactly where it started.
-            latest = await database.fetch_one(
-                "SELECT reason, reference FROM airlock_credit_ledger WHERE user_id=%s ORDER BY created_at DESC LIMIT 1", (user_id,)
+            # A refund line for our failure exists for this path (looked up
+            # by its reference, not by "latest": the debit and the refund
+            # can share a millisecond on a fast machine), and the balance
+            # is exactly where it started.
+            refunds = await database.fetch_one(
+                """SELECT count(*) AS n FROM airlock_credit_ledger
+                   WHERE user_id=%s AND reason='refund' AND reference LIKE '%%application error%%'""",
+                (user_id,),
             )
-            assert latest["reason"] == "refund" and "application error" in latest["reference"], (path, latest)
+            assert int(refunds["n"]) >= 1, (path, refunds)
 
 
 @pytest.mark.asyncio

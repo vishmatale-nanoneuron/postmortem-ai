@@ -10,7 +10,17 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, ORJSONResponse
 from fastapi.routing import APIRoute
 
+from fastapi.concurrency import run_in_threadpool
+
 from .api.v1.airlock import FAIL_CLOSED_PATHS
+from .cqrs.request_errors import (
+    MAX_NOTIFICATIONS_PER_HOUR,
+    RecordErrorCommand,
+    handle_record_error,
+    mark_notified,
+    notifications_in_last_hour,
+)
+from .services.email import EmailNotConfiguredError, send_founder_error_notification
 from .api.v1.airlock import router as airlock_router
 from .api.v1.auth import router as auth_router
 from .api.v1.bank_alerts import router as bank_alerts_router
@@ -54,11 +64,55 @@ def _operation_id(route: APIRoute) -> str:
     return route.name
 
 
+async def _record_and_notify(request: Request, exc: Exception, request_id: str) -> None:
+    """The error ledger (cqrs/request_errors.py) and, for a fault not seen
+    today, one email to the founder. Everything here is best-effort: it
+    runs inside the 500 handler, so nothing it does may raise, and a
+    database that is itself the failure simply means no row this time --
+    the log line above still exists."""
+    try:
+        database = getattr(request.app.state, "database", None)
+        if database is None:
+            return
+        recorded = await handle_record_error(
+            database,
+            RecordErrorCommand(
+                method=request.method,
+                path=request.url.path,
+                request_id=request_id,
+                error_type=type(exc).__name__,
+                message=str(exc),
+            ),
+        )
+        if recorded is None or not recorded.first_today:
+            return
+        if await notifications_in_last_hour(database) >= MAX_NOTIFICATIONS_PER_HOUR:
+            return
+        settings = get_settings()
+        try:
+            await run_in_threadpool(
+                send_founder_error_notification,
+                settings,
+                error_type=type(exc).__name__,
+                method=request.method,
+                path=request.url.path,
+                request_id=request_id,
+                message=str(exc)[:300],
+                fingerprint=recorded.fingerprint,
+            )
+        except EmailNotConfiguredError:
+            return
+        await mark_notified(database, recorded.id)
+    except Exception:
+        logger.warning("request_error_record_failed", exc_info=True)
+
+
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     request_id = getattr(request.state, "request_id", None) or _request_id(request)
     logger.exception(
         "Unhandled exception on %s %s request_id=%s", request.method, request.url.path, request_id, exc_info=exc
     )
+    await _record_and_notify(request, exc, request_id)
     content: dict = {"detail": "Internal server error", "request_id": request_id}
     if request.url.path in FAIL_CLOSED_PATHS:
         # The guard's own failure is a block, and the body says so, for the

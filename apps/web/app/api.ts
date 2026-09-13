@@ -162,6 +162,9 @@ export type FounderSummary = {
     accounts_with_balance: number;
     revenue_by_currency: { currency: string; amount: number; claims: number }[];
   };
+  // Unhandled 500s the API answered (cqrs/request_errors.py). Zero is the
+  // number this should show.
+  errors: { last_24h: number; last_7d: number };
   recent_users: { id: string; email: string; created_at: number }[];
   recent_ai_runs: {
     id: string;
@@ -293,8 +296,22 @@ export const billing = {
 
 export type PaymentClaimEvent = { event_type: string; actor: string; detail: string | null; created_at: number };
 
+export type ErrorGroup = {
+  fingerprint: string;
+  error_type: string;
+  method: string;
+  path: string;
+  count: number;
+  first_seen: number;
+  last_seen: number;
+  last_request_id: string;
+  sample_message: string;
+  notified: boolean;
+};
+
 export const founderBilling = {
   paymentClaims: () => request<PaymentClaim[]>("/v1/founder/payment-claims"),
+  errors: (days = 7) => request<ErrorGroup[]>(`/v1/founder/errors?days=${days}`),
   // Founder-only Airlock credit grant for everything that is not a
   // payment: refunds credited as scans, goodwill after an outage, a pilot.
   // Every grant is a ledger line with the note on it (founder.py).

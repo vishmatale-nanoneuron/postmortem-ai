@@ -38,6 +38,7 @@ import { AirlockPanel } from "./airlock/airlock-panel";
 import { PendingClaim } from "./pending-claim";
 import { usePolling } from "./use-polling";
 import { Receipts } from "./receipts";
+import { FounderErrorsPanel } from "./founder-errors";
 import { guessRail } from "./locale-currency";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -302,6 +303,7 @@ function FounderDashboard() {
 
   const nav: [string, string][] = [
     ["AI health", "#founder-ai-health"],
+    ["Errors", "#founder-errors"],
     ["Stats", "#founder-stats"],
     ["Margin", "#founder-margin"],
     ["Funnel", "#founder-funnel"],
@@ -433,6 +435,9 @@ function FounderDashboard() {
           ))
         )}
       </ul>
+      <div id="founder-errors" className="scroll-mt-16">
+        <FounderErrorsPanel last24h={summary.errors?.last_24h ?? 0} last7d={summary.errors?.last_7d ?? 0} />
+      </div>
       <div id="founder-claims" className="scroll-mt-16">
         <PaymentClaimsReview />
       </div>
