@@ -16,7 +16,10 @@ const fieldLabel = "block text-xs font-medium text-muted mb-1";
 const fieldInput =
   "w-full rounded-md border border-line px-3 py-2 mb-3 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent";
 
-const USAGE_POLL_MS = 20_000;
+// A minute, not the balance's 20 s: usage is a table to glance at, and
+// the reads behind it are bounded per account (600/hour), so two open tabs
+// must stay comfortably inside that.
+const USAGE_POLL_MS = 60_000;
 
 const FAMILY_LABEL: Record<string, string> = {
   instruction_override: "Instruction override",

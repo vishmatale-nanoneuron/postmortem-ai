@@ -411,7 +411,7 @@ async def handle_ledger_lines_query(
            FROM airlock_credit_ledger l
            LEFT JOIN airlock_api_keys k ON k.id = l.api_key_id
            WHERE l.user_id=%s AND l.created_at >= %s
-           ORDER BY l.created_at DESC, l.id DESC
+           ORDER BY l.created_at DESC
            LIMIT %s""",
         (user_id, since, limit),
     )

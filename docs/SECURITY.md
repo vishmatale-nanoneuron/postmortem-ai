@@ -91,7 +91,9 @@ in-process counters, so they hold across serverless instances.)
 | Password-reset requests per IP | 5 per window |
 | AI drafts / extractions per account | hourly cap and 500 per month, taken under an advisory lock so concurrent requests cannot exceed it |
 | Airlock: unauthenticated or invalid-key calls per IP | 60 per hour, then 429 -- a flood of bad keys never becomes a flood of hash lookups |
-| Airlock: authenticated calls | metered by prepaid credits, not rate-limited -- the balance is the bound |
+| Airlock: authenticated scan/egress calls | metered by prepaid credits, not rate-limited -- the balance is the bound, and the charge is taken before the engine runs |
+| Airlock: policy and usage reads per account | 600 per hour (unmetered, so the balance is not their bound) |
+| Airlock: CSV exports per account | 60 per hour |
 | Airlock: active API keys per account | 10, checked under an advisory lock |
 | Airlock: payment-details emails per account | 5 per hour |
 
@@ -111,19 +113,25 @@ posture is stricter than the rest of the product's:
   SHA-256 is stored (`airlock_api_keys.key_hash`), the secret is returned
   once at creation, and a revoked key answers exactly like a wrong one.
   Both schemes are declared in the OpenAPI document.
-- **Metering cannot double-spend.** One credit per call (five with
-  `"deep": true`, one when the rules already block and the model is not
-  asked) is taken by a single conditional `UPDATE` on a balance row with
-  `CHECK (balance >= 0)`, in the same transaction as the ledger line;
+- **Metering cannot double-spend, and the paywall is in front of the
+  engine.** One credit per call (five with `"deep": true`; four refunded
+  when the rules already block and the model is not asked) is taken by a
+  single conditional `UPDATE` on a balance row with `CHECK (balance >= 0)`,
+  in the same transaction as the ledger line, *before* the detector runs --
+  a drained key cannot make the engine do work (pinned by
+  `test_a_drained_key_never_reaches_the_engine`);
   Postgres serialises concurrent debits on the row lock. Proven by
   `tests/test_airlock_billing.py`: fifty concurrent scans against ten
   credits yield exactly ten 200s and forty 402s. A refused call (401, 402,
   422, 429) or a 5xx charges nothing.
-- **Fails closed.** A 5xx on `/v1/airlock/scan` or `/v1/airlock/egress`
-  carries `"verdict": "block"` in its body (`main.py`'s unhandled-exception
-  handler consults `FAIL_CLOSED_PATHS`), so a client that reads the body
-  before the status still reads a block. Other routes' 500s are undecorated.
-  Pinned by `tests/test_airlock_policy.py`.
+- **Fails closed.** A 5xx raised inside the application on
+  `/v1/airlock/scan` or `/v1/airlock/egress` carries `"verdict": "block"`
+  in its body (`main.py`'s unhandled-exception handler consults
+  `FAIL_CLOSED_PATHS`), so a client that reads the body before the status
+  still reads a block. Other routes' 500s are undecorated. A platform
+  failure before the function runs is outside this mechanism, which is why
+  the documented rule for callers is "any non-200 is a block". Pinned by
+  `tests/test_airlock_policy.py`.
 - **Policy is written by people, read by keys.** The per-account policy
   (`airlock_policies`, migration 0034: thresholds, muted rules, standing
   egress allowlist) is readable with a key and writable only from a

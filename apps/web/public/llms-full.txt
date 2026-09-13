@@ -421,10 +421,14 @@ rejecting TRUNCATE. The second is not redundant: TRUNCATE fires no row-level
 trigger, and was verified to empty the table silently before it was added.
 
 By default there is no model call and no network request in the decision
-path, so the scanner has no undecided state; a failure is a 5xx that
-carries `"verdict": "block"` in its body and no charge -- the guard fails
-closed, and a client that reads the body before the status agrees with one
-that does not. `GET /v1/airlock/stats` returns public aggregates only; the
+path, so the scanner has no undecided state; a failure inside the
+application is a 5xx that carries `"verdict": "block"` in its body and no
+charge -- the guard fails closed, and a client that reads the body before
+the status agrees with one that does not. (A platform failure before the
+application runs returns the platform's own error page, which is why the
+rule for callers is "any non-200 is a block".) Policy, usage and the CSV
+export are not metered but are bounded per account: 600 reads and 60
+exports an hour, then 429 with Retry-After. `GET /v1/airlock/stats` returns public aggregates only; the
 customer's own usage is at `GET /v1/airlock/usage` (per day, per key) and
 `GET /v1/airlock/usage.csv` (every ledger line), both drawn from the credit
 ledger, never the audit log, because the audit log has no account column.
@@ -446,9 +450,10 @@ semantic.py) classifies the content and its answer enters the same noisy-OR
 as one more weighted term, capped at 0.85 -- below the strongest single
 rule. It can only raise a verdict, never lower one: its weight is zero
 unless it says "injection". When the rules alone already block, the model
-is not asked (it could not change anything), the call is charged as an
-ordinary scan (1 credit) and the response says `semantic.status:
-"skipped"`. There is deliberately no lower bound: the paraphrased attack
+is not asked (it could not change anything): the five credits are taken up
+front as for any deep scan -- the paywall stays in front of the engine --
+then four are refunded as a ledger line, and the response says
+`semantic.status: "skipped"` with `credits_charged: 1`. There is deliberately no lower bound: the paraphrased attack
 that scores 0.00 on rules is the case the second opinion exists for. If
 Gemini is unavailable or answers unparseably, the response says
 `semantic.status: "unavailable"`, the rule verdict stands, and the 4 extra

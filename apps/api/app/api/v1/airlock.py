@@ -76,6 +76,8 @@ from ...cqrs.airlock_billing import (
     resolve_api_key,
 )
 from ...cqrs.airlock_policy import (
+    DEFAULT_BLOCK_THRESHOLD,
+    DEFAULT_FLAG_THRESHOLD,
     DEFAULT_POLICY,
     MAX_ALLOWLIST_HOSTS,
     MAX_MUTED_RULES,
@@ -152,6 +154,22 @@ METERED_RESPONSES = {
 }
 
 NO_CREDITS_DETAIL = "No Airlock credits left. Buy a pack from the Airlock section of your dashboard."
+
+# The reads that take a key but spend no credit (policy, usage, the CSV)
+# are bounded per account instead, so "the balance is the bound" stays
+# true for everything a key can do: a drained key can neither run the
+# engine nor pull a 50,000-row export in a loop. Generous enough for a
+# dashboard tab polling once a minute.
+MAX_READS_PER_WINDOW = 600
+MAX_EXPORTS_PER_WINDOW = 60
+READ_WINDOW_MS = AIRLOCK_SCAN_WINDOW_MS
+
+
+async def _bound_reads(database: Database, principal: "AirlockPrincipal", action: str, cap: int) -> None:
+    if principal.is_founder:
+        return
+    if not await try_record_action(database, principal.user_id, action, cap, READ_WINDOW_MS):
+        raise _rate_limited()
 
 
 def _rate_limited() -> HTTPException:
@@ -445,17 +463,22 @@ async def scan(
     settings: Settings = Depends(get_settings),
 ) -> ScanOut:
     """Score untrusted content for prompt injection, before it reaches an
-    agent's context window. One credit per call (five with `deep`, unless
-    the rules alone already block, when the model is not asked and one
-    credit is charged); 402 with nothing returned when the balance is
-    short. Any 5xx carries `verdict: "block"`: fail closed."""
+    agent's context window. One credit per call (five with `deep`; when the
+    rules alone already block, the model is not asked and four are refunded,
+    so the net is one); 402 with nothing scanned when the balance is short.
+    Any 5xx from the application carries `verdict: "block"`: fail closed."""
     policy = principal.policy
+    # Charge before scanning, not after: a caller with no credits gets the
+    # 402 without the engine running for them (the balance is the bound on
+    # what an authenticated key can make the engine do), and a caller with
+    # credits is charged for exactly the calls that return a verdict. A
+    # deep scan is taken as one debit for the whole price, so a caller
+    # either affords the second opinion or is told so up front.
+    cost = 1 + DEEP_SCAN_EXTRA_CREDITS if payload.deep else 1
+    remaining = await _charge(database, principal, "deep_scan" if payload.deep else "scan", cost)
+    charged = 0 if principal.is_founder else cost
+
     started = time.perf_counter()
-    # The rules run before the charge, not after: the price of a deep scan
-    # depends on what the rules found (see below), and the engine is pure,
-    # bounded by MAX_SCAN_CHARS and a few milliseconds -- not worth a
-    # second round trip to price first. A caller with no credits still gets
-    # a 402 with no verdict in it.
     detection = _DETECTOR.scan(
         payload.content,
         block_threshold=policy.block_threshold,
@@ -466,14 +489,12 @@ async def scan(
 
     # A deep scan is only worth its price when the model can move the
     # verdict. It can only raise one (semantic.combine), so once the rules
-    # already say block there is nothing for it to do: skip the call, charge
-    # the ordinary price, and say so. The other direction is deliberately
-    # NOT bounded -- the paraphrased attack that scores 0.00 on rules is the
-    # case the second opinion exists for.
+    # already say block there is nothing for it to do: skip the call, hand
+    # the extra credits back on the same refund path an unavailable model
+    # uses, and say so. The other direction is deliberately NOT bounded --
+    # the paraphrased attack that scores 0.00 on rules is the case the
+    # second opinion exists for.
     ask_model = payload.deep and verdict != "block"
-    cost = 1 + DEEP_SCAN_EXTRA_CREDITS if ask_model else 1
-    remaining = await _charge(database, principal, "deep_scan" if ask_model else "scan", cost)
-    charged = 0 if principal.is_founder else cost
 
     matched_rules = [match.rule_id for match in detection.matches]
     matches = [
@@ -494,6 +515,17 @@ async def scan(
             "reason": "The rules already block this content; a second opinion can only raise a verdict.",
             "weight": 0.0,
         }
+        if not principal.is_founder:
+            remaining = await handle_grant_credits(
+                database,
+                GrantCreditsCommand(
+                    user_id=principal.user_id,
+                    credits=DEEP_SCAN_EXTRA_CREDITS,
+                    reason="refund",
+                    reference="deep scan: rules already block",
+                ),
+            )
+            charged = 1
     elif ask_model:
         opinion = await semantic_opinion(model_provider, payload.content)
         semantic = opinion.as_dict()
@@ -690,8 +722,8 @@ async def list_rules(response: Response) -> RulesOut:
 
 
 class PolicyIn(BaseModel):
-    block_threshold: float = Field(default=0.75, gt=0, le=1)
-    flag_threshold: float = Field(default=0.40, gt=0, le=1)
+    block_threshold: float = Field(default=DEFAULT_BLOCK_THRESHOLD, gt=0, le=1)
+    flag_threshold: float = Field(default=DEFAULT_FLAG_THRESHOLD, gt=0, le=1)
     muted_rules: list[str] = Field(default_factory=list, max_length=MAX_MUTED_RULES)
     egress_allowlist: list[str] = Field(default_factory=list, max_length=MAX_ALLOWLIST_HOSTS)
 
@@ -713,10 +745,19 @@ def _policy_out(policy: Policy) -> PolicyOut:
     )
 
 
-@router.get("/policy", response_model=PolicyOut, responses={401: METERED_RESPONSES[401], 429: METERED_RESPONSES[429]})
-async def get_policy(principal: AirlockPrincipal = Depends(airlock_principal)) -> PolicyOut:
+READ_RESPONSES = {
+    401: METERED_RESPONSES[401],
+    429: {"description": f"More than {MAX_READS_PER_WINDOW} reads from this account in an hour. Not metered otherwise."},
+}
+
+
+@router.get("/policy", response_model=PolicyOut, responses=READ_RESPONSES)
+async def get_policy(
+    database: Database = Depends(get_database), principal: AirlockPrincipal = Depends(airlock_principal)
+) -> PolicyOut:
     """The policy every scan and egress call on this account is judged
-    under. Not metered."""
+    under. Not metered; bounded per account."""
+    await _bound_reads(database, principal, "airlock_read", MAX_READS_PER_WINDOW)
     return _policy_out(principal.policy)
 
 
@@ -783,13 +824,15 @@ class UsageOut(BaseModel):
     rows: list[UsageDayOut]
 
 
-@router.get("/usage", response_model=UsageOut, responses={401: METERED_RESPONSES[401], 429: METERED_RESPONSES[429]})
+@router.get("/usage", response_model=UsageOut, responses=READ_RESPONSES)
 async def usage(
     days: int = Query(default=30, ge=1, le=MAX_USAGE_DAYS),
     database: Database = Depends(get_database),
     principal: AirlockPrincipal = Depends(airlock_principal),
 ) -> UsageOut:
-    """Calls per day per key over the last `days` days. Not metered."""
+    """Calls per day per key over the last `days` days. Not metered;
+    bounded per account."""
+    await _bound_reads(database, principal, "airlock_read", MAX_READS_PER_WINDOW)
     rows = await handle_usage_query(database, principal.user_id, days=days)
     out = [UsageDayOut(**vars(row)) for row in rows]
     return UsageOut(days=days, total_credits=sum(row.credits for row in out), rows=out)
@@ -800,7 +843,7 @@ async def usage(
     responses={
         200: {"content": {"text/csv": {}}, "description": "One ledger line per row, newest first."},
         401: METERED_RESPONSES[401],
-        429: METERED_RESPONSES[429],
+        429: {"description": f"More than {MAX_EXPORTS_PER_WINDOW} exports from this account in an hour."},
     },
 )
 async def usage_csv(
@@ -810,7 +853,9 @@ async def usage_csv(
 ) -> StreamingResponse:
     """Every ledger line (purchases, grants, each metered call, refunds)
     for the last `days` days as CSV -- for a spreadsheet, or an auditor.
-    Capped at MAX_EXPORT_ROWS lines; narrow the window for more."""
+    Capped at MAX_EXPORT_ROWS lines (narrow the window for more) and at
+    MAX_EXPORTS_PER_WINDOW pulls an hour."""
+    await _bound_reads(database, principal, "airlock_export", MAX_EXPORTS_PER_WINDOW)
     lines = await handle_ledger_lines_query(database, principal.user_id, days=days, limit=MAX_EXPORT_ROWS)
 
     def rows():

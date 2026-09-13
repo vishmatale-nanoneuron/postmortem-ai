@@ -222,13 +222,15 @@ async def test_the_model_cannot_lower_a_verdict(context):
     assert body["credits_charged"] == 1
     assert body["credits_remaining"] == 19
     assert await _balance(database, user_id) == 19
-    # The ledger says 'scan', not 'deep_scan': the customer was not sold a
-    # second opinion that could not have changed anything.
-    line = await database.fetch_one(
-        "SELECT reason, delta FROM airlock_credit_ledger WHERE user_id=%s ORDER BY created_at DESC LIMIT 1",
+    # Charged up front for the whole deep scan (the paywall stays in front
+    # of the engine), then the extra handed back on the refund path: the
+    # ledger shows both, and the customer nets the price of a plain scan.
+    lines = await database.fetch_all(
+        "SELECT reason, delta, reference FROM airlock_credit_ledger WHERE user_id=%s AND reason <> 'grant' ORDER BY created_at, delta",
         (user_id,),
     )
-    assert (line["reason"], line["delta"]) == ("scan", -1)
+    assert [(line["reason"], line["delta"]) for line in lines] == [("deep_scan", -5), ("refund", 4)]
+    assert lines[1]["reference"] == "deep scan: rules already block"
 
 
 @pytest.mark.asyncio

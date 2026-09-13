@@ -244,7 +244,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "How much does it cost?",
-    a: "Prepaid packs of 10,000 scan credits: \u20b9999 by UPI in India, or $15 / \u00a312 / \u20ac14 by international wire. One credit per scan or egress check, five for a deep scan (one when the rules already block, so you are never charged for an opinion that could not change the verdict). Credits do not expire. There is no free tier and no monthly fee; buy a pack, mint a key, call the API.",
+    a: "Prepaid packs of 10,000 scan credits: \u20b9999 by UPI in India, or $15 / \u00a312 / \u20ac14 by international wire. One credit per scan or egress check, five for a deep scan (four of them refunded when the rules already block, so you never pay for an opinion that could not change the verdict). Credits do not expire. There is no free tier and no monthly fee; buy a pack, mint a key, call the API.",
   },
   {
     q: "Can I tune it for my own documents?",
@@ -260,7 +260,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "What happens if the scanner is down?",
-    a: "You get a non-200 and you are not charged. Treat it as block \u2014 and a 5xx from the scan or egress path says \u201cverdict: block\u201d in its own body, so a client that parses the body first agrees. A security check that defaults to \u201callow\u201d when it breaks is not a security check.",
+    a: "You get a non-200 and you are not charged. Treat it as block \u2014 and when the request reaches the application, a 5xx from the scan or egress path says \u201cverdict: block\u201d in its own body, so a client that parses the body first agrees (a platform-level failure before the application runs returns the platform\u2019s error, which is why the rule is any non-200). A security check that defaults to \u201callow\u201d when it breaks is not a security check.",
   },
 ];
 
@@ -608,8 +608,9 @@ export default async function AirlockPage() {
             own backend at{" "}
             <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">/v1/airlock/scan</code> and{" "}
             <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">/v1/airlock/egress</code>. A failure
-            on either path answers with <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">verdict: block</code>{" "}
-            in the body: the guard fails closed.
+            inside the application on either path answers with{" "}
+            <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">verdict: block</code> in the body: the
+            guard fails closed.
           </p>
           <p className={p}>
             <span className="font-medium text-ink">Not built yet:</span> a proxy mode where Airlock fetches the

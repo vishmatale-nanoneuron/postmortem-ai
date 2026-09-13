@@ -86,8 +86,9 @@ export default function DocsPage() {
           <p className={p}>
             <span className="font-medium text-ink">Credits.</span> One credit per call to{" "}
             <code className={code}>POST /v1/airlock/scan</code> or <code className={code}>POST /v1/airlock/egress</code>;
-            five for a scan with <code className={code}>&quot;deep&quot;: true</code> (one when the rules alone already
-            block -- the model is not asked what it cannot change). Taken atomically, in one debit.
+            five for a scan with <code className={code}>&quot;deep&quot;: true</code>, four of which are refunded when the
+            rules alone already block -- the model is not asked what it cannot change. Taken atomically, in one
+            debit, before the engine runs.
             An empty balance is <code className={code}>402</code> with no verdict returned; a refused or failed call
             (<code className={code}>401</code>, <code className={code}>402</code>, <code className={code}>422</code>,{" "}
             <code className={code}>429</code>, any <code className={code}>5xx</code>) spends nothing. Every response carries{" "}
@@ -139,9 +140,11 @@ export default function DocsPage() {
             <span className="font-medium text-ink">Operational.</span> Every response carries{" "}
             <code className={code}>X-Request-ID</code> (yours is echoed if you send one) and{" "}
             <code className={code}>Server-Timing</code>; every <code className={code}>429</code> carries{" "}
-            <code className={code}>Retry-After</code>. Treat any non-200 as block; a <code className={code}>5xx</code> on
-            the scan or egress path says <code className={code}>&quot;verdict&quot;: &quot;block&quot;</code> in its own body,
-            so a client that reads the body first agrees. The audit log keeps a SHA-256 of
+            <code className={code}>Retry-After</code>. Treat any non-200 as block; when the request reaches the
+            application, a <code className={code}>5xx</code> on the scan or egress path says{" "}
+            <code className={code}>&quot;verdict&quot;: &quot;block&quot;</code> in its own body, so a client that reads the
+            body first agrees. Policy, usage and the CSV are not metered but are bounded per account (600 reads and
+            60 exports an hour, then <code className={code}>429</code>). The audit log keeps a SHA-256 of
             what was scanned, never the content and never your account; the standard scan makes no model call.
             Public aggregate counts are at <code className={code}>GET /v1/airlock/stats</code>, prices at{" "}
             <code className={code}>GET /v1/airlock/pricing</code>.
