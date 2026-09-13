@@ -3,7 +3,7 @@
   "regions": ["bom1"],
   "crons": [
     {
-      "path": "/v1/internal/cron/free-incident-nudge",
+      "path": "/v1/internal/cron/purchase-reminder",
       "schedule": "0 12 * * *"
     }
   ]

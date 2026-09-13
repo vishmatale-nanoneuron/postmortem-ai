@@ -13,17 +13,18 @@ from pydantic import BaseModel
 
 from ...database import Database
 from ...dependencies import get_database
-from ...services.email import EmailNotConfiguredError, send_free_incident_nudge_email
+from ...services.email import EmailNotConfiguredError, send_purchase_reminder_email
 from ...settings import Settings, get_settings
 
 router = APIRouter(prefix="/v1/internal", tags=["internal"])
 logger = logging.getLogger("postmortem_ai")
 
-# Only ever nudge accounts whose free incident is old enough that they've
-# plausibly had time to look at the draft and decide, not one still
-# mid-session -- a same-day email would read as spammy, not helpful.
-MIN_INCIDENT_AGE_MS = 24 * 60 * 60 * 1000
+# Only ever remind accounts old enough to have plausibly looked around
+# and decided, not one created an hour ago -- a same-day email would read
+# as spammy, not helpful.
+MIN_ACCOUNT_AGE_MS = 24 * 60 * 60 * 1000
 MAX_REMINDERS_PER_RUN = 50
+DAY_MS = 24 * 60 * 60 * 1000
 
 
 def _require_cron_secret(request: Request, settings: Settings) -> None:
@@ -35,59 +36,73 @@ def _require_cron_secret(request: Request, settings: Settings) -> None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid cron secret")
 
 
-class FreeIncidentNudgeResult(BaseModel):
+class PurchaseReminderResult(BaseModel):
     candidates_found: int
     emails_sent: int
     emails_failed: int
 
 
-@router.post("/cron/free-incident-nudge", response_model=FreeIncidentNudgeResult)
-async def free_incident_nudge(
+@router.post("/cron/purchase-reminder", response_model=PurchaseReminderResult)
+async def purchase_reminder(
     request: Request,
     database: Database = Depends(get_database),
     settings: Settings = Depends(get_settings),
-) -> FreeIncidentNudgeResult:
+) -> PurchaseReminderResult:
     """The one automated purchase-decision nudge in this app: an account
-    that used its free incident, got a real draft out of it, still hasn't
-    subscribed, and has had at least a day to decide -- gets exactly one
-    email, ever (free_incident_reminder_sent_at is set immediately after
-    sending and checked here, so a retry of this same cron run can never
-    double-send). Requires a real draft to exist, not just an incident --
-    someone who created the incident and never entered evidence got no
-    real value yet, and nudging them would be premature, not helpful."""
+    that signed up at least a day ago and has never paid for anything --
+    no subscription, no payment claim of either product in any state, no
+    Airlock credits ever bought -- gets exactly one email, ever.
+
+    This replaced the free-incident nudge on 2026-09-13 when the trial was
+    retired: with no free incidents, that cron could never fire again, and
+    a signup from anywhere in the world who never paid would have heard
+    nothing. The "sent" mark reuses the free_incident_reminder_sent_at
+    column (migration 0022): it has always meant "this account's one
+    reminder went out", and reusing it means a legacy account that already
+    received the old nudge does not get a second email now.
+
+    A pending claim excludes the account on purpose: they have paid and are
+    waiting on the founder, and a "have you considered paying?" email at
+    that moment would be insulting. The founder's own account is excluded
+    by email."""
     _require_cron_secret(request, settings)
 
-    cutoff = int(time.time() * 1000) - MIN_INCIDENT_AGE_MS
+    now = int(time.time() * 1000)
+    cutoff = now - MIN_ACCOUNT_AGE_MS
     candidates = await database.fetch_all(
-        """SELECT u.id::text AS id, u.email, i.title AS incident_title
+        """SELECT u.id::text AS id, u.email, u.created_at
            FROM users u
-           JOIN incidents i ON i.id = u.free_incident_id
-           JOIN incident_postmortems p ON p.incident_id = i.id
            WHERE u.subscription_status = 'none'
              AND u.free_incident_reminder_sent_at IS NULL
-             AND i.created_at <= %s
-           ORDER BY i.created_at
+             AND u.created_at <= %s
+             AND lower(u.email) <> lower(%s)
+             AND NOT EXISTS (SELECT 1 FROM payment_claims pc WHERE pc.user_id = u.id)
+             AND NOT EXISTS (
+               SELECT 1 FROM airlock_credit_ledger l WHERE l.user_id = u.id AND l.reason IN ('purchase', 'grant')
+             )
+           ORDER BY u.created_at
            LIMIT %s""",
-        (cutoff, MAX_REMINDERS_PER_RUN),
+        (cutoff, settings.founder_email, MAX_REMINDERS_PER_RUN),
     )
 
     sent = 0
     failed = 0
     for row in candidates:
+        days = max(1, (now - int(row["created_at"])) // DAY_MS)
         try:
-            send_free_incident_nudge_email(settings, row["email"], row["incident_title"], row["id"])
+            send_purchase_reminder_email(settings, row["email"], row["id"], days_since_signup=days)
         except EmailNotConfiguredError:
             # Not configured means "cron runs, does nothing" everywhere
             # else in this app too (see billing._client()) -- stop the
             # whole run rather than fail every candidate individually.
-            logger.warning("free_incident_nudge_email_not_configured")
+            logger.warning("purchase_reminder_email_not_configured")
             break
         except Exception:
             # One bad address/API hiccup shouldn't block every other
             # candidate in this run -- logged, counted, and retried
-            # automatically on the next scheduled run since
-            # free_incident_reminder_sent_at is only set on success.
-            logger.exception("free_incident_nudge_email_failed", extra={"user_id": row["id"]})
+            # automatically on the next scheduled run since the sent mark
+            # is only set on success.
+            logger.exception("purchase_reminder_email_failed", extra={"user_id": row["id"]})
             failed += 1
             continue
         await database.execute(
@@ -96,4 +111,4 @@ async def free_incident_nudge(
         )
         sent += 1
 
-    return FreeIncidentNudgeResult(candidates_found=len(candidates), emails_sent=sent, emails_failed=failed)
+    return PurchaseReminderResult(candidates_found=len(candidates), emails_sent=sent, emails_failed=failed)
