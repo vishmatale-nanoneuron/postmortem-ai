@@ -48,7 +48,7 @@ const SAMPLES: { label: string; content: string }[] = [
 // statuses a paying product produces on purpose -- 401 (not signed in) and
 // 402 (no credits) -- are next steps, not errors; everything else is the
 // scanner being unreachable, and nothing typed was kept.
-function describeFailure(cause: unknown): { text: string; next: "sign-in" | "buy" | null } {
+export function describeFailure(cause: unknown): { text: string; next: "sign-in" | "buy" | null } {
   if (cause instanceof AirlockScanError) {
     if (cause.status === 401) return { text: "Sign in to scan. Your text was not sent anywhere.", next: "sign-in" };
     if (cause.status === 402) return { text: "This account has no Airlock credits left.", next: "buy" };

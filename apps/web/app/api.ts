@@ -534,6 +534,51 @@ export type AirlockScan = {
   policy: { block_threshold: number; flag_threshold: number; muted_rules: string[]; default: boolean };
 };
 
+export type AirlockProxyFetch = {
+  verdict: "allow" | "flag" | "block";
+  score: number;
+  // "egress" when the URL itself was refused before any fetch, "ingress"
+  // when the fetched page was scanned.
+  stage: "egress" | "ingress";
+  reasons: string[];
+  matches: AirlockMatch[];
+  families: string[];
+  signals: Record<string, unknown>;
+  url: string;
+  final_url: string | null;
+  http_status: number | null;
+  content_type: string | null;
+  content_bytes: number;
+  content_sha256: string | null;
+  destination_checked: boolean;
+  hops: number;
+  truncated: boolean;
+  fetch_ms: number;
+  latency_ms: number;
+  // The page's visible text on allow (sanitized on flag); null on block.
+  content: string | null;
+  credits_remaining: number | null;
+  credits_charged: number;
+  semantic: AirlockScan["semantic"];
+  policy: AirlockScan["policy"];
+};
+
+export async function airlockProxyFetch(url: string, deep = false): Promise<AirlockProxyFetch> {
+  const response = await fetch(`${API_BASE}/v1/airlock/proxy/fetch`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url, deep }),
+  });
+  if (!response.ok) {
+    // 422/502 from the proxy carry verdict: block and a reason; surface the
+    // reason and keep the status so the caller can tell 401/402 apart.
+    const body = await response.json().catch(() => ({}));
+    throw new AirlockScanError(readableDetail(body.detail) ?? `Request failed: ${response.status}`, response.status);
+  }
+  return response.json() as Promise<AirlockProxyFetch>;
+}
+
 export class AirlockScanError extends Error {
   constructor(
     message: string,
@@ -569,6 +614,7 @@ export type AirlockPricing = {
   max_packs_per_claim: number;
   credits_per_scan: number;
   credits_per_deep_scan: number;
+  credits_per_proxy_fetch: number;
   prices: { currency: string; amount: number; method: string; configured: boolean }[];
 };
 

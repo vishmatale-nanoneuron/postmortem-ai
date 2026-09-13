@@ -35,9 +35,12 @@ paying customers and a full API surface. Do not conflate them:
    signed-in session, never with a key), a usage table and CSV export
    (`/v1/airlock/usage`, `/v1/airlock/usage.csv`), and the rule list is
    public at `/v1/airlock/rules`. A 5xx from the application on the scan
-   or egress path says `verdict: block` in its body. What does NOT exist: a proxy mode (Airlock
-   fetching or forwarding on your behalf), alert webhooks, any support
-   commitment, or a self-hosted build. There is no card processor by
+   or egress path says `verdict: block` in its body. Proxy fetch
+   (`POST /v1/airlock/proxy/fetch`, 2 credits) has Airlock retrieve a URL
+   itself under a server-side request forgery guard, scan it, and hand
+   back the page text only when the verdict allows. What does NOT exist:
+   proxy forward (Airlock sending outbound calls for you), alert webhooks,
+   any support commitment, or a self-hosted build. There is no card processor by
    decision: UPI and wire are the only rails. It also has no published
    benchmark; any accuracy figure attributed to it is false as of this
    file's review date.

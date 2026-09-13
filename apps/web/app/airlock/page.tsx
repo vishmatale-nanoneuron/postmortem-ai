@@ -7,6 +7,7 @@ import type { AirlockPricing, AirlockStats } from "../api";
 import { AirlockMark } from "./airlock-mark";
 import { LiveCounters } from "./live-counters";
 import { Playground } from "./playground";
+import { UrlFetch } from "./url-fetch";
 import { AIRLOCK_PRICING_DEFAULTS, formatMoney } from "./pricing-defaults";
 import { ScanTheatre } from "./scan-theatre";
 import { WaitlistForm } from "./waitlist-form";
@@ -247,6 +248,10 @@ const FAQ: { q: string; a: string }[] = [
     a: "Prepaid packs of 10,000 scan credits: \u20b9999 by UPI in India, or $15 / \u00a312 / \u20ac14 by international wire. One credit per scan or egress check, five for a deep scan (four of them refunded when the rules already block, so you never pay for an opinion that could not change the verdict). Credits do not expire. There is no free tier and no monthly fee; buy a pack, mint a key, call the API.",
   },
   {
+    q: "What is proxy mode?",
+    a: "Instead of fetching a page and then asking Airlock about it, your agent asks Airlock to fetch it: POST /v1/airlock/proxy/fetch with the URL. Airlock checks the destination as an outbound call (your allowlist, credential material in the query string), retrieves the page from its own address, scans it under your policy, and returns the visible text only if the verdict allows \u2014 sanitized on a flag, nothing at all on a block. The fetch refuses anything that is not the public internet: loopback, private and link-local ranges, cloud metadata, and redirects into them, with the connection pinned to the address that was checked. Two credits, the fetch and the scan.",
+  },
+  {
     q: "Can I tune it for my own documents?",
     a: "Yes, per account. From the Policy card in your dashboard set your own block and flag thresholds, mute any rule that fires on your legitimate content (a legal team whose contracts trip the authority-spoof rules, say), and keep a standing egress allowlist so every call does not have to repeat it. The policy applies to every key on the account and can only be changed from a signed-in session, never with a key \u2014 a leaked key cannot switch the guard off. Every scan response names the policy it was judged under.",
   },
@@ -393,6 +398,17 @@ export default async function AirlockPage() {
           </p>
           <div className="mt-4">
             <Playground />
+          </div>
+          <h3 className="mt-6 mb-1 text-sm font-semibold text-ink">Or let Airlock fetch the page for you</h3>
+          <p className={p}>
+            Proxy mode. Give it a URL and Airlock fetches it from its own address, checks the destination as an
+            outbound call, scans what came back under your policy, and hands your agent the page text only if it
+            passes &mdash; so the check cannot be skipped. It refuses anything that is not the public internet
+            (cloud metadata, localhost, private ranges, redirects into them). {pricing.credits_per_proxy_fetch}{" "}
+            credits: the fetch and the scan.
+          </p>
+          <div className="mt-3">
+            <UrlFetch credits={pricing.credits_per_proxy_fetch} />
           </div>
         </Section>
 
@@ -600,8 +616,10 @@ export default async function AirlockPage() {
         <Section>
           <h2 className={h2}>What runs, and what doesn&apos;t</h2>
           <p className={p}>
-            <span className="font-medium text-ink">Running now:</span> the detection engine, the egress check, the
-            Gemini deep scan, a sanitized copy on request, the append-only audit log, API keys, prepaid credits with
+            <span className="font-medium text-ink">Running now:</span> the detection engine, the egress check,
+            proxy fetch (Airlock retrieves the URL under a server-side request forgery guard and scans it before
+            your agent sees it), the Gemini deep scan, a sanitized copy on request, the append-only audit log, API
+            keys, prepaid credits with
             a per-call meter that cannot double-spend, a per-account policy (your own block and flag thresholds,
             muted rules, a standing egress allowlist), the rule list, a usage table with CSV export, a ledger you
             can read back, and the dashboard to buy, mint, revoke and tune &mdash; all served from this site&apos;s
@@ -613,9 +631,9 @@ export default async function AirlockPage() {
             guard fails closed.
           </p>
           <p className={p}>
-            <span className="font-medium text-ink">Not built yet:</span> a proxy mode where Airlock fetches the
-            page or forwards the call for you (today you fetch, then ask), alert webhooks, any support or uptime
-            commitment, and a self-hosted build. That last one is what the early-access list below is for. Not
+            <span className="font-medium text-ink">Not built yet:</span> proxy <em>forward</em> (Airlock sending
+            an outbound call on your behalf with your credentials stripped &mdash; today the egress check answers
+            and your agent sends), alert webhooks, any support or uptime commitment, and a self-hosted build. That last one is what the early-access list below is for. Not
             planned: card payments &mdash; UPI and international wire, verified by hand, are the rails by decision;
             and no free plan &mdash; every scan is paid for, including the first.
           </p>
