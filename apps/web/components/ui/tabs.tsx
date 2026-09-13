@@ -1,9 +1,11 @@
 "use client"
 
-// Inactive tab labels are text-foreground/70, not shadcn's /60: at 60% over
-// the muted tab strip a label measures ~4.1:1 against the 4.5:1 minimum,
-// which Lighthouse flagged on the signed-in dashboard (the webhook tabs).
-// 70% is ~5.6:1 and still reads as inactive.
+// The tab strip is bg-paper, not shadcn's bg-muted: this app redefines
+// --color-muted as its muted TEXT colour (#6b6b66, globals.css), so
+// bg-muted painted the strip dark grey and put dark labels on it --
+// 2.39:1, measured by Lighthouse on the signed-in dashboard (the webhook
+// tabs). The app's own light surface gives the labels ~9:1. Inactive
+// labels stay text-foreground/70.
 
 import { Tabs as TabsPrimitive } from "@base-ui/react/tabs"
 import { cva, type VariantProps } from "class-variance-authority"
@@ -33,7 +35,7 @@ const tabsListVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-muted",
+        default: "bg-paper border border-line",
         line: "gap-1 bg-transparent",
       },
     },
