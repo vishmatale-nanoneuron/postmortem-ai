@@ -465,3 +465,33 @@ async def test_the_customer_is_emailed_when_the_balance_runs_low_and_when_it_emp
     assert sent == [(OTHER_EMAIL, 0, True)]
     assert (await client.post("/v1/airlock/scan", json={"content": BENIGN})).status_code == 402
     assert len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_public_documents_are_conditional_and_the_contract_declares_examples_and_headers(context):
+    """/rules and /pricing carry an ETag and answer 304 to a matching
+    If-None-Match; every metered route's request body ships an example
+    (so /docs "Try it out" starts filled in) and the response headers a
+    client relies on are declared, not just sent."""
+    client, _ = context
+    for path in ("/v1/airlock/rules", "/v1/airlock/pricing"):
+        first = await client.get(path)
+        assert first.status_code == 200, first.text
+        etag = first.headers["etag"]
+        assert etag.startswith('"') and etag.endswith('"')
+        assert first.headers["cache-control"] == "public, max-age=300, s-maxage=300"
+        again = await client.get(path, headers={"If-None-Match": etag})
+        assert again.status_code == 304 and again.content == b""
+        assert again.headers["etag"] == etag and "max-age=300" in again.headers["cache-control"]
+        stale = await client.get(path, headers={"If-None-Match": '"something-else"'})
+        assert stale.status_code == 200
+
+    spec = client._transport.app.openapi()  # type: ignore[attr-defined]
+    schemas = spec["components"]["schemas"]
+    for model in ("ScanIn", "EgressIn", "ProxyFetchIn", "PolicyIn"):
+        assert schemas[model].get("examples"), f"{model} has no example in the OpenAPI document"
+    scan = spec["paths"]["/v1/airlock/scan"]["post"]["responses"]
+    assert "X-Request-ID" in scan["200"]["headers"] and "Server-Timing" in scan["200"]["headers"]
+    assert "Retry-After" in scan["429"]["headers"]
+    rules = spec["paths"]["/v1/airlock/rules"]["get"]["responses"]
+    assert "ETag" in rules["200"]["headers"] and "304" in rules

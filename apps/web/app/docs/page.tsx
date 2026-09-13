@@ -167,6 +167,23 @@ export default function DocsPage() {
             Public aggregate counts are at <code className={code}>GET /v1/airlock/stats</code>, prices at{" "}
             <code className={code}>GET /v1/airlock/pricing</code>.
           </p>
+          <p className={p}>
+            <span className="font-medium text-ink">SDKs.</span> Official clients live in the repository:{" "}
+            <a className="underline underline-offset-2" href="https://github.com/vishmatale-nanoneuron/postmortem-ai/tree/main/sdk/python" target="_blank" rel="noopener noreferrer">
+              Python
+            </a>{" "}
+            (<code className={code}>from airlock import Airlock</code>; sync and async, httpx only) and{" "}
+            <a className="underline underline-offset-2" href="https://github.com/vishmatale-nanoneuron/postmortem-ai/tree/main/sdk/typescript" target="_blank" rel="noopener noreferrer">
+              TypeScript
+            </a>{" "}
+            (<code className={code}>new Airlock(&#123; apiKey &#125;)</code>; zero dependencies). Three methods each
+            &mdash; <code className={code}>scan</code>, <code className={code}>egress</code>,{" "}
+            <code className={code}>fetch</code> &mdash; plus <code className={code}>policy</code>,{" "}
+            <code className={code}>usage</code>, <code className={code}>rules</code>. Every non-200 raises a typed
+            error carrying the request id, so &ldquo;any exception is a block&rdquo; fails closed; nothing is retried,
+            because a retried scan is a second charge. Not yet on PyPI or npm: install from the repository path
+            until they are.
+          </p>
           <p className={cn(p, "mb-0")}>
             Code samples in curl, Python and TypeScript are on{" "}
             <Link className="underline underline-offset-2" href="/airlock#integrate">

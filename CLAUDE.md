@@ -122,9 +122,11 @@ projects under the `nanoneuronais-projects` team:
   browser — but this is a UX layer only; the backend's own validation is
   still the actual source of truth and is never bypassed or trusted less.
 - **Database:** Postgres, migrations in `supabase/migrations/*.sql`, applied
-  forward-only by `scripts/migrate.mjs` (no checksum/baseline machinery —
-  single-developer MVP against one dev database; add that back if this grows
-  multiple contributors/environments).
+  forward-only by `scripts/migrate.mjs`. A shipped migration is never edited:
+  `scripts/check-migrations.mjs` pins every file's SHA-256 in
+  `supabase/migrations/CHECKSUMS.json` and CI fails on a changed or
+  unrecorded file — after adding a migration run
+  `bun run migrate:record` and commit the checksum file with it.
 - **Package manager: Bun**, not npm — `bun.lock` at repo root and in
   `apps/web`, no `package-lock.json` anywhere. Matches this team's
   convention (and Vercel's own enforced Install Command for this account —
