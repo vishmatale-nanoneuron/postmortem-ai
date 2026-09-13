@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nanoneuron-airlock"
+version = "0.1.0"
+description = "Airlock: prompt-injection and exfiltration guard for AI agents. Three calls, fail-closed."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["httpx>=0.25"]
+keywords = ["prompt-injection", "ai-agents", "security", "guardrail"]
+
+[project.urls]
+Homepage = "https://www.nanoneuron.ai/airlock"
+Documentation = "https://www.nanoneuron.ai/docs#airlock"
+Source = "https://github.com/vishmatale-nanoneuron/postmortem-ai/tree/main/sdk/python"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["airlock*"]

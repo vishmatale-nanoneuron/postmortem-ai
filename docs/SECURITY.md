@@ -165,6 +165,12 @@ posture is stricter than the rest of the product's:
   connection attempted. It is metered (2 credits; a refused attempt still
   costs 1), so a drained key cannot make Airlock fetch anything and a
   funded one pays to probe.
+- **A shipped migration is never edited.** `scripts/check-migrations.mjs`
+  pins a SHA-256 of every file in `supabase/migrations/` in
+  `CHECKSUMS.json` and fails CI when a recorded file changes or a new one
+  is unrecorded (`node scripts/check-migrations.mjs --update` records
+  it). Also refuses `DROP TABLE` / `DROP SCHEMA` / `TRUNCATE` at statement
+  start and `CREATE INDEX CONCURRENTLY`.
 - **Errors are recorded, not sent to a vendor.** The API's unhandled-
   exception handler writes one row per 500 to `request_errors` (migration
   0035): method, path, exception type, a truncated message, the request id

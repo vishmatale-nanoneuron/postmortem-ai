@@ -55,6 +55,11 @@ jobs:
       - name: Apply migrations
         run: bun run scripts/migrate.mjs
 
+      # A shipped migration is never edited; this fails if one was, or if a
+      # new one was added without being recorded (scripts/check-migrations.mjs).
+      - name: Migration checksums
+        run: node scripts/check-migrations.mjs
+
       - name: Ruff
         run: ruff check apps/api
 
@@ -96,6 +101,13 @@ jobs:
       - name: Typecheck
         working-directory: apps/web
         run: bun x tsc --noEmit -p .
+
+      # The TypeScript SDK (sdk/typescript) is published from this repo;
+      # its own strict tsconfig must pass, and its tests run in the web
+      # vitest suite below.
+      - name: Typecheck the TypeScript SDK
+        working-directory: sdk/typescript
+        run: bun x tsc -p tsconfig.json --noEmit
 
       - name: Test
         working-directory: apps/web

@@ -470,6 +470,22 @@ resolves where), and carry `"verdict": "block"`. An application error
 after any charge refunds that charge on the ledger. Deep scan adds 4 credits, refunded when the rules
 already block.
 
+**SDKs.** Official clients in the repository under sdk/python (package
+`nanoneuron-airlock`, `from airlock import Airlock` / `AsyncAirlock`; httpx
+only) and sdk/typescript (package `nanoneuron-airlock`, `new Airlock({ apiKey
+})`; zero dependencies). Methods: scan, egress, fetch, policy, usage, rules.
+Every non-200 raises/throws a typed error (AuthenticationError 401,
+InsufficientCredits 402, RateLimited 429 with retry_after, FetchRefused for
+a proxy 422/502, AirlockError otherwise) carrying the request id; nothing
+is retried. Both are tested in CI against the real in-process API (Python)
+and a recording fetch (TypeScript). Not yet published to PyPI/npm as of this
+file's date; install from the repository path.
+
+**Conditional GET.** GET /v1/airlock/rules and /v1/airlock/pricing carry an
+ETag; send it back as If-None-Match and get a 304 with no body. Every
+metered route's request body ships an example in the OpenAPI document, and
+the X-Request-ID, Server-Timing and Retry-After headers are declared there.
+
 **Policy (per account, migration 0034).** `GET /v1/airlock/policy` (key or
 session) returns `block_threshold`, `flag_threshold`, `muted_rules` and
 `egress_allowlist`; `PUT` replaces it and `DELETE` resets it, from a
