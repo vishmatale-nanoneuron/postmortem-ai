@@ -58,23 +58,14 @@ jobs:
       - name: Ruff
         run: ruff check apps/api
 
+      # One run, every file, fatal. test_mcp_server.py used to be split out
+      # under `|| true` because its fixture held FastMCP's anyio task group
+      # across pytest-asyncio's fixture boundary and errored in teardown on
+      # every test; the fixture now drives the lifespan from a single task
+      # (see its comment), so the MCP tests are ordinary tests again and a
+      # regression in the MCP surface fails the build like any other.
       - name: Pytest
-        run: pytest apps/api/tests -q --ignore=apps/api/tests/test_mcp_server.py
-        env:
-          PYTHONPATH: apps/api
-
-      # Run separately, non-fatally: every assertion in this file passes,
-      # but it also always reports a teardown-only anyio error ("Attempted
-      # to exit cancel scope in a different task") -- a known, confirmed-
-      # harmless artifact of driving FastMCP's background task group
-      # across an in-process ASGITransport in a pytest-asyncio fixture
-      # (see the file's own module docstring for the full explanation).
-      # Still runs and stays visible in the log (not skipped, not hidden)
-      # so a REAL regression here is still noticed by a human reading CI
-      # output -- it just doesn't block the job on a non-issue that
-      # predates this workflow ever successfully running.
-      - name: Pytest (MCP -- informational, known teardown noise)
-        run: pytest apps/api/tests/test_mcp_server.py -q || true
+        run: pytest apps/api/tests -q
         env:
           PYTHONPATH: apps/api
 
