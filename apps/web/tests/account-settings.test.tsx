@@ -1,4 +1,4 @@
-// Regression coverage for AccountSettings (apps/web/app/workspace.tsx).
+// Regression coverage for AccountSettings (apps/web/app/signed-in-workspace.tsx).
 // The founder account is protected server-side (auth.py refuses to delete
 // the founder), but the button being hidden client-side is also load-bearing
 // UX -- it should never be visible to the founder account in the first
@@ -25,7 +25,7 @@ vi.mock("../app/auth", () => ({
   },
 }));
 
-import { AccountSettings } from "../app/workspace";
+import { AccountSettings } from "../app/signed-in-workspace";
 import type { AuthUser } from "../app/auth";
 
 const baseUser: AuthUser = {
