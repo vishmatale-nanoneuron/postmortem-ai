@@ -344,18 +344,22 @@ Every real payment endpoint verifies against the provider's own record
 (amount, currency, signature, captured status), never against
 frontend-supplied state.
 
-**Every account gets one free incident.** Record evidence on it, generate a
-grounded draft, and see the real output before paying anything. A subscription
-is required to create a *second* incident and to publish. The allowance is
-enforced in one place (`has_free_incident_available` in `apps/api/app/auth.py`)
+**There is no free tier and no trial.** Every incident, from the first,
+requires an active subscription. The gate is enforced in one place
+(`has_free_incident_available` in `apps/api/app/auth.py`, permanently False)
 and honoured identically by the REST API, the MCP tools and the webhook
 ingestion path, so it cannot be bypassed by choosing a different entry point.
-This trial was switched off on 2026-09-04 and restored on 2026-09-10 after the
-evidence was clear: every payment taken to that point was made while the free
-incident existed, and none afterwards. An account that drafted a real
-postmortem on its free incident and never subscribed receives exactly one
-automated reminder email, at least 24 hours after that draft — a plain link to
-pricing, never a repeat send and never a fabricated urgency claim.
+History: the one-free-incident trial was switched off on 2026-09-04, restored
+on 2026-09-10 on funnel evidence, and retired again on 2026-09-13 by the
+founder's explicit decision. Accounts that already held a free incident from
+before keep working on that one incident (never publishing it, never a second)
+-- a promise the site made them at the time is kept. To judge the output
+before paying, read https://www.nanoneuron.ai/blog/github-outage-demo, a full
+postmortem the tool drafted from a real public outage; the 14-day refund on
+the first charge is the safety net. An account that drafted a real postmortem
+on a legacy free incident and never subscribed receives exactly one automated
+reminder email, at least 24 hours after that draft — a plain link to pricing,
+never a repeat send and never a fabricated urgency claim.
 Refunds: email vish.matale@gmail.com within 14 days of the first charge
 and it's refunded — a manual, founder-processed action on every payment
 rail, the same review discipline as approving a payment in the first

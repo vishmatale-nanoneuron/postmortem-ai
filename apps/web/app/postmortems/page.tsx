@@ -104,7 +104,9 @@ export default async function PublicPostmortemsIndex() {
             </Link>
             .
           </p>
-          <p className="mt-2 text-sm text-muted">Your first incident is free, so you can also try it on one of your own.</p>
+          <p className="mt-2 text-sm text-muted">
+            The worked example above is the real output; a subscription is what it takes to run it on one of yours.
+          </p>
         </div>
       ) : (
         <ul className="space-y-3">

@@ -314,9 +314,9 @@ export default function CloudflareOutagesPost() {
             <p className={p}>
               That&apos;s the discipline the template asks of your own incidents: every claim points at a row, and a
               row nobody recorded at the time is a gap you write down rather than a story you reconstruct. If
-              you&apos;d rather the citing were done for you, your{" "}
-              <Link className="underline underline-offset-2" href="/">
-                first incident is free
+              you&apos;d rather the citing were done for you,{" "}
+              <Link className="underline underline-offset-2" href="/pricing">
+                subscribe and start an incident
               </Link>
               .
             </p>

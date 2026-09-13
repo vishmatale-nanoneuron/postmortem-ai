@@ -1304,9 +1304,11 @@ function AuthGate({ onSignedIn }: { onSignedIn: (user: AuthUser) => void }) {
 }
 
 function SubscribeGate({
-  hasFreeIncidentAvailable,
   hasUsedFreeIncident,
 }: {
+  // Still sent by the API, always false since the trial was retired
+  // (2026-09-13). Not read here on purpose: nothing on this site renders
+  // "free" for a service that is not.
   hasFreeIncidentAvailable: boolean;
   hasUsedFreeIncident: boolean;
 }) {
@@ -1331,20 +1333,16 @@ function SubscribeGate({
       <h2 className="mb-2 text-base font-semibold">
         {expired
           ? "Your subscription has expired"
-          : hasFreeIncidentAvailable
-            ? "Your first postmortem is free"
-            : hasUsedFreeIncident
-              ? "Subscribe to publish and create another postmortem"
-              : "Subscribe to create your first incident"}
+          : hasUsedFreeIncident
+            ? "Subscribe to publish and create another postmortem"
+            : "Subscribe to create your first incident"}
       </h2>
       <p className="mb-3 text-sm text-muted">
         {expired && status?.current_period_end
           ? `Your access expired on ${new Date(status.current_period_end * 1000).toLocaleDateString()}. Make a new payment below to reactivate -- creating incidents, recording evidence, drafting, and publishing all require an active subscription; viewing your existing history stays available either way.`
-          : hasFreeIncidentAvailable
-            ? "Create one incident, record evidence, and draft a grounded postmortem with no payment -- see the real output before you decide. Publishing it (making it a permanent, citable record) and creating a second incident both require a subscription."
-            : hasUsedFreeIncident
-              ? "You've used your free postmortem. Subscribe below to publish it, or to create another incident -- your existing history stays available either way."
-              : "Creating incidents, recording evidence, drafting, and publishing all require an active subscription -- subscribe below to get started."}
+          : hasUsedFreeIncident
+            ? "You've used your free postmortem. Subscribe below to publish it, or to create another incident -- your existing history stays available either way."
+            : "Creating incidents, recording evidence, drafting, and publishing all require an active subscription; there is no free tier. Subscribe below to get started -- or first read the full postmortem this tool drafted from a real public outage at /blog/github-outage-demo, which is exactly the output you would get."}
       </p>
       <Tabs value={tab} onValueChange={(value) => setTab(value as "upi" | "wire")} className="gap-3">
         <TabsList className="h-auto justify-start gap-1.5 rounded-none bg-transparent p-0">

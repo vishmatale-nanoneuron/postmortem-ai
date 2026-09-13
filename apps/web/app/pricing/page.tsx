@@ -35,7 +35,7 @@ const FAQ: { question: string; answer: string }[] = [
   {
     question: "Is there a free trial?",
     answer:
-      "Yes -- your first incident is free. Record evidence, generate a grounded draft, and see exactly what the output looks like before paying anything. A subscription is required to create a second incident, and to publish.",
+      "No. Every incident, from the first, needs an active subscription; there is no free tier and no trial. To see exactly what the output looks like before paying, read the full postmortem this tool drafted from a real public outage (linked above) -- it is real engine output, not a mock -- and the 14-day refund on the first charge is there if the real thing does not match it.",
   },
   {
     question: "Can I pay annually?",
@@ -128,8 +128,12 @@ export default async function PricingPage() {
         <div className="text-xs font-medium tracking-widest text-muted uppercase">Pricing</div>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">One plan, monthly or annual</h1>
         <p className="mx-auto mt-2 max-w-md text-sm text-muted">
-          Your first incident is free -- see the real output before paying. After that: unlimited incidents,
-          evidence-grounded AI drafting, and publishing. No hidden tiers. Pay annually and two months are free.
+          Unlimited incidents, evidence-grounded AI drafting, and publishing. No free tier, no hidden tiers;
+          14-day refund on the first charge. See{" "}
+          <Link className="underline underline-offset-2 hover:text-ink" href="/blog/github-outage-demo">
+            what it drafted from a real public outage
+          </Link>{" "}
+          before you pay. Pay annually and two months are free.
         </p>
       </div>
 
