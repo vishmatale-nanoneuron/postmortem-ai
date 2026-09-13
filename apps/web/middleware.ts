@@ -20,8 +20,25 @@ const GATE_COOKIE = "founder_gate";
 // unnoticed.
 const notFound = () => new NextResponse("Not Found", { status: 404 });
 
+// The second, unrelated job this file has: an upper-case rule id in the
+// URL -- "/airlock/rules/IO-001", the casing the API itself uses --
+// redirects permanently to its lower-case page. At request time here
+// because a redirect() thrown inside a statically generated dynamic route
+// renders as a not-found page with a 200 on Vercel, and turning
+// dynamicParams on for the whole route made unknown slugs 200 too.
+const RULES_PATH_PREFIX = "/airlock/rules/";
+
 export function middleware(request: NextRequest): NextResponse {
   const { pathname, searchParams } = request.nextUrl;
+  if (pathname.startsWith(RULES_PATH_PREFIX)) {
+    const lowered = pathname.toLowerCase();
+    if (lowered !== pathname) {
+      const url = request.nextUrl.clone();
+      url.pathname = lowered;
+      return NextResponse.redirect(url, 308);
+    }
+    return NextResponse.next();
+  }
   if (!pathname.startsWith(FOUNDER_PATH_PREFIX)) {
     return NextResponse.next();
   }
@@ -55,5 +72,5 @@ export function middleware(request: NextRequest): NextResponse {
 }
 
 export const config = {
-  matcher: ["/founder/:path*"],
+  matcher: ["/founder/:path*", "/airlock/rules/:id"],
 };

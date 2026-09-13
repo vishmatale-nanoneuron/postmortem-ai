@@ -16,9 +16,7 @@ describe("rule pages", () => {
     const params = generateStaticParams();
     expect(params.map((p) => p.id)).toEqual(RULES.map((r) => slugFor(r.id)));
     expect(new Set(params.map((p) => p.id)).size).toBe(RULES.length);
-    // dynamicParams is on only so "IO-001" (the API's casing) can redirect
-    // to "io-001"; an unknown slug still resolves to nothing and 404s.
-    expect(dynamicParams).toBe(true);
+    expect(dynamicParams).toBe(false);
     for (const rule of RULES) {
       expect(slugFor(rule.id)).toMatch(/^[a-z]{2}-\d{3}$/);
       expect(ruleForSlug(slugFor(rule.id))?.id).toBe(rule.id);
