@@ -83,6 +83,16 @@ const CANONICAL_ORIGIN = "https://www.nanoneuron.ai";
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   outputFileTracingRoot: isWorkspaceBuild ? repoRoot : __dirname,
+  // Inline the stylesheet into the HTML instead of linking it. Measured on
+  // the live homepage under a 4x-throttled phone on slow 4G: the single
+  // render-blocking CSS request (15 kB brotli) cost one full round trip
+  // -- ~700 ms of a 1.4 s LCP -- after the 11 kB document had arrived.
+  // Inlined, the first paint needs no second request. The cost is ~15 kB
+  // more HTML per page and no cross-page CSS cache; for a site whose
+  // money pages are first visits from anywhere in the world, the round
+  // trip is the more expensive of the two. The CSP already allows inline
+  // styles (Next injects them regardless).
+  experimental: { inlineCss: true },
   async redirects() {
     return [
       {
