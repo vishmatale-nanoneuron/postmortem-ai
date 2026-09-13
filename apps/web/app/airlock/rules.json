@@ -1,0 +1,255 @@
+{
+  "count": 40,
+  "families": [
+    "authority_spoof",
+    "delimiter_break",
+    "encoding",
+    "exfiltration",
+    "instruction_override",
+    "memory_poison",
+    "role_hijack",
+    "tool_abuse"
+  ],
+  "rules": [
+    {
+      "id": "IO-001",
+      "family": "instruction_override",
+      "weight": 0.8,
+      "description": "Classic instruction-override phrasing."
+    },
+    {
+      "id": "IO-002",
+      "family": "instruction_override",
+      "weight": 0.75,
+      "description": "Tells the model to disregard everything above it in the context."
+    },
+    {
+      "id": "IO-003",
+      "family": "instruction_override",
+      "weight": 0.75,
+      "description": "Tells the model to forget its instructions, training or guidelines."
+    },
+    {
+      "id": "IO-004",
+      "family": "instruction_override",
+      "weight": 0.6,
+      "description": "Announces replacement instructions, as though the prompt were being updated."
+    },
+    {
+      "id": "IO-005",
+      "family": "instruction_override",
+      "weight": 0.55,
+      "description": "\"From now on\" framing -- redefines behaviour for the rest of the session."
+    },
+    {
+      "id": "RH-001",
+      "family": "role_hijack",
+      "weight": 0.85,
+      "description": "Names a known jailbreak persona (DAN, developer mode, unrestricted, uncensored)."
+    },
+    {
+      "id": "RH-002",
+      "family": "role_hijack",
+      "weight": 0.7,
+      "description": "Asks the model to enter a privileged mode that does not exist."
+    },
+    {
+      "id": "RH-003",
+      "family": "role_hijack",
+      "weight": 0.55,
+      "description": "Asks the model to pretend it is not an AI, or not bound by its rules."
+    },
+    {
+      "id": "RH-004",
+      "family": "role_hijack",
+      "weight": 0.6,
+      "description": "Claims to reveal the model's \"real\" purpose, overriding the stated one."
+    },
+    {
+      "id": "DB-001",
+      "family": "delimiter_break",
+      "weight": 0.7,
+      "description": "Fake chat-role tags injected into document text."
+    },
+    {
+      "id": "DB-002",
+      "family": "delimiter_break",
+      "weight": 0.7,
+      "description": "Fake [INST]/[SYS] delimiters borrowed from instruction-tuned prompt formats."
+    },
+    {
+      "id": "DB-003",
+      "family": "delimiter_break",
+      "weight": 0.75,
+      "description": "Raw chat-template tokens (im_start, im_end, endoftext) inside document text."
+    },
+    {
+      "id": "DB-004",
+      "family": "delimiter_break",
+      "weight": 0.45,
+      "description": "A bare \"system:\" or \"assistant:\" line, imitating the start of a new turn."
+    },
+    {
+      "id": "EX-001",
+      "family": "exfiltration",
+      "weight": 0.85,
+      "description": "Instructs the agent to send, post, upload or forward data somewhere."
+    },
+    {
+      "id": "EX-002",
+      "family": "exfiltration",
+      "weight": 0.9,
+      "description": "Markdown image with templated URL — classic silent exfil."
+    },
+    {
+      "id": "EX-003",
+      "family": "exfiltration",
+      "weight": 0.75,
+      "description": "Asks the model to reveal its system prompt or initial configuration."
+    },
+    {
+      "id": "EX-004",
+      "family": "exfiltration",
+      "weight": 0.65,
+      "description": "Long opaque query string — probable data channel."
+    },
+    {
+      "id": "EX-005",
+      "family": "exfiltration",
+      "weight": 0.5,
+      "description": "Embeds a curl/wget/fetch call to an external URL."
+    },
+    {
+      "id": "TA-001",
+      "family": "tool_abuse",
+      "weight": 0.55,
+      "description": "Directs the agent to call a specific tool -- content deciding the agent's actions."
+    },
+    {
+      "id": "TA-002",
+      "family": "tool_abuse",
+      "weight": 0.7,
+      "description": "Asks for a destructive tool action: delete, drop, truncate, wipe or purge."
+    },
+    {
+      "id": "TA-003",
+      "family": "tool_abuse",
+      "weight": 0.7,
+      "description": "Attempts to suppress the human-in-the-loop gate."
+    },
+    {
+      "id": "TA-004",
+      "family": "tool_abuse",
+      "weight": 0.75,
+      "description": "Fabricated authorization claim inside untrusted content."
+    },
+    {
+      "id": "AS-001",
+      "family": "authority_spoof",
+      "weight": 0.8,
+      "description": "Impersonates the model vendor or the operator to manufacture authority."
+    },
+    {
+      "id": "AS-002",
+      "family": "authority_spoof",
+      "weight": 0.55,
+      "description": "Claims a test or sandbox mode is active, implying the real rules do not apply."
+    },
+    {
+      "id": "AS-003",
+      "family": "authority_spoof",
+      "weight": 0.4,
+      "description": "Manufactured urgency paired with an obligation -- pressure to skip a check."
+    },
+    {
+      "id": "MP-001",
+      "family": "memory_poison",
+      "weight": 0.6,
+      "description": "Asks the agent to remember a standing rule beyond this conversation."
+    },
+    {
+      "id": "MP-002",
+      "family": "memory_poison",
+      "weight": 0.75,
+      "description": "Asks the agent to append to its own memory, instructions or system prompt."
+    },
+    {
+      "id": "EN-001",
+      "family": "encoding",
+      "weight": 0.35,
+      "description": "Long base64 blob. Weak alone; strong with other signals."
+    },
+    {
+      "id": "EN-002",
+      "family": "encoding",
+      "weight": 0.45,
+      "description": "A long run of \\u escapes -- text deliberately hidden from a plain reader."
+    },
+    {
+      "id": "EN-003",
+      "family": "encoding",
+      "weight": 0.85,
+      "description": "Decode-then-execute: hides the payload and instructs the model to run it."
+    },
+    {
+      "id": "IO-006",
+      "family": "instruction_override",
+      "weight": 0.7,
+      "description": "Hands the model over to \"new\" tasks or instructions, discarding what came before."
+    },
+    {
+      "id": "IO-007",
+      "family": "instruction_override",
+      "weight": 0.65,
+      "description": "Overrides the standing instructions in passing: answer differently, regardless of what you were told."
+    },
+    {
+      "id": "IO-008",
+      "family": "instruction_override",
+      "weight": 0.6,
+      "description": "\"Ignore the above and say ...\" -- the override without naming what is ignored."
+    },
+    {
+      "id": "EX-006",
+      "family": "exfiltration",
+      "weight": 0.7,
+      "description": "Asks for the prompt above the content: a copy of it, or what was written at its beginning."
+    },
+    {
+      "id": "RH-005",
+      "family": "role_hijack",
+      "weight": 0.55,
+      "description": "\"I want you to act as ...\" inside content the model is reading -- an instruction, not information."
+    },
+    {
+      "id": "IO-101",
+      "family": "instruction_override",
+      "weight": 0.8,
+      "description": "German: ignore all previous instructions."
+    },
+    {
+      "id": "IO-102",
+      "family": "instruction_override",
+      "weight": 0.75,
+      "description": "German: forget everything before / all previous tasks."
+    },
+    {
+      "id": "IO-103",
+      "family": "instruction_override",
+      "weight": 0.7,
+      "description": "German: new tasks follow / concentrate on your new task."
+    },
+    {
+      "id": "EX-101",
+      "family": "exfiltration",
+      "weight": 0.75,
+      "description": "German: show me your (whole) prompt text."
+    },
+    {
+      "id": "RH-101",
+      "family": "role_hijack",
+      "weight": 0.55,
+      "description": "German: now you are ... / imagine you are ... / I want you to act as ..."
+    }
+  ]
+}

@@ -37,7 +37,10 @@ const LLMS_FULL = readFileSync(join(__dirname, "..", "public", "llms-full.txt"),
 
 describe("/airlock", () => {
   it("quotes the engine's real counts", () => {
-    expect(PAGE).toContain("30 weighted rules across 8 attack families");
+    // The rule count is derived from the committed benchmark/rules data,
+    // never typed: this pinned "30" until the engine had 40 and nobody
+    // noticed the prose was stale.
+    expect(PAGE).toContain("{RULE_COUNT} weighted rules across 8 attack families");
     expect(PAGE).toContain("11 credential patterns");
     expect(PAGE).toContain("7 personal-data patterns");
     expect(PAGE).toContain("At 0.75 the verdict is block; at 0.40, flag.");
