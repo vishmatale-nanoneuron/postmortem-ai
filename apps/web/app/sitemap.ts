@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 import { RULES, slugFor } from "./airlock/rules/rule-data";
+import { POSTS } from "./blog/posts";
 
 const SITE_URL = "https://www.nanoneuron.ai";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
@@ -99,6 +100,16 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   // One page per detection rule (app/airlock/rules/[id]), built from the
   // same rules.json the pages render, so the sitemap and the pages agree.
+  const blogRoutes: MetadataRoute.Sitemap = [
+    {
+      url: `${SITE_URL}/blog`,
+      lastModified: new Date(Math.max(...POSTS.map((post) => Date.parse(`${post.updated}T00:00:00Z`)))),
+      changeFrequency: "weekly",
+      priority: 0.5,
+    },
+    { url: `${SITE_URL}/airlock/benchmark`, lastModified: LAST_MODIFIED.airlockRules, changeFrequency: "monthly", priority: 0.5 },
+  ];
+
   const ruleRoutes: MetadataRoute.Sitemap = [
     { url: `${SITE_URL}/airlock/rules`, lastModified: LAST_MODIFIED.airlockRules, changeFrequency: "monthly", priority: 0.6 },
     ...RULES.map((rule) => ({
@@ -109,5 +120,5 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     })),
   ];
 
-  return [...staticRoutes, ...ruleRoutes, ...postmortemRoutes];
+  return [...staticRoutes, ...blogRoutes, ...ruleRoutes, ...postmortemRoutes];
 }

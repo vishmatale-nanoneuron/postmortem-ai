@@ -101,6 +101,14 @@ const nextConfig = {
         destination: `${CANONICAL_ORIGIN}/:path*`,
         permanent: true,
       },
+      // The URLs people guess. Each landed on the 404 page before; each
+      // now lands where the thing actually lives.
+      { source: "/airlock/pricing", destination: "/airlock#pricing", permanent: true },
+      { source: "/airlock/docs", destination: "/docs#airlock", permanent: true },
+      { source: "/docs/airlock", destination: "/docs#airlock", permanent: true },
+      { source: "/airlock/try", destination: "/airlock#try-it", permanent: true },
+      { source: "/rss.xml", destination: "/feed.xml", permanent: true },
+      { source: "/feed", destination: "/feed.xml", permanent: true },
     ];
   },
   async headers() {

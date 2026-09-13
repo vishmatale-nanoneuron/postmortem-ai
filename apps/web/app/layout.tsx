@@ -17,6 +17,7 @@ const DESCRIPTION =
   "For DevOps and SRE teams: record incident evidence and generate AI-drafted postmortems where every claim is grounded to a cited evidence entry -- unsupported claims are marked, never invented. Publish only after a named human approves.";
 
 export const metadata: Metadata = {
+  alternates: { types: { "application/rss+xml": "https://www.nanoneuron.ai/feed.xml" } },
   metadataBase: new URL("https://www.nanoneuron.ai"),
   title: { default: TITLE, template: "%s — PostMortem AI" },
   description: DESCRIPTION,
