@@ -10,6 +10,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, ORJSONResponse
 from fastapi.routing import APIRoute
 
+from .api.v1.airlock import FAIL_CLOSED_PATHS
 from .api.v1.airlock import router as airlock_router
 from .api.v1.auth import router as auth_router
 from .api.v1.bank_alerts import router as bank_alerts_router
@@ -58,7 +59,12 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     logger.exception(
         "Unhandled exception on %s %s request_id=%s", request.method, request.url.path, request_id, exc_info=exc
     )
-    response = JSONResponse(status_code=500, content={"detail": "Internal server error", "request_id": request_id})
+    content: dict = {"detail": "Internal server error", "request_id": request_id}
+    if request.url.path in FAIL_CLOSED_PATHS:
+        # The guard's own failure is a block, and the body says so, for the
+        # client that reads the body before the status code.
+        content["verdict"] = "block"
+    response = JSONResponse(status_code=500, content=content)
     response.headers[REQUEST_ID_HEADER] = request_id
     # A handler registered for the base Exception class is run by
     # Starlette's ServerErrorMiddleware, which sits OUTSIDE CORSMiddleware

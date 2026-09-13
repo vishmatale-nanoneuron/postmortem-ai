@@ -27,6 +27,7 @@ import time
 from dataclasses import dataclass
 
 from ..database import Database, Transaction
+from .airlock_policy import DEFAULT_POLICY, POLICY_COLUMNS, Policy, policy_from_row
 
 KEY_PREFIX = "alk_"
 # 32 random bytes -> 43 url-safe characters. Far beyond brute force, and
@@ -150,16 +151,23 @@ async def handle_api_keys_query(database: Database, user_id: str) -> list[ApiKey
 class ResolvedKey:
     id: str
     user_id: str
+    # The account's policy, fetched in the same query as the key so a scan
+    # does not pay a round trip for it. Defaults when the account never
+    # set one.
+    policy: Policy = DEFAULT_POLICY
 
 
 async def resolve_api_key(database: Database, secret: str) -> ResolvedKey | None:
-    """The secret to (key, account) lookup the scanner authenticates with.
-    A revoked key resolves to None exactly like a wrong one; the caller
-    cannot tell which, and should not be able to."""
+    """The secret to (key, account, policy) lookup the scanner authenticates
+    with. A revoked key resolves to None exactly like a wrong one; the
+    caller cannot tell which, and should not be able to."""
     if not secret.startswith(KEY_PREFIX) or len(secret) > 128:
         return None
     row = await database.fetch_one(
-        "SELECT id::text, user_id::text, last_used_at FROM airlock_api_keys WHERE key_hash=%s AND revoked_at IS NULL",
+        f"""SELECT k.id::text, k.user_id::text, k.last_used_at, {POLICY_COLUMNS}
+            FROM airlock_api_keys k
+            LEFT JOIN airlock_policies p ON p.user_id = k.user_id
+            WHERE k.key_hash=%s AND k.revoked_at IS NULL""",
         (hash_key(secret),),
     )
     if not row:
@@ -168,7 +176,7 @@ async def resolve_api_key(database: Database, secret: str) -> ResolvedKey | None
     last = row["last_used_at"]
     if last is None or now - int(last) > LAST_USED_WRITE_INTERVAL_MS:
         await database.execute("UPDATE airlock_api_keys SET last_used_at=%s WHERE id=%s", (now, row["id"]))
-    return ResolvedKey(id=row["id"], user_id=row["user_id"])
+    return ResolvedKey(id=row["id"], user_id=row["user_id"], policy=policy_from_row(row))
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +349,73 @@ async def handle_ledger_query(database: Database, user_id: str, *, limit: int = 
         (user_id, user_id, limit),
     )
     return [LedgerEntry(**row) for row in rows]
+
+
+@dataclass(frozen=True)
+class UsageDay:
+    day: str
+    key_prefix: str | None
+    scans: int
+    deep_scans: int
+    egress: int
+    refunds: int
+    credits: int
+
+
+DAY_MS = 24 * 60 * 60 * 1000
+
+
+async def handle_usage_query(database: Database, user_id: str, *, days: int = 30, now_ms: int | None = None) -> list[UsageDay]:
+    """Calls per UTC day per key. Only the metered lines (debits and their
+    refunds) -- a purchase is not usage. `credits` is what the day netted
+    out to, so a deep scan whose second opinion was refunded counts as 1."""
+    now = now_ms if now_ms is not None else _now_ms()
+    since = now - days * DAY_MS
+    rows = await database.fetch_all(
+        """SELECT to_char(to_timestamp(l.created_at / 1000.0) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
+                  k.prefix AS key_prefix,
+                  count(*) FILTER (WHERE l.reason = 'scan')::int AS scans,
+                  count(*) FILTER (WHERE l.reason = 'deep_scan')::int AS deep_scans,
+                  count(*) FILTER (WHERE l.reason = 'egress')::int AS egress,
+                  count(*) FILTER (WHERE l.reason = 'refund')::int AS refunds,
+                  -sum(l.delta)::int AS credits
+           FROM airlock_credit_ledger l
+           LEFT JOIN airlock_api_keys k ON k.id = l.api_key_id
+           WHERE l.user_id=%s AND l.created_at >= %s
+             AND l.reason IN ('scan', 'deep_scan', 'egress', 'refund')
+           GROUP BY 1, 2
+           ORDER BY 1 DESC, 2 NULLS LAST""",
+        (user_id, since),
+    )
+    return [UsageDay(**row) for row in rows]
+
+
+@dataclass(frozen=True)
+class LedgerLine:
+    delta: int
+    reason: str
+    reference: str | None
+    key_prefix: str | None
+    created_at: int
+
+
+async def handle_ledger_lines_query(
+    database: Database, user_id: str, *, days: int = 90, limit: int = 50_000, now_ms: int | None = None
+) -> list[LedgerLine]:
+    """Every line, unrolled, newest first -- the export. The statement
+    (handle_ledger_query) rolls debits up per day; an export must not."""
+    now = now_ms if now_ms is not None else _now_ms()
+    since = now - days * DAY_MS
+    rows = await database.fetch_all(
+        """SELECT l.delta, l.reason, l.reference, k.prefix AS key_prefix, l.created_at
+           FROM airlock_credit_ledger l
+           LEFT JOIN airlock_api_keys k ON k.id = l.api_key_id
+           WHERE l.user_id=%s AND l.created_at >= %s
+           ORDER BY l.created_at DESC, l.id DESC
+           LIMIT %s""",
+        (user_id, since, limit),
+    )
+    return [LedgerLine(**row) for row in rows]
 
 
 # ---------------------------------------------------------------------------
