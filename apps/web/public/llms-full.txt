@@ -470,6 +470,13 @@ resolves where), and carry `"verdict": "block"`. An application error
 after any charge refunds that charge on the ledger. Deep scan adds 4 credits, refunded when the rules
 already block.
 
+**Writing and feeds.** /blog lists every post (worked examples on real
+public outages, and how the grounding mechanism works); /feed.xml is the
+RSS 2.0 feed of the same posts. /airlock/benchmark is the benchmark's own
+page with every miss verbatim; /airlock keeps the summary. Guessed URLs
+(/airlock/pricing, /airlock/docs, /docs/airlock, /rss.xml) redirect to
+where the thing lives.
+
 **Rule pages.** Every detection rule has its own page at
 https://www.nanoneuron.ai/airlock/rules/<id lower-cased> (index at
 /airlock/rules): what it catches, its weight and what that weight means

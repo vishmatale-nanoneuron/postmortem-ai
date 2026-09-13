@@ -49,6 +49,10 @@ paying customers and a full API surface. Do not conflate them:
    accuracy figure attributed to it is false.
 2. **PostMortem AI** -- everything below. Live, paid, in production.
 
+Writing index: https://www.nanoneuron.ai/blog (RSS: /feed.xml). Airlock
+benchmark page: https://www.nanoneuron.ai/airlock/benchmark. Rule pages:
+https://www.nanoneuron.ai/airlock/rules.
+
 ## What this is
 
 An incident postmortem tool for DevOps and SRE teams: record evidence about

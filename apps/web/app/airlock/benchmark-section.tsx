@@ -42,7 +42,7 @@ function pct(value: number | null): string {
 
 const p = "mb-3 text-[15px] leading-relaxed text-muted";
 
-export function BenchmarkSection({ h2 }: { h2: string }) {
+export function BenchmarkSection({ h2, full = false }: { h2: string; full?: boolean }) {
   const date = new Date(data.generated_at).toLocaleDateString("en-GB", { year: "numeric", month: "long", day: "numeric" });
   const rows: [string, Metrics][] = [
     ["All rows", data.overall],
@@ -107,19 +107,28 @@ export function BenchmarkSection({ h2 }: { h2: string }) {
         added since is a general phrasing (&ldquo;forget everything before that&rdquo;, &ldquo;new tasks
         follow&rdquo;, &ldquo;show me your prompt text&rdquo;, and their German forms), not a fingerprint of a sample.
       </p>
-      <details className="mb-3 rounded-md border border-line bg-paper px-3 py-2 text-sm">
-        <summary className="cursor-pointer text-ink">
-          All {data.misses.length} misses, verbatim from the dataset
-        </summary>
-        <ul className="mt-2 max-h-96 space-y-1.5 overflow-y-auto font-mono text-[11.5px] leading-relaxed text-muted">
-          {data.misses.map((miss, index) => (
-            <li key={index} className="break-words">
-              <span className="mr-1 rounded bg-white px-1 text-[10px] text-ink">{miss.language}</span>
-              {miss.text}
-            </li>
-          ))}
-        </ul>
-      </details>
+      {full ? (
+        <section className="mb-3" aria-labelledby="benchmark-misses">
+          <h3 id="benchmark-misses" className="mb-2 text-base font-semibold text-ink">
+            All {data.misses.length} misses, verbatim from the dataset
+          </h3>
+          <ol className="space-y-1.5 rounded-md border border-line bg-paper px-3 py-2 font-mono text-[11.5px] leading-relaxed text-muted">
+            {data.misses.map((miss, index) => (
+              <li key={index} className="break-words">
+                <span className="mr-1 rounded bg-white px-1 text-[10px] text-ink">{miss.language}</span>
+                {miss.text}
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : (
+        <p className={p}>
+          <a className="underline underline-offset-2" href="/airlock/benchmark">
+            All {data.misses.length} misses, verbatim from the dataset
+          </a>{" "}
+          are on the benchmark&apos;s own page, with the rules that fired most and the reproduce command.
+        </p>
+      )}
       <p className={p}>
         Reproduce it:{" "}
         <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">

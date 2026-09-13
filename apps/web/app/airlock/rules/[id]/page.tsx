@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import { FAMILY, RULES, benchmarkHits, languageOf, roleOfWeight, ruleForSlug, slugFor } from "../rule-data";
 
 // One page per detection rule, generated at build time from rules.json.
@@ -10,7 +10,10 @@ import { FAMILY, RULES, benchmarkHits, languageOf, roleOfWeight, ruleForSlug, sl
 // what the rule catches, how much it weighs, how it did on the public
 // benchmark, and how to mute it -- never the pattern itself.
 
-export const dynamicParams = false;
+// Unknown slugs are still 404s (see the page body); dynamicParams stays on
+// only so an upper-case id -- the casing the API itself uses, "IO-001" --
+// can be redirected to its canonical lower-case page instead of 404ing.
+export const dynamicParams = true;
 
 export function generateStaticParams() {
   return RULES.map((rule) => ({ id: slugFor(rule.id) }));
@@ -32,6 +35,7 @@ const p = "text-sm leading-relaxed text-muted";
 
 export default async function RulePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  if (id !== id.toLowerCase() && ruleForSlug(id)) permanentRedirect(`/airlock/rules/${id.toLowerCase()}`);
   const rule = ruleForSlug(id);
   if (!rule) notFound();
   const family = FAMILY[rule.family] ?? { name: rule.family, what: "" };
