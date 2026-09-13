@@ -23,7 +23,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 
@@ -37,7 +37,7 @@ CLIENT_EMAIL = "mcp-test-client@example.com"
 async def context(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATABASE_URL", DATABASE_URL or "")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
-    monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("SESSION_SECRET", "test-session-secret-0123456789abcdef0123")
     monkeypatch.setenv("COOKIE_SECURE", "false")
     monkeypatch.setenv("FOUNDER_EMAIL", FOUNDER_EMAIL)
     # httpx's ASGITransport sends "test" as the Host header (from
@@ -139,29 +139,18 @@ async def context(monkeypatch: pytest.MonkeyPatch):
         get_settings.cache_clear()
 
 
-def _mcp_http_client_factory(app):
-    def factory(headers=None, timeout=None, auth=None):
-        kwargs = {"transport": ASGITransport(app=app), "base_url": "http://test", "follow_redirects": True}
-        if headers is not None:
-            kwargs["headers"] = headers
-        if timeout is not None:
-            kwargs["timeout"] = timeout
-        if auth is not None:
-            kwargs["auth"] = auth
-        return httpx.AsyncClient(**kwargs)
-
-    return factory
-
-
 @asynccontextmanager
 async def mcp_session(app, token: str | None):
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    async with streamablehttp_client(
-        "http://test/mcp/", headers=headers, httpx_client_factory=_mcp_http_client_factory(app)
-    ) as (read, write, _get_session_id):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
+    # The SDK's current client takes a ready httpx client rather than a
+    # factory; ours routes in-process through ASGITransport, no socket.
+    async with httpx.AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=headers, follow_redirects=True
+    ) as http:
+        async with streamable_http_client("http://test/mcp/", http_client=http) as (read, write, _get_session_id):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                yield session
 
 
 @pytest.mark.asyncio

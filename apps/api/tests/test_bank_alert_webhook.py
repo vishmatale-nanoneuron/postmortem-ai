@@ -24,7 +24,7 @@ WEBHOOK_SECRET = "test-bank-alert-secret"
 async def context(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATABASE_URL", DATABASE_URL or "")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
-    monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("SESSION_SECRET", "test-session-secret-0123456789abcdef0123")
     monkeypatch.setenv("COOKIE_SECURE", "false")
     monkeypatch.setenv("FOUNDER_EMAIL", FOUNDER_EMAIL)
     monkeypatch.setenv("FOUNDER_UPI_ID", "founder@upi")

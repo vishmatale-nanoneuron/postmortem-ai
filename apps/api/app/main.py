@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, ORJSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
 from fastapi.concurrency import run_in_threadpool
@@ -175,10 +175,11 @@ def create_app() -> FastAPI:
             {"name": "founder", "description": "Owner-only: approve claims, grant credits, business metrics."},
             {"name": "ops", "description": "Health."},
         ],
-        # orjson: measurably faster JSON encoding than the stdlib for the
-        # dict/list-heavy bodies this API returns (statements, stats, the
-        # OpenAPI document itself), and RFC-correct output for floats.
-        default_response_class=ORJSONResponse,
+        # No custom response class: this FastAPI serialises a response_model
+        # straight from pydantic-core to bytes, which is faster than routing
+        # through orjson and a Python dict, and the old ORJSONResponse
+        # default is deprecated for exactly that reason. Every route here
+        # declares a response_model.
         generate_unique_id_function=_operation_id,
         # Keep the Authorize key across a page reload of /docs, so trying
         # the API from the browser does not mean re-pasting it every time.
