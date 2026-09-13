@@ -342,7 +342,8 @@ async def test_usage_and_the_csv_export_are_the_callers_own_ledger(context):
     assert len(lines) == 1 + 5, export.text
     reasons = sorted(line.split(",")[1] for line in lines[1:])
     assert reasons == ["egress", "grant", "scan", "scan", "scan"]
-    assert lines[1].split(",")[1] == "egress", "newest first"
+    stamps = [line.split(",")[0] for line in lines[1:]]
+    assert stamps == sorted(stamps, reverse=True), "newest first"
 
     # Bounds are enforced, and nothing is metered.
     assert (await client.get("/v1/airlock/usage?days=0", headers=_keyed(key))).status_code == 422
@@ -381,3 +382,56 @@ async def test_erasing_the_account_takes_the_policy_with_it(context):
     deleted = await client.request("DELETE", "/v1/auth/me", json={"password": PASSWORD})
     assert deleted.status_code in (200, 204), deleted.text
     assert await database.fetch_one("SELECT 1 FROM airlock_policies WHERE user_id=%s", (user_id,)) is None
+
+
+@pytest.mark.asyncio
+async def test_a_drained_key_never_reaches_the_engine(context, monkeypatch: pytest.MonkeyPatch):
+    """The paywall is in front of the engine, not behind it: a valid key
+    with no credits gets its 402 without a single regex running, so an
+    empty balance cannot be turned into free CPU. Deep scans included --
+    the whole price is taken first, and the rules-already-block refund
+    happens after, never instead."""
+    from app.api.v1 import airlock as airlock_module
+
+    client, database = context
+    _, key = await _customer(client, database, credits=1)
+    # Spend the one credit; the balance is now genuinely 0, not absent.
+    assert (await client.post("/v1/airlock/scan", json={"content": BENIGN}, headers=_keyed(key))).status_code == 200
+    calls = []
+    real_scan = airlock_module._DETECTOR.scan
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return real_scan(*args, **kwargs)
+
+    monkeypatch.setattr(airlock_module._DETECTOR, "scan", counting)
+    for body in ({"content": OVERRIDE}, {"content": OVERRIDE, "deep": True}, {"content": BENIGN, "sanitize": True}):
+        response = await client.post("/v1/airlock/scan", json=body, headers=_keyed(key))
+        assert response.status_code == 402, response.text
+        assert "verdict" not in response.json()
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_the_unmetered_reads_are_bounded_per_account(context):
+    """Policy, usage and the CSV spend no credit, so the balance is not
+    their bound; a per-account cap is. Past it: 429 with Retry-After, and
+    the scan path is unaffected (it is bounded by credits, not by this)."""
+    from app.api.v1.airlock import MAX_EXPORTS_PER_WINDOW, MAX_READS_PER_WINDOW
+
+    client, database = context
+    _, key = await _customer(client, database, credits=5)
+    client.cookies.clear()
+
+    for _ in range(MAX_EXPORTS_PER_WINDOW):
+        assert (await client.get("/v1/airlock/usage.csv?days=1", headers=_keyed(key))).status_code == 200
+    capped = await client.get("/v1/airlock/usage.csv?days=1", headers=_keyed(key))
+    assert capped.status_code == 429 and capped.headers["retry-after"]
+
+    # Exports and reads are separate buckets; reads have their own cap.
+    for _ in range(MAX_READS_PER_WINDOW):
+        assert (await client.get("/v1/airlock/policy", headers=_keyed(key))).status_code == 200
+    assert (await client.get("/v1/airlock/usage?days=1", headers=_keyed(key))).status_code == 429
+
+    scan = await client.post("/v1/airlock/scan", json={"content": BENIGN}, headers=_keyed(key))
+    assert scan.status_code == 200, "a metered call is bounded by credits, not by the read cap"

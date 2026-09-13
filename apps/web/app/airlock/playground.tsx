@@ -219,7 +219,7 @@ export function Playground() {
               {result.semantic.status === "ok"
                 ? `${result.semantic.injection ? "injection" : "not an injection"} · confidence ${Number(result.semantic.confidence).toFixed(2)} · weight ${Number(result.semantic.weight).toFixed(2)}${result.semantic.reason ? ` · ${String(result.semantic.reason)}` : ""}`
                 : result.semantic.status === "skipped"
-                  ? "not asked — the rules already block, and a second opinion can only raise a verdict; charged as a plain scan"
+                  ? "not asked — the rules already block, and a second opinion can only raise a verdict; the extra credits were refunded"
                   : "second opinion unavailable — the rule verdict stands and the extra credits were refunded"}
             </p>
           )}
