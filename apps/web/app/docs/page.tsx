@@ -69,7 +69,7 @@ export default function DocsPage() {
         <>
           <h2 className={h2}>Airlock API</h2>
           <p className={p}>
-            Two decision endpoints plus policy, rules and usage, JSON in and JSON out, on{" "}
+            Three decision endpoints (scan, egress, proxy fetch) plus policy, rules and usage, JSON in and JSON out, on{" "}
             <code className={code}>https://postmortem-ai-api.vercel.app</code>. The interactive reference (every
             field, every response code, an Authorize button that takes your key) is the{" "}
             <a className="underline underline-offset-2" href="https://postmortem-ai-api.vercel.app/docs" target="_blank" rel="noopener noreferrer">
@@ -91,7 +91,8 @@ export default function DocsPage() {
             debit, before the engine runs.
             An empty balance is <code className={code}>402</code> with no verdict returned; a refused or failed call
             (<code className={code}>401</code>, <code className={code}>402</code>, <code className={code}>422</code>,{" "}
-            <code className={code}>429</code>, any <code className={code}>5xx</code>) spends nothing. Every response carries{" "}
+            <code className={code}>429</code>) spends nothing, and an application error after the charge
+            (<code className={code}>500</code>) refunds it on the ledger. Every response carries{" "}
             <code className={code}>credits_remaining</code> and <code className={code}>credits_charged</code>; you are
             emailed once when the balance drops below 1,000 and once when it reaches zero. Packs of 10,000 are bought
             from the dashboard by UPI or international wire.
@@ -118,6 +119,23 @@ export default function DocsPage() {
             <code className={code}>redacted</code>, the payload with secrets and personal data replaced, or null when
             there was nothing to redact. The call&apos;s allowlist is merged with the policy&apos;s, never substituted
             for it.
+          </p>
+          <p className={p}>
+            <span className="font-medium text-ink">Proxy fetch.</span>{" "}
+            <code className={code}>POST /v1/airlock/proxy/fetch</code>, body{" "}
+            <code className={code}>{"{ url, allowlist?, deep?, return_content? }"}</code>. Airlock checks the URL as
+            an outbound call first (your policy allowlist merged with the call&apos;s; credential material in the
+            query string is a block), fetches it from its own address under a server-side request forgery guard
+            (every resolved address checked, connection pinned to the checked address with the hostname as TLS
+            server name, redirects re-checked, max 3, 1 MB read, text types only), scans the page under your
+            policy, and returns <code className={code}>content</code> &mdash; the visible text &mdash; on allow,
+            sanitized on flag, <code className={code}>null</code> on block. <code className={code}>stage</code> says
+            which check decided. Two credits (four more with <code className={code}>deep</code>, refunded when the
+            rules already block). A URL that will never be fetched is <code className={code}>422</code>; a public
+            URL that could not be reached is <code className={code}>502</code>; both refund the scan credit, keep
+            one for the attempt (so a refused fetch is never a free probe), and carry{" "}
+            <code className={code}>&quot;verdict&quot;: &quot;block&quot;</code>. Nothing of yours &mdash; no
+            headers, no cookies &mdash; is sent to the page.
           </p>
           <p className={p}>
             <span className="font-medium text-ink">Policy.</span> <code className={code}>GET /v1/airlock/policy</code>{" "}

@@ -433,6 +433,31 @@ customer's own usage is at `GET /v1/airlock/usage` (per day, per key) and
 `GET /v1/airlock/usage.csv` (every ledger line), both drawn from the credit
 ledger, never the audit log, because the audit log has no account column.
 
+**Proxy fetch (`POST /v1/airlock/proxy/fetch`, 2 credits).** The agent
+gives Airlock the URL instead of fetching it: the URL is checked as an
+outbound call (policy allowlist merged with the call's; credential material
+in the query string blocks), then fetched from Airlock's own address under
+a server-side request forgery guard (app/airlock/proxy.py): every address
+the host resolves to is checked -- loopback, private, link-local (cloud
+metadata), CGNAT, reserved, multicast, unspecified, documentation ranges,
+IPv4-mapped and NAT64-embedded IPv6 all refuse, decimal/hex/short IPv4
+literals are recognised before DNS, and a name resolving to a mix of public
+and private addresses is refused; the connection is pinned to the checked
+address with the hostname as Host and TLS server name (so rebinding between
+check and connect cannot land the request elsewhere, and the certificate is
+still verified against the real name); redirects are followed by hand and
+re-checked, at most 3; bodies are read to 1 MB; only text types are
+scanned; nothing of the caller's (headers, cookies) is forwarded. The page
+is scanned under the account policy (script/style stripped, hidden elements
+and comments kept for the normaliser) and the visible text is returned on
+allow, sanitized on flag, null on block; `stage` says whether the egress
+check or the ingress scan decided. A URL that will never be fetched is 422,
+an unreachable public URL is 502; both refund the scan credit, keep one
+credit for the attempt (a refused fetch is never a free probe of what
+resolves where), and carry `"verdict": "block"`. An application error
+after any charge refunds that charge on the ledger. Deep scan adds 4 credits, refunded when the rules
+already block.
+
 **Policy (per account, migration 0034).** `GET /v1/airlock/policy` (key or
 session) returns `block_threshold`, `flag_threshold`, `muted_rules` and
 `egress_allowlist`; `PUT` replaces it and `DELETE` resets it, from a
@@ -507,8 +532,8 @@ IBAN, card, email) plus US SSN and Indian Aadhaar/PAN.
 **Status, stated precisely because it is the thing most likely to be
 misreported.** Two halves, and they differ:
 
-RUNNING NOW -- the detection engine, the egress check, the Gemini deep
-scan, sanitize-on-request, the append-only audit log, API keys (hashed,
+RUNNING NOW -- the detection engine, the egress check, proxy fetch (the
+SSRF-guarded URL retrieval above), the Gemini deep scan, sanitize-on-request, the append-only audit log, API keys (hashed,
 revocable), prepaid credits with an atomic per-call meter, a per-account
 policy (thresholds, muted rules, standing egress allowlist), the public
 rule list, usage by day and key with CSV export, a readable ledger, pack
@@ -518,8 +543,8 @@ backend under `/v1/airlock`. The playground at
 https://www.nanoneuron.ai/airlock calls the real endpoint from the
 signed-in account's credits.
 
-NOT BUILT -- a proxy mode (Airlock fetching a URL or forwarding a call on
-the caller's behalf, so the check cannot be skipped), alert webhooks, any
+NOT BUILT -- proxy forward (Airlock sending an outbound call on the
+caller's behalf with credentials stripped), alert webhooks, any
 support or uptime commitment, and a self-hosted build; the early-access
 list on that page is for the self-hosted build only. NOT PLANNED -- a free
 plan or trial (every scan is paid, including the first), and any card

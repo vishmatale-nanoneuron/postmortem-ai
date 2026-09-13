@@ -123,7 +123,12 @@ posture is stricter than the rest of the product's:
   Postgres serialises concurrent debits on the row lock. Proven by
   `tests/test_airlock_billing.py`: fifty concurrent scans against ten
   credits yield exactly ten 200s and forty 402s. A refused call (401, 402,
-  422, 429) or a 5xx charges nothing.
+  422, 429) charges nothing, and an application error after the charge
+  refunds it (every metered route's post-charge body is guarded; pinned by
+  `test_an_application_error_after_the_charge_refunds_and_still_fails_closed`).
+  The one deliberate exception is a proxy fetch that is refused or
+  unreachable: the scan credit is refunded and the attempt keeps one, so
+  the endpoint is not a free oracle for internal hostnames.
 - **Fails closed.** A 5xx raised inside the application on
   `/v1/airlock/scan` or `/v1/airlock/egress` carries `"verdict": "block"`
   in its body (`main.py`'s unhandled-exception handler consults
@@ -142,6 +147,24 @@ posture is stricter than the rest of the product's:
   entries must be hostnames, and `flag <= block` is a database `CHECK`.
   The per-call `allowlist` on an egress call is unioned with the policy's,
   never substituted for it.
+- **Proxy fetch is not an SSRF gadget.** `POST /v1/airlock/proxy/fetch`
+  fetches a caller-supplied URL from Airlock's own address, which is the
+  textbook shape of a server-side request forgery primitive. The guard
+  (`app/airlock/proxy.py`) resolves the hostname and checks EVERY address
+  it resolves to against loopback, private, link-local (cloud metadata),
+  CGNAT, reserved, multicast, unspecified, documentation, IPv4-mapped and
+  NAT64-embedded ranges; recognises decimal, hex and short-dotted IPv4
+  literals before DNS; refuses a name that resolves to any non-public
+  address; connects to the checked address with the hostname as Host and
+  as the TLS server name (httpcore `sni_hostname`), so a DNS answer that
+  changes between check and connect cannot move the request and the
+  certificate is still verified against the real name; follows redirects
+  by hand, re-checking each hop, at most 3; reads at most 1 MB; scans only
+  text types; forwards nothing of the caller's. Tested in
+  `tests/test_airlock_proxy.py` with a transport that records the exact
+  connection attempted. It is metered (2 credits; a refused attempt still
+  costs 1), so a drained key cannot make Airlock fetch anything and a
+  funded one pays to probe.
 - **Usage exports come from the ledger, not the audit log.** `GET
   /v1/airlock/usage` and `/usage.csv` read `airlock_credit_ledger`, which
   is attributed and cascades with the account. The audit log has no

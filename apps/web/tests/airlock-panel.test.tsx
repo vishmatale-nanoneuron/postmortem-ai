@@ -56,6 +56,7 @@ vi.mock("../app/api", () => ({
     usageCsv: vi.fn(),
   },
   airlockScan: vi.fn(),
+  airlockProxyFetch: vi.fn(),
   AirlockScanError: class AirlockScanError extends Error {
     constructor(
       message: string,
@@ -221,5 +222,50 @@ describe("UsagePanel", () => {
     expect(screen.getByText("alk_abcdefgh…")).toBeTruthy();
     expect(screen.getByText("Total, 30 days")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Download CSV" })).toBeTruthy();
+  });
+});
+
+describe("UrlFetch", () => {
+  it("shows the page text on allow and says so on a block, without ever rendering blocked content", async () => {
+    const { auth } = await import("../app/auth");
+    vi.mocked(auth.checkSession).mockResolvedValue({ id: "u1", email: "x@example.com" } as never);
+    const { airlockProxyFetch } = await import("../app/api");
+    const base = {
+      score: 0,
+      stage: "ingress" as const,
+      reasons: [],
+      matches: [],
+      families: [],
+      signals: {},
+      url: "https://example.com/",
+      final_url: "https://example.com/",
+      http_status: 200,
+      content_type: "text/html",
+      content_bytes: 1200,
+      content_sha256: "abc",
+      destination_checked: false,
+      hops: 0,
+      truncated: false,
+      fetch_ms: 80,
+      latency_ms: 90,
+      credits_remaining: 98,
+      credits_charged: 2,
+      semantic: null,
+      policy: { block_threshold: 0.75, flag_threshold: 0.4, muted_rules: [], default: true },
+    };
+    vi.mocked(airlockProxyFetch)
+      .mockResolvedValueOnce({ ...base, verdict: "allow", content: "Quarterly report\nRevenue grew 4%." })
+      .mockResolvedValueOnce({ ...base, verdict: "block", score: 0.8, content: null });
+
+    const { UrlFetch } = await import("../app/airlock/url-fetch");
+    render(<UrlFetch credits={2} />);
+    const button = await screen.findByRole("button", { name: "Fetch & scan it (2 credits)" });
+    await userEvent.click(button);
+    expect(await screen.findByText(/Revenue grew 4%/)).toBeTruthy();
+    expect(screen.getByText("What your agent would receive")).toBeTruthy();
+
+    await userEvent.click(button);
+    expect(await screen.findByText(/Nothing is handed over on a block/)).toBeTruthy();
+    expect(screen.queryByText(/Revenue grew 4%/)).toBeNull();
   });
 });

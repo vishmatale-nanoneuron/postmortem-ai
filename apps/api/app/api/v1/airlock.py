@@ -34,12 +34,12 @@ import logging
 import secrets
 import time
 from datetime import UTC, datetime
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, Security, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.concurrency import run_in_threadpool
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
@@ -47,6 +47,16 @@ from pydantic import BaseModel, EmailStr, Field
 from ...ai.model_router import create_model_provider
 from ...ai.provider import ModelProvider
 from ...airlock import Detector, check_egress, sanitize
+from ...airlock.proxy import (
+    MAX_PROXY_SCAN_CHARS,
+    MAX_RETURNED_CHARS,
+    PROXY_FETCH_CREDITS,
+    Fetched,
+    ProxyRefused,
+    fetch_url,
+    prepare_for_scan,
+    visible_text,
+)
 from ...airlock.rules import RULES, RULES_BY_ID
 from ...airlock.semantic import (
     DEEP_SCAN_EXTRA_CREDITS,
@@ -136,7 +146,7 @@ KEY_HEADER = "X-Airlock-Key"
 # the 500 body says so itself, so a client that parses the body before the
 # status (they exist) still reads "block". main.py's unhandled-exception
 # handler consults this set. Nothing else about the 500 changes.
-FAIL_CLOSED_PATHS = frozenset({"/v1/airlock/scan", "/v1/airlock/egress"})
+FAIL_CLOSED_PATHS = frozenset({"/v1/airlock/scan", "/v1/airlock/egress", "/v1/airlock/proxy/fetch"})
 
 # Declared, not just parsed: these put the key in the OpenAPI document as a
 # real security scheme, so /docs gets an Authorize button and a generated
@@ -285,6 +295,16 @@ async def _charge(database: Database, principal: AirlockPrincipal, reason: str, 
         )
     except InsufficientCredits:
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=NO_CREDITS_DETAIL) from None
+
+
+Fetcher = Callable[[str], Awaitable[Fetched]]
+
+
+def get_fetcher() -> Fetcher:
+    """The proxy's URL fetcher (airlock/proxy.fetch_url) as a dependency, so
+    tests can hand the route one bound to a mock transport and a fake
+    resolver and still exercise every rule the real one enforces."""
+    return fetch_url
 
 
 def get_model_provider(settings: Settings = Depends(get_settings)) -> Callable[[], ModelProvider]:
@@ -478,123 +498,131 @@ async def scan(
     remaining = await _charge(database, principal, "deep_scan" if payload.deep else "scan", cost)
     charged = 0 if principal.is_founder else cost
 
-    started = time.perf_counter()
-    detection = _DETECTOR.scan(
-        payload.content,
-        block_threshold=policy.block_threshold,
-        flag_threshold=policy.flag_threshold,
-        muted=policy.muted_rules,
-    )
-    verdict, score = detection.verdict, detection.score
-
-    # A deep scan is only worth its price when the model can move the
-    # verdict. It can only raise one (semantic.combine), so once the rules
-    # already say block there is nothing for it to do: skip the call, hand
-    # the extra credits back on the same refund path an unavailable model
-    # uses, and say so. The other direction is deliberately NOT bounded --
-    # the paraphrased attack that scores 0.00 on rules is the case the
-    # second opinion exists for.
-    ask_model = payload.deep and verdict != "block"
-
-    matched_rules = [match.rule_id for match in detection.matches]
-    matches = [
-        MatchOut(
-            rule_id=match.rule_id,
-            family=match.family,
-            weight=match.weight,
-            description=RULES_BY_ID[match.rule_id].description if match.rule_id in RULES_BY_ID else "",
+    try:
+        started = time.perf_counter()
+        detection = _DETECTOR.scan(
+            payload.content,
+            block_threshold=policy.block_threshold,
+            flag_threshold=policy.flag_threshold,
+            muted=policy.muted_rules,
         )
-        for match in detection.matches
-    ]
-    families = list(detection.families)
-    semantic: dict | None = None
+        verdict, score = detection.verdict, detection.score
 
-    if payload.deep and not ask_model:
-        semantic = {
-            "status": "skipped",
-            "reason": "The rules already block this content; a second opinion can only raise a verdict.",
-            "weight": 0.0,
-        }
-        if not principal.is_founder:
-            remaining = await handle_grant_credits(
-                database,
-                GrantCreditsCommand(
-                    user_id=principal.user_id,
-                    credits=DEEP_SCAN_EXTRA_CREDITS,
-                    reason="refund",
-                    reference="deep scan: rules already block",
-                ),
+        # A deep scan is only worth its price when the model can move the
+        # verdict. It can only raise one (semantic.combine), so once the rules
+        # already say block there is nothing for it to do: skip the call, hand
+        # the extra credits back on the same refund path an unavailable model
+        # uses, and say so. The other direction is deliberately NOT bounded --
+        # the paraphrased attack that scores 0.00 on rules is the case the
+        # second opinion exists for.
+        ask_model = payload.deep and verdict != "block"
+
+        matched_rules = [match.rule_id for match in detection.matches]
+        matches = [
+            MatchOut(
+                rule_id=match.rule_id,
+                family=match.family,
+                weight=match.weight,
+                description=RULES_BY_ID[match.rule_id].description if match.rule_id in RULES_BY_ID else "",
             )
-            charged = 1
-    elif ask_model:
-        opinion = await semantic_opinion(model_provider, payload.content)
-        semantic = opinion.as_dict()
-        if opinion.status == "ok":
-            score, verdict = combine(detection.score, opinion, policy.block_threshold, policy.flag_threshold)
-            if opinion.weight > 0:
-                # The model's contribution appears alongside the rules, under
-                # its own id, so the audit row and the response both say the
-                # classifier had a hand in this verdict.
-                matched_rules.append(SEMANTIC_RULE_ID)
-                matches.append(
-                    MatchOut(
-                        rule_id=SEMANTIC_RULE_ID,
-                        family=opinion.family or "AI",
-                        weight=opinion.weight,
-                        description=opinion.reason
-                        or f"Gemini classified this as an injection attempt (max weight {SEMANTIC_MAX_WEIGHT}).",
-                    )
+            for match in detection.matches
+        ]
+        families = list(detection.families)
+        semantic: dict | None = None
+
+        if payload.deep and not ask_model:
+            semantic = {
+                "status": "skipped",
+                "reason": "The rules already block this content; a second opinion can only raise a verdict.",
+                "weight": 0.0,
+            }
+            if not principal.is_founder:
+                remaining = await handle_grant_credits(
+                    database,
+                    GrantCreditsCommand(
+                        user_id=principal.user_id,
+                        credits=DEEP_SCAN_EXTRA_CREDITS,
+                        reason="refund",
+                        reference="deep scan: rules already block",
+                    ),
                 )
-                if opinion.family and opinion.family not in families:
-                    families.append(opinion.family)
-        elif not principal.is_founder:
-            # The customer paid for a second opinion that did not arrive.
-            # Refund exactly the extra, leave the ordinary scan charged, and
-            # say so in the response.
-            remaining = await handle_grant_credits(
-                database,
-                GrantCreditsCommand(
-                    user_id=principal.user_id,
-                    credits=DEEP_SCAN_EXTRA_CREDITS,
-                    reason="refund",
-                    reference="deep scan: second opinion unavailable",
-                ),
-            )
-            charged = 1
-    sanitized = sanitize(payload.content, detection) if payload.sanitize else None
-    latency_ms = int((time.perf_counter() - started) * 1000)
+                charged = 1
+        elif ask_model:
+            opinion = await semantic_opinion(model_provider, payload.content)
+            semantic = opinion.as_dict()
+            if opinion.status == "ok":
+                score, verdict = combine(detection.score, opinion, policy.block_threshold, policy.flag_threshold)
+                if opinion.weight > 0:
+                    # The model's contribution appears alongside the rules, under
+                    # its own id, so the audit row and the response both say the
+                    # classifier had a hand in this verdict.
+                    matched_rules.append(SEMANTIC_RULE_ID)
+                    matches.append(
+                        MatchOut(
+                            rule_id=SEMANTIC_RULE_ID,
+                            family=opinion.family or "AI",
+                            weight=opinion.weight,
+                            description=opinion.reason
+                            or f"Gemini classified this as an injection attempt (max weight {SEMANTIC_MAX_WEIGHT}).",
+                        )
+                    )
+                    if opinion.family and opinion.family not in families:
+                        families.append(opinion.family)
+            elif not principal.is_founder:
+                # The customer paid for a second opinion that did not arrive.
+                # Refund exactly the extra, leave the ordinary scan charged, and
+                # say so in the response.
+                remaining = await handle_grant_credits(
+                    database,
+                    GrantCreditsCommand(
+                        user_id=principal.user_id,
+                        credits=DEEP_SCAN_EXTRA_CREDITS,
+                        reason="refund",
+                        reference="deep scan: second opinion unavailable",
+                    ),
+                )
+                charged = 1
+        sanitized = sanitize(payload.content, detection) if payload.sanitize else None
+        latency_ms = int((time.perf_counter() - started) * 1000)
 
-    await _notify_balance_crossings(database, settings, principal, remaining, charged)
-    await handle_record_scan(
-        database,
-        RecordScanCommand(
-            kind="ingress",
+        await _notify_balance_crossings(database, settings, principal, remaining, charged)
+        await handle_record_scan(
+            database,
+            RecordScanCommand(
+                kind="ingress",
+                verdict=verdict,
+                score=score,
+                content_sha256=detection.content_sha256,
+                content_bytes=detection.content_bytes,
+                matched_rules=matched_rules,
+                source=payload.source,
+                latency_ms=latency_ms,
+                # No excerpt: see RecordScanCommand.excerpt and 0031's header.
+            ),
+        )
+        return ScanOut(
             verdict=verdict,
-            score=score,
+            score=round(score, 4),
+            matches=matches,
+            families=families,
+            # Signal *names* and what was found, which is the explanatory half.
+            signals={key: value for key, value in (detection.signals or {}).items()},
             content_sha256=detection.content_sha256,
             content_bytes=detection.content_bytes,
-            matched_rules=matched_rules,
-            source=payload.source,
             latency_ms=latency_ms,
-            # No excerpt: see RecordScanCommand.excerpt and 0031's header.
-        ),
-    )
-    return ScanOut(
-        verdict=verdict,
-        score=round(score, 4),
-        matches=matches,
-        families=families,
-        # Signal *names* and what was found, which is the explanatory half.
-        signals={key: value for key, value in (detection.signals or {}).items()},
-        content_sha256=detection.content_sha256,
-        content_bytes=detection.content_bytes,
-        latency_ms=latency_ms,
-        credits_remaining=remaining,
-        credits_charged=charged,
-        semantic=semantic,
-        sanitized=sanitized,
-        policy=_policy_summary(policy),
-    )
+            credits_remaining=remaining,
+            credits_charged=charged,
+            semantic=semantic,
+            sanitized=sanitized,
+            policy=_policy_summary(policy),
+        )
+    except Exception:
+        # The customer must not pay for our failure: hand back what was
+        # charged (as it stands after any partial refund) and let the
+        # fail-closed 500 go out. Deliberate answers (HTTPException) are
+        # never raised past this point, so nothing else is caught here.
+        await _refund_all(database, principal, charged, "scan: application error")
+        raise
 
 
 def _policy_summary(policy: Policy) -> dict:
@@ -617,44 +645,346 @@ async def egress(
     destination against an allowlist, before the agent sends it. One
     credit per call."""
     remaining = await _charge(database, principal, "egress")
-    await _notify_balance_crossings(database, settings, principal, remaining, 0 if principal.is_founder else 1)
-    started = time.perf_counter()
-    # The standing allowlist from the account's policy plus whatever the
-    # call names. A union, never a replacement: a per-call list can widen
-    # what the policy allows for one call, and cannot silently drop the
-    # policy's entries.
-    allowlist = list(dict.fromkeys([*principal.policy.egress_allowlist, *payload.allowlist]))
-    verdict = check_egress(
-        payload=payload.payload,
-        destination=payload.destination,
-        allowlist=allowlist,
-    )
-    latency_ms = int((time.perf_counter() - started) * 1000)
+    charged = 0 if principal.is_founder else 1
+    try:
+        await _notify_balance_crossings(database, settings, principal, remaining, 0 if principal.is_founder else 1)
+        started = time.perf_counter()
+        # The standing allowlist from the account's policy plus whatever the
+        # call names. A union, never a replacement: a per-call list can widen
+        # what the policy allows for one call, and cannot silently drop the
+        # policy's entries.
+        allowlist = list(dict.fromkeys([*principal.policy.egress_allowlist, *payload.allowlist]))
+        verdict = check_egress(
+            payload=payload.payload,
+            destination=payload.destination,
+            allowlist=allowlist,
+        )
+        latency_ms = int((time.perf_counter() - started) * 1000)
 
-    await handle_record_scan(
-        database,
-        RecordScanCommand(
-            kind="egress",
+        await handle_record_scan(
+            database,
+            RecordScanCommand(
+                kind="egress",
+                verdict=verdict.verdict,
+                score=verdict.score,
+                content_sha256=hashlib.sha256(payload.payload.encode()).hexdigest(),
+                content_bytes=len(payload.payload.encode()),
+                matched_rules=list(verdict.secrets_found),
+                source=verdict.destination,
+                latency_ms=latency_ms,
+            ),
+        )
+        return EgressOut(
             verdict=verdict.verdict,
-            score=verdict.score,
-            content_sha256=hashlib.sha256(payload.payload.encode()).hexdigest(),
-            content_bytes=len(payload.payload.encode()),
-            matched_rules=list(verdict.secrets_found),
-            source=verdict.destination,
-            latency_ms=latency_ms,
-        ),
+            score=round(verdict.score, 4),
+            reasons=list(verdict.reasons),
+            secrets_found=list(verdict.secrets_found),
+            pii_found=dict(verdict.pii_found or {}),
+            destination=verdict.destination,
+            destination_checked=bool(allowlist),
+            redacted=verdict.redacted,
+            credits_remaining=remaining,
+            credits_charged=0 if principal.is_founder else 1,
+        )
+    except Exception:
+        # The customer must not pay for our failure: hand back what was
+        # charged (as it stands after any partial refund) and let the
+        # fail-closed 500 go out. Deliberate answers (HTTPException) are
+        # never raised past this point, so nothing else is caught here.
+        await _refund_all(database, principal, charged, "egress: application error")
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Proxy fetch: both directions in one call. Airlock checks the URL as an
+# outbound destination (allowlist, credential material in the URL), fetches
+# it under the SSRF rules in airlock/proxy.py, scans what came back under
+# the account's policy, and returns the page text only when the verdict
+# allows it. The agent never fetches the page itself, so the check cannot
+# be skipped.
+# ---------------------------------------------------------------------------
+
+
+class ProxyFetchIn(BaseModel):
+    url: str = Field(min_length=8, max_length=2048)
+    # Merged with the policy's standing allowlist, like an egress call. With
+    # neither, any public host is fetched and `destination_checked` is false.
+    allowlist: list[str] = Field(default_factory=list, max_length=100)
+    deep: bool = False
+    # False to get the verdict only (cheaper on the wire, same price).
+    return_content: bool = True
+
+
+class ProxyFetchOut(BaseModel):
+    verdict: str
+    score: float
+    # Which check decided: "egress" when the URL itself was refused before
+    # any fetch (not on the allowlist, or carrying credential material);
+    # "ingress" when the fetched content was scanned.
+    stage: str
+    reasons: list[str]
+    matches: list[MatchOut]
+    families: list[str]
+    signals: dict
+    url: str
+    final_url: str | None
+    http_status: int | None
+    content_type: str | None
+    content_bytes: int
+    content_sha256: str | None
+    destination_checked: bool
+    hops: int
+    truncated: bool
+    fetch_ms: int
+    latency_ms: int
+    # The page's visible text when the verdict allows it: as fetched on
+    # allow, sanitized on flag, absent on block. Capped at MAX_RETURNED_CHARS.
+    content: str | None
+    credits_remaining: int | None
+    credits_charged: int
+    semantic: dict | None = None
+    policy: dict = Field(default_factory=dict)
+
+
+# What a refused fetch still costs: the attempt. See the ProxyRefused
+# handler for why it is not free.
+PROXY_ATTEMPT_CREDITS = 1
+
+PROXY_RESPONSES = {
+    **METERED_RESPONSES,
+    422: {
+        "description": "The URL will never be fetched: not http(s), a private/loopback/link-local/reserved "
+        "address (before or after redirects), too many redirects, or a non-text content type. "
+        f"The scan credit is refunded; the attempt costs {PROXY_ATTEMPT_CREDITS}."
+    },
+    502: {
+        "description": "A public URL that could not be reached this time (DNS, connect, timeout). "
+        f"The scan credit is refunded; the attempt costs {PROXY_ATTEMPT_CREDITS}."
+    },
+}
+
+
+async def _refund_all(database: Database, principal: AirlockPrincipal, credits: int, why: str) -> None:
+    if principal.is_founder or credits <= 0:
+        return
+    await handle_grant_credits(
+        database,
+        GrantCreditsCommand(user_id=principal.user_id, credits=credits, reason="refund", reference=why),
     )
-    return EgressOut(
-        verdict=verdict.verdict,
-        score=round(verdict.score, 4),
-        reasons=list(verdict.reasons),
-        secrets_found=list(verdict.secrets_found),
-        pii_found=dict(verdict.pii_found or {}),
-        destination=verdict.destination,
-        destination_checked=bool(allowlist),
-        redacted=verdict.redacted,
-        credits_remaining=remaining,
-        credits_charged=0 if principal.is_founder else 1,
+
+
+@router.post("/proxy/fetch", response_model=ProxyFetchOut, responses=PROXY_RESPONSES)
+async def proxy_fetch(
+    payload: ProxyFetchIn,
+    database: Database = Depends(get_database),
+    principal: AirlockPrincipal = Depends(airlock_principal),
+    fetcher: Fetcher = Depends(get_fetcher),
+    model_provider: Callable[[], ModelProvider] = Depends(get_model_provider),
+    settings: Settings = Depends(get_settings),
+) -> ProxyFetchOut | JSONResponse:
+    """Fetch a URL on the agent's behalf and scan it before the agent sees
+    it. Two credits (the fetch and the scan; plus four with `deep`, refunded
+    when the rules already block). The URL is checked as an outbound call
+    first; the fetch refuses anything that is not the public internet,
+    re-checking every redirect; a fetch that cannot be made keeps the
+    attempt's credit, refunds the rest, and is answered with
+    `verdict: block`."""
+    policy = principal.policy
+    cost = PROXY_FETCH_CREDITS + (DEEP_SCAN_EXTRA_CREDITS if payload.deep else 0)
+    remaining = await _charge(database, principal, "deep_scan" if payload.deep else "scan", cost)
+    charged = 0 if principal.is_founder else cost
+    started = time.perf_counter()
+    try:
+
+        # Outbound first: is this somewhere the agent may reach, and is the URL
+        # itself carrying something out (a key in the query string)?
+        allowlist = list(dict.fromkeys([*policy.egress_allowlist, *payload.allowlist]))
+        outbound = check_egress(payload=payload.url, destination=payload.url, allowlist=allowlist, redact=False)
+        if outbound.verdict == "block":
+            if payload.deep:
+                remaining = await _refund_or_keep(database, principal, remaining, DEEP_SCAN_EXTRA_CREDITS, "proxy fetch: refused outbound")
+                charged = 0 if principal.is_founder else PROXY_FETCH_CREDITS
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            await _notify_balance_crossings(database, settings, principal, remaining, charged)
+            await handle_record_scan(
+                database,
+                RecordScanCommand(
+                    kind="egress",
+                    verdict="block",
+                    score=outbound.score,
+                    content_sha256=hashlib.sha256(payload.url.encode()).hexdigest(),
+                    content_bytes=len(payload.url.encode()),
+                    matched_rules=list(outbound.secrets_found),
+                    source=f"proxy:{outbound.destination or ''}"[:64],
+                    latency_ms=latency_ms,
+                ),
+            )
+            return ProxyFetchOut(
+                verdict="block",
+                score=round(outbound.score, 4),
+                stage="egress",
+                reasons=list(outbound.reasons),
+                matches=[],
+                families=[],
+                signals={},
+                url=payload.url,
+                final_url=None,
+                http_status=None,
+                content_type=None,
+                content_bytes=0,
+                content_sha256=None,
+                destination_checked=bool(allowlist),
+                hops=0,
+                truncated=False,
+                fetch_ms=0,
+                latency_ms=latency_ms,
+                content=None,
+                credits_remaining=remaining,
+                credits_charged=charged,
+                policy=_policy_summary(policy),
+            )
+
+        try:
+            fetched = await fetcher(payload.url)
+        except ProxyRefused as refused:
+            # Nothing was scanned, so the scan credit (and any deep extra)
+            # comes back. The fetch credit stays: the attempt was made -- a
+            # resolution, possibly a connection -- and a refused attempt that
+            # cost nothing would make this endpoint a free oracle for probing
+            # which names resolve to what. The body still says block: an agent
+            # that cannot get the page through Airlock must not go and get it
+            # some other way.
+            await _refund_all(database, principal, cost - PROXY_ATTEMPT_CREDITS, f"proxy fetch refused: {refused.detail[:100]}")
+            charged = 0 if principal.is_founder else PROXY_ATTEMPT_CREDITS
+            logger.info("airlock_proxy_refused", extra={"status": refused.status_code, "detail": refused.detail})
+            return JSONResponse(
+                status_code=refused.status_code,
+                content={"detail": refused.detail, "verdict": "block", "stage": "fetch", "credits_charged": charged},
+            )
+
+        scan_text = prepare_for_scan(fetched.text, fetched.content_type)
+        detection = _DETECTOR.scan(
+            scan_text,
+            block_threshold=policy.block_threshold,
+            flag_threshold=policy.flag_threshold,
+            muted=policy.muted_rules,
+        )
+        verdict, score = detection.verdict, detection.score
+        matched_rules = [match.rule_id for match in detection.matches]
+        matches = [
+            MatchOut(
+                rule_id=match.rule_id,
+                family=match.family,
+                weight=match.weight,
+                description=RULES_BY_ID[match.rule_id].description if match.rule_id in RULES_BY_ID else "",
+            )
+            for match in detection.matches
+        ]
+        families = list(detection.families)
+        semantic: dict | None = None
+        reasons = list(outbound.reasons)
+
+        ask_model = payload.deep and verdict != "block"
+        if payload.deep and not ask_model:
+            semantic = {
+                "status": "skipped",
+                "reason": "The rules already block this content; a second opinion can only raise a verdict.",
+                "weight": 0.0,
+            }
+            remaining = await _refund_or_keep(database, principal, remaining, DEEP_SCAN_EXTRA_CREDITS, "deep scan: rules already block")
+            charged = 0 if principal.is_founder else PROXY_FETCH_CREDITS
+        elif ask_model:
+            opinion = await semantic_opinion(model_provider, scan_text)
+            semantic = opinion.as_dict()
+            if opinion.status == "ok":
+                score, verdict = combine(detection.score, opinion, policy.block_threshold, policy.flag_threshold)
+                if opinion.weight > 0:
+                    matched_rules.append(SEMANTIC_RULE_ID)
+                    matches.append(
+                        MatchOut(
+                            rule_id=SEMANTIC_RULE_ID,
+                            family=opinion.family or "AI",
+                            weight=opinion.weight,
+                            description=opinion.reason
+                            or f"Gemini classified this as an injection attempt (max weight {SEMANTIC_MAX_WEIGHT}).",
+                        )
+                    )
+                    if opinion.family and opinion.family not in families:
+                        families.append(opinion.family)
+            else:
+                remaining = await _refund_or_keep(database, principal, remaining, DEEP_SCAN_EXTRA_CREDITS, "deep scan: second opinion unavailable")
+                charged = 0 if principal.is_founder else PROXY_FETCH_CREDITS
+
+        if verdict == "block" or not payload.return_content:
+            content: str | None = None
+        elif verdict == "flag":
+            content = visible_text(sanitize(scan_text, detection), fetched.content_type)
+        else:
+            content = visible_text(scan_text, fetched.content_type)
+        latency_ms = int((time.perf_counter() - started) * 1000)
+
+        await _notify_balance_crossings(database, settings, principal, remaining, charged)
+        await handle_record_scan(
+            database,
+            RecordScanCommand(
+                kind="ingress",
+                verdict=verdict,
+                score=score,
+                content_sha256=detection.content_sha256,
+                content_bytes=fetched.content_bytes,
+                matched_rules=matched_rules,
+                source=f"proxy:{outbound.destination or ''}"[:64],
+                latency_ms=latency_ms,
+            ),
+        )
+        return ProxyFetchOut(
+            verdict=verdict,
+            score=round(score, 4),
+            stage="ingress",
+            reasons=reasons,
+            matches=matches,
+            families=families,
+            signals={key: value for key, value in (detection.signals or {}).items()},
+            url=fetched.url,
+            final_url=fetched.final_url,
+            http_status=fetched.http_status,
+            content_type=fetched.content_type,
+            content_bytes=fetched.content_bytes,
+            content_sha256=detection.content_sha256,
+            destination_checked=bool(allowlist),
+            hops=fetched.hops,
+            # True when any cap cut something the agent might have wanted: the
+            # body read, what the scanner saw, or what is handed back.
+            truncated=fetched.truncated
+            or len(fetched.text) > MAX_PROXY_SCAN_CHARS
+            or (content is not None and len(content) >= MAX_RETURNED_CHARS),
+            fetch_ms=fetched.fetch_ms,
+            latency_ms=latency_ms,
+            content=content,
+            credits_remaining=remaining,
+            credits_charged=charged,
+            semantic=semantic,
+            policy=_policy_summary(policy),
+        )
+    except Exception:
+        # The customer must not pay for our failure: hand back what was
+        # charged (as it stands after any partial refund) and let the
+        # fail-closed 500 go out. Deliberate answers (HTTPException) are
+        # never raised past this point, so nothing else is caught here.
+        await _refund_all(database, principal, charged, "proxy fetch: application error")
+        raise
+
+
+async def _refund_or_keep(
+    database: Database, principal: AirlockPrincipal, remaining: int | None, credits: int, why: str
+) -> int | None:
+    """Refunds `credits` for a metered principal and returns the new
+    balance; the founder was never charged, so nothing moves."""
+    if principal.is_founder:
+        return remaining
+    return await handle_grant_credits(
+        database,
+        GrantCreditsCommand(user_id=principal.user_id, credits=credits, reason="refund", reference=why),
     )
 
 
@@ -899,6 +1229,8 @@ class PricingOut(BaseModel):
     # Credits per call. A deep scan adds a Gemini second opinion.
     credits_per_scan: int = 1
     credits_per_deep_scan: int = 1 + DEEP_SCAN_EXTRA_CREDITS
+    # A proxy fetch is the fetch plus the scan.
+    credits_per_proxy_fetch: int = PROXY_FETCH_CREDITS
     prices: list[PackPriceOut]
 
 

@@ -100,6 +100,10 @@ describe("/airlock", () => {
     const extra = Number(SEMANTIC_PY.match(/DEEP_SCAN_EXTRA_CREDITS = (\d+)/)![1]!);
     expect(Number(PRICING_DEFAULTS.match(/credits_per_deep_scan: (\d+)/)![1]!)).toBe(1 + extra);
     expect(PLAYGROUND).toContain(`Scan it (${1 + extra} credits)`);
+    // Proxy fetch cost from proxy.py.
+    const PROXY_PY = readFileSync(join(__dirname, "..", "..", "api", "app", "airlock", "proxy.py"), "utf8");
+    const proxyCredits = Number(PROXY_PY.match(/PROXY_FETCH_CREDITS = (\d+)/)![1]!);
+    expect(Number(PRICING_DEFAULTS.match(/credits_per_proxy_fetch: (\d+)/)![1]!)).toBe(proxyCredits);
 
     // The FAQ states the price in prose too; keep it equal to the defaults.
     expect(PAGE).toContain(`\\u20b9${setting("airlock_pack_price_inr")} by UPI`);
@@ -180,16 +184,17 @@ describe("/airlock", () => {
     expect(PAGE).toContain("What runs, and what doesn");
     expect(PAGE).toContain("Running now:");
     expect(PAGE).toContain("Not built yet:");
-    for (const live of ["API keys", "prepaid credits", "deep scan", "append-only audit log", "per-account policy", "CSV export", "fails closed"]) {
+    for (const live of ["API keys", "prepaid credits", "deep scan", "append-only audit log", "per-account policy", "CSV export", "fails closed", "proxy fetch"]) {
       expect(PAGE.toLowerCase()).toContain(live.toLowerCase());
     }
-    for (const missing of ["card payments", "self-hosted", "proxy mode", "alert webhooks", "no free plan"]) {
+    for (const missing of ["card payments", "self-hosted", "forward", "alert webhooks", "no free plan"]) {
       expect(PAGE.toLowerCase()).toContain(missing);
     }
     // Per-tenant policy shipped (migration 0034); the page must not still
     // list it as missing.
     expect(PAGE).not.toContain("per-tenant thresholds");
     expect(PAGE).toContain("Can I tune it for my own documents?");
+    expect(PAGE).toContain("What is proxy mode?");
     // The FAQ must not still say it cannot be bought.
     expect(PAGE).not.toContain("Can I buy it?");
     expect(PAGE).not.toContain("Not yet. The scanner is free.");

@@ -9,6 +9,8 @@ export const AIRLOCK_PRICING_DEFAULTS = {
   max_packs_per_claim: 10,
   credits_per_scan: 1,
   credits_per_deep_scan: 5,
+  // Proxy fetch: the fetch plus the scan (apps/api/app/airlock/proxy.py).
+  credits_per_proxy_fetch: 2,
   prices: [
     { currency: "INR", amount: 999, method: "upi", configured: true },
     { currency: "USD", amount: 15, method: "wire", configured: true },
