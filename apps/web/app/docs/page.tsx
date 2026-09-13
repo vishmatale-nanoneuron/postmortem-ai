@@ -6,7 +6,7 @@ import { SiteFooter, SiteHeader } from "../landing";
 export const metadata: Metadata = {
   title: "Docs",
   description:
-    "How PostMortem AI actually works: grounded drafting, RAG over past incidents, MCP tools, payments, and the security measures in place.",
+    "The Airlock API reference (authentication, credits, scan and egress, deep scan, error semantics, code samples) and how PostMortem AI works: grounded drafting, RAG, MCP tools, payments, security.",
   robots: { index: true, follow: true },
   alternates: { canonical: "/docs" },
 };
@@ -48,7 +48,7 @@ export default function DocsPage() {
       <main className="mx-auto max-w-2xl px-4 py-10">
       <div className="mb-8 animate-in fade-in slide-in-from-bottom-2 duration-700">
         <div className="text-xs font-medium tracking-widest text-muted uppercase">Docs</div>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">How PostMortem AI works</h1>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">Airlock API reference, and how PostMortem AI works</h1>
         <p className="mt-2 text-sm text-muted">
           Written for humans and AI agents alike -- every claim here matches{" "}
           <a className="underline underline-offset-2" href="/llms.txt">
@@ -66,6 +66,76 @@ export default function DocsPage() {
 
       {section(
         0,
+        <>
+          <h2 className={h2}>Airlock API</h2>
+          <p className={p}>
+            Two endpoints, JSON in and JSON out, on{" "}
+            <code className={code}>https://postmortem-ai-api.vercel.app</code>. The interactive reference (every
+            field, every response code, an Authorize button that takes your key) is the{" "}
+            <a className="underline underline-offset-2" href="https://postmortem-ai-api.vercel.app/docs" target="_blank" rel="noopener noreferrer">
+              OpenAPI document
+            </a>
+            ; this page is the shape of it.
+          </p>
+          <p className={p}>
+            <span className="font-medium text-ink">Authentication.</span> Send your key as{" "}
+            <code className={code}>X-Airlock-Key: alk_…</code> (or <code className={code}>Authorization: Bearer alk_…</code>).
+            Keys are minted in the Airlock section of your dashboard, shown once, stored as a hash, revocable at any
+            time. No key and no session is <code className={code}>401</code>.
+          </p>
+          <p className={p}>
+            <span className="font-medium text-ink">Credits.</span> One credit per call to{" "}
+            <code className={code}>POST /v1/airlock/scan</code> or <code className={code}>POST /v1/airlock/egress</code>;
+            five for a scan with <code className={code}>&quot;deep&quot;: true</code>. Taken before the engine runs, atomically.
+            An empty balance is <code className={code}>402</code> with nothing scanned; a refused or failed call
+            (<code className={code}>401</code>, <code className={code}>402</code>, <code className={code}>422</code>,{" "}
+            <code className={code}>429</code>, any <code className={code}>5xx</code>) spends nothing. Every response carries{" "}
+            <code className={code}>credits_remaining</code> and <code className={code}>credits_charged</code>; you are
+            emailed once when the balance drops below 1,000 and once when it reaches zero. Packs of 10,000 are bought
+            from the dashboard by UPI or international wire.
+          </p>
+          <p className={p}>
+            <span className="font-medium text-ink">Scan.</span> Body <code className={code}>{"{ content, source?, deep? }"}</code>{" "}
+            (content up to 50,000 characters). Returns <code className={code}>verdict</code> (allow · flag · block),{" "}
+            <code className={code}>score</code> (block at 0.75, flag at 0.40), <code className={code}>matches</code> (rule id,
+            family, weight, description), <code className={code}>signals</code> (what normalisation uncovered),{" "}
+            <code className={code}>content_sha256</code>, <code className={code}>latency_ms</code>, and on a deep scan{" "}
+            <code className={code}>semantic</code> (the model&apos;s answer, confidence and weight, or{" "}
+            <code className={code}>status: &quot;unavailable&quot;</code> with the extra credits refunded).
+          </p>
+          <p className={p}>
+            <span className="font-medium text-ink">Egress.</span> Body{" "}
+            <code className={code}>{"{ payload, destination?, allowlist? }"}</code>. Returns the verdict, the credential
+            and personal-data patterns found, <code className={code}>destination_checked</code> (false when no allowlist
+            was supplied -- then any destination passes), and <code className={code}>redacted</code>, the payload with
+            secrets and personal data replaced, or null when there was nothing to redact.
+          </p>
+          <p className={p}>
+            <span className="font-medium text-ink">Operational.</span> Every response carries{" "}
+            <code className={code}>X-Request-ID</code> (yours is echoed if you send one) and{" "}
+            <code className={code}>Server-Timing</code>; every <code className={code}>429</code> carries{" "}
+            <code className={code}>Retry-After</code>. Treat any non-200 as block. The audit log keeps a SHA-256 of
+            what was scanned, never the content and never your account; the standard scan makes no model call.
+            Public aggregate counts are at <code className={code}>GET /v1/airlock/stats</code>, prices at{" "}
+            <code className={code}>GET /v1/airlock/pricing</code>.
+          </p>
+          <p className={cn(p, "mb-0")}>
+            Code samples in curl, Python and TypeScript are on{" "}
+            <Link className="underline underline-offset-2" href="/airlock#integrate">
+              the Airlock page
+            </Link>
+            ; the long-form reference an AI assistant can read is{" "}
+            <a className="underline underline-offset-2" href="/llms-full.txt">
+              /llms-full.txt
+            </a>
+            .
+          </p>
+        </>,
+        "airlock",
+      )}
+
+      {section(
+        0.5,
         <>
           <h2 className={h2}>The core loop</h2>
           <p className={p}>

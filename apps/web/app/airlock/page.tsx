@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { SiteFooter, SiteHeader } from "../landing";
 import type { AirlockPricing, AirlockStats } from "../api";
 import { AirlockMark } from "./airlock-mark";
+import { LiveCounters } from "./live-counters";
 import { Playground } from "./playground";
 import { AIRLOCK_PRICING_DEFAULTS, formatMoney } from "./pricing-defaults";
 import { ScanTheatre } from "./scan-theatre";
@@ -185,6 +186,26 @@ const CURL_SNIPPET = `curl -s https://postmortem-ai-api.vercel.app/v1/airlock/sc
 #     "credits_remaining": 9998, "credits_charged": 1, ...}
 # add "deep": true to the body for a Gemini second opinion (5 credits)`;
 
+const TYPESCRIPT_SNIPPET = `const AIRLOCK = "https://postmortem-ai-api.vercel.app/v1/airlock";
+
+type Verdict = "allow" | "flag" | "block";
+
+export async function guard(text: string, source: string): Promise<Verdict> {
+  const res = await fetch(\`\${AIRLOCK}/scan\`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "X-Airlock-Key": process.env.AIRLOCK_KEY! },
+    body: JSON.stringify({ content: text, source }),
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!res.ok) return "block"; // 402 (no credits), 429, 5xx: a guard that cannot answer is a block
+  const body = (await res.json()) as { verdict: Verdict; credits_remaining: number | null };
+  if (body.credits_remaining !== null && body.credits_remaining < 1_000) console.warn("Airlock credits low");
+  return body.verdict;
+}
+
+// before the agent reads anything a stranger could have written:
+if ((await guard(doc.text, "document")) === "block") return;`;
+
 const PYTHON_SNIPPET = `import os, requests
 
 AIRLOCK = "https://postmortem-ai-api.vercel.app/v1/airlock"
@@ -344,12 +365,9 @@ export default async function AirlockPage() {
             What you can check, not who we say uses it
           </p>
           {stats && stats.total > 0 && (
-            // Live, from the same public /v1/airlock/stats anyone can call.
-            <p className="mb-2 font-mono text-xs text-ink">
-              {stats.total.toLocaleString("en-US")} decisions recorded · {stats.blocked.toLocaleString("en-US")}{" "}
-              blocked · {stats.flagged.toLocaleString("en-US")} flagged · {stats.last_7d.toLocaleString("en-US")} in
-              the last 7 days
-            </p>
+            // Server-rendered first, then kept live in the browser -- see
+            // live-counters.tsx. Same public /v1/airlock/stats anyone can call.
+            <LiveCounters initial={stats} />
           )}
           <ul className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
             {PROOF_STRIP.map((item) => (
@@ -524,6 +542,10 @@ export default async function AirlockPage() {
           <p className={cn(p, "mt-3")}>The same call from Python, for an agent that reads documents:</p>
           <pre className="overflow-x-auto rounded-md bg-ink px-3.5 py-3 font-mono text-[12px] leading-relaxed text-paper">
             {PYTHON_SNIPPET}
+          </pre>
+          <p className={cn(p, "mt-3")}>And from TypeScript, with a timeout and a low-balance warning:</p>
+          <pre className="overflow-x-auto rounded-md bg-ink px-3.5 py-3 font-mono text-[12px] leading-relaxed text-paper">
+            {TYPESCRIPT_SNIPPET}
           </pre>
           <p className={cn(p, "mt-3 mb-0")}>
             Every response carries <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">credits_remaining</code>{" "}

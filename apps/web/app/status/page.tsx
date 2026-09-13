@@ -23,7 +23,35 @@ export const metadata: Metadata = {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 
+import { AutoRefresh } from "./auto-refresh";
+
 type HealthCheck = { status: string; database: string } | null;
+
+// Airlock's own check: the public pricing endpoint answers from the same
+// function and region as the metered scan, and its Server-Timing header
+// is the app-side duration -- the number a customer's agent actually
+// waits on, separate from their network.
+type AirlockCheck = { reachable: boolean; appMs: number | null; region: string | null; decisions7d: number | null };
+
+async function fetchAirlock(): Promise<AirlockCheck> {
+  try {
+    const response = await fetch(`${API_BASE}/v1/airlock/pricing`, { cache: "no-store" });
+    const timing = response.headers.get("server-timing") ?? "";
+    const dur = /dur=([0-9.]+)/.exec(timing);
+    const id = response.headers.get("x-vercel-id") ?? "";
+    const region = id ? (id.split("::")[1] ?? id.split("::")[0] ?? null) : null;
+    let decisions7d: number | null = null;
+    try {
+      const stats = await fetch(`${API_BASE}/v1/airlock/stats`, { cache: "no-store" });
+      if (stats.ok) decisions7d = Number(((await stats.json()) as { last_7d: number }).last_7d);
+    } catch {
+      decisions7d = null;
+    }
+    return { reachable: response.ok, appMs: dur ? Number(dur[1]) : null, region, decisions7d };
+  } catch {
+    return { reachable: false, appMs: null, region: null, decisions7d: null };
+  }
+}
 
 async function fetchHealth(): Promise<{ health: HealthCheck; ok: boolean; checkedAt: number }> {
   const checkedAt = Date.now();
@@ -42,7 +70,8 @@ async function fetchHealth(): Promise<{ health: HealthCheck; ok: boolean; checke
 }
 
 export default async function StatusPage() {
-  const { health, ok, checkedAt } = await fetchHealth();
+  const [{ health, ok, checkedAt }, airlock] = await Promise.all([fetchHealth(), fetchAirlock()]);
+  const allOk = ok && airlock.reachable;
 
   return (
     <>
@@ -60,16 +89,16 @@ export default async function StatusPage() {
       <div
         className={cn(
           "mb-4 flex items-center gap-3 rounded-lg border p-5 shadow-sm",
-          ok ? "border-accent/30 bg-accent/5" : "border-red-200 bg-red-50",
+          allOk ? "border-accent/30 bg-accent/5" : "border-red-200 bg-red-50",
         )}
       >
         <span
           aria-hidden
-          className={cn("size-3 shrink-0 rounded-full", ok ? "bg-accent" : "bg-red-600")}
+          className={cn("size-3 shrink-0 rounded-full", allOk ? "bg-accent" : "bg-red-600")}
         />
         <div>
-          <div className={cn("text-base font-semibold", ok ? "text-accent" : "text-red-700")}>
-            {ok ? "All systems operational" : "Degraded -- something is wrong right now"}
+          <div className={cn("text-base font-semibold", allOk ? "text-accent" : "text-red-700")}>
+            {allOk ? "All systems operational" : "Degraded -- something is wrong right now"}
           </div>
           <div className="text-sm text-muted">
             Backend: {ok ? "reachable" : "unreachable"}
@@ -78,8 +107,36 @@ export default async function StatusPage() {
         </div>
       </div>
 
-      <p className="text-xs text-muted">
-        Checked at {new Date(checkedAt).toISOString()}. Reload this page for a fresh check -- it is never cached.
+      <div className="mb-4 rounded-lg border border-line bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-semibold text-ink">Airlock API</div>
+          <span className={cn("text-xs font-medium", airlock.reachable ? "text-accent" : "text-red-700")}>
+            {airlock.reachable ? "reachable" : "unreachable"}
+          </span>
+        </div>
+        <dl className="mt-2 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+          <div className="rounded-md bg-paper px-3 py-2">
+            <dt className="text-[11px] tracking-wide text-muted uppercase">App-side latency</dt>
+            <dd className="font-mono text-ink">{airlock.appMs === null ? "–" : `${airlock.appMs.toFixed(1)} ms`}</dd>
+          </div>
+          <div className="rounded-md bg-paper px-3 py-2">
+            <dt className="text-[11px] tracking-wide text-muted uppercase">Region</dt>
+            <dd className="font-mono text-ink">{airlock.region ?? "–"}</dd>
+          </div>
+          <div className="rounded-md bg-paper px-3 py-2">
+            <dt className="text-[11px] tracking-wide text-muted uppercase">Decisions, 7 days</dt>
+            <dd className="font-mono text-ink">{airlock.decisions7d === null ? "–" : airlock.decisions7d.toLocaleString("en-US")}</dd>
+          </div>
+        </dl>
+        <p className="mt-2 text-xs text-muted">
+          Latency is the API&apos;s own <span className="font-mono">Server-Timing</span> for this check -- what a
+          scan spends inside the service, before your network. Every response you get carries the same header.
+        </p>
+      </div>
+
+      <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted">
+        <span>Checked at {new Date(checkedAt).toISOString()}. Never cached;</span>
+        <AutoRefresh seconds={30} />
       </p>
 
       <p className="mt-6 text-xs text-muted">

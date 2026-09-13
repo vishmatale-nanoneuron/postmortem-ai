@@ -13,8 +13,16 @@ import {
   type Claim,
 } from "../api";
 import { firstError, paymentReferenceSchema } from "../validation";
+import { usePolling } from "../use-polling";
 import { AirlockMark } from "./airlock-mark";
 import { PendingClaim } from "../pending-claim";
+
+// The panel is live, not a snapshot: it re-reads the balance, the keys and
+// the claims every POLL_MS while the tab is visible (and immediately on
+// returning to it), so credits landing after the founder approves a
+// claim, or usage from an agent running in production, show up without a
+// reload. Same cadence the incident list uses.
+const POLL_MS = 20_000;
 
 // The Airlock section of the client dashboard: balance, keys, buying more,
 // and the statement. Everything that spends or grants money lives behind
@@ -52,6 +60,7 @@ export function AirlockPanel({ isFounder }: { isFounder: boolean }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  usePolling(() => void refresh(), POLL_MS);
 
   return (
     <section id="client-airlock" aria-labelledby="airlock-panel-heading">
@@ -68,7 +77,7 @@ export function AirlockPanel({ isFounder }: { isFounder: boolean }) {
         </p>
 
         <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Stat label="Credits left" value={credits ? credits.balance : null} emphasis />
+          <Stat label="Credits left · live" value={credits ? credits.balance : null} emphasis />
           <Stat label="Used, 30 days" value={credits ? credits.used_last_30d : null} />
           <Stat label="Used, all time" value={credits ? credits.used_total : null} />
           <Stat label="Bought, all time" value={credits ? credits.purchased_total : null} />
@@ -129,6 +138,7 @@ function Keys() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  usePolling(() => void refresh(), POLL_MS);
 
   async function create(form: FormData) {
     const label = String(form.get("label") ?? "").trim();
@@ -283,6 +293,7 @@ function BuyCredits({ onChanged }: { onChanged: () => void | Promise<void> }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  usePolling(() => void refresh(), POLL_MS);
 
   const price = pricing?.prices.find((p) => p.currency === currency) ?? null;
   const amount = price ? price.amount * packs : 0;
