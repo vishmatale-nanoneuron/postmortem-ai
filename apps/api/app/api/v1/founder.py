@@ -3,7 +3,7 @@ import logging
 import time
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
@@ -11,6 +11,7 @@ from ...auth import User, current_founder
 from ...cqrs.activity import ActivityLogFilter, handle_activity_log_query
 from ...cqrs.airlock_billing import GrantCreditsCommand, handle_airlock_business_stats_query, handle_grant_credits
 from ...cqrs.airlock_waitlist import handle_waitlist_counts_query
+from ...cqrs.request_errors import handle_error_count_query, handle_error_groups_query
 from ...database import Database
 from ...dependencies import get_database
 from ...services.billing import activate_manual_subscription, record_claim_event
@@ -194,6 +195,10 @@ async def founder_summary(
     # against credits used, what is prepaid and unspent, and how many
     # accounts and keys are live.
     airlock = await handle_airlock_business_stats_query(database)
+    # Whether the API is breaking: unhandled 500s in the last day and week
+    # (cqrs/request_errors.py). Zero is the number this should show.
+    errors_24h = await handle_error_count_query(database, days=1)
+    errors_7d = await handle_error_count_query(database, days=7)
     recent_users = await database.fetch_all(
         "SELECT id::text, email, created_at FROM users ORDER BY created_at DESC LIMIT 10"
     )
@@ -243,6 +248,7 @@ async def founder_summary(
         "pending_payment_claims": (pending_claims or {}).get("total", 0),
         "airlock_waitlist": {"total": airlock_waitlist.total, "last_7d": airlock_waitlist.last_7d},
         "airlock": vars(airlock),
+        "errors": {"last_24h": errors_24h, "last_7d": errors_7d},
         "conversion_funnel": {
             "signups": (funnel or {}).get("signups", 0),
             "tried_free_incident": (funnel or {}).get("tried_free_incident", 0),
@@ -613,3 +619,30 @@ async def grant_airlock_credits(
         extra={"user_id": row["id"], "credits": payload.credits, "reason": payload.reason},
     )
     return AirlockGrantOut(email=row["email"], credits=payload.credits, balance=balance)
+
+
+class ErrorGroupOut(BaseModel):
+    fingerprint: str
+    error_type: str
+    method: str
+    path: str
+    count: int
+    first_seen: int
+    last_seen: int
+    last_request_id: str
+    sample_message: str
+    notified: bool
+
+
+@router.get("/errors", response_model=list[ErrorGroupOut])
+async def list_errors(
+    days: int = Query(default=7, ge=1, le=90),
+    database: Database = Depends(get_database),
+    _founder: User = Depends(current_founder),
+) -> list[ErrorGroupOut]:
+    """Every fault the API has answered a 500 for, one line per fault
+    (exception type + route), most recent first. Founder-only; the
+    request id on each line is what the customer saw and what the log
+    line carries."""
+    return [ErrorGroupOut(**vars(group)) for group in await handle_error_groups_query(database, days=days)]
+

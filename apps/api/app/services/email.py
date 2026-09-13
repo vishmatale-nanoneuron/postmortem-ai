@@ -247,6 +247,35 @@ def send_wire_payment_details_email(
     logger.info("wire_payment_details_email_sent")
 
 
+def send_founder_error_notification(
+    settings: Settings, *, error_type: str, method: str, path: str, request_id: str, message: str, fingerprint: str
+) -> None:
+    """One email per new fault per day: the API answered a 500 that it had
+    not answered in the last 24 hours. Says what broke and where to look
+    (the request id is what the customer was shown, and what the log line
+    carries); never a stack trace, never a request body."""
+    if not settings.resend_api_key or not settings.resend_email_domain:
+        raise EmailNotConfiguredError("RESEND_API_KEY/RESEND_EMAIL_DOMAIN are not configured")
+    resend.api_key = settings.resend_api_key
+    dashboard = f"{settings.frontend_url}/#founder-errors"
+    resend.Emails.send(
+        {
+            "from": f"NanoNeuron API <noreply@{settings.resend_email_domain}>",
+            "to": [settings.founder_email],
+            "subject": f"API error: {error_type} on {method} {path}",
+            "html": (
+                f"<p>The API answered a <strong>500</strong> on <code>{method} {path}</code> with "
+                f"<code>{error_type}</code> -- the first time this fault was seen in the last 24 hours.</p>"
+                f"<p>Message: <code>{message or '(none)'}</code><br>Request id: <code>{request_id}</code></p>"
+                f'<p>Every occurrence is listed in <a href="{dashboard}">the founder dashboard</a>. '
+                "Repeats of this same fault today will not email you again.</p>"
+            ),
+        },
+        {"idempotency_key": f"api-error/{fingerprint}/{request_id}"},
+    )
+    logger.info("founder_error_notification_sent", extra={"fingerprint": fingerprint})
+
+
 def send_founder_claim_notification(
     settings: Settings, claim_id: str, method: str, currency: str, amount: int, reference: str, payer_email: str
 ) -> None:

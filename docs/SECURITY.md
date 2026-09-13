@@ -165,6 +165,15 @@ posture is stricter than the rest of the product's:
   connection attempted. It is metered (2 credits; a refused attempt still
   costs 1), so a drained key cannot make Airlock fetch anything and a
   funded one pays to probe.
+- **Errors are recorded, not sent to a vendor.** The API's unhandled-
+  exception handler writes one row per 500 to `request_errors` (migration
+  0035): method, path, exception type, a truncated message, the request id
+  the customer was shown, and a fingerprint -- never a request body, a
+  header, a stack trace, or the user. The founder dashboard lists faults
+  grouped by fingerprint; the first sighting of a fault in 24 hours emails
+  the founder, capped at ten emails an hour. The write is best-effort and
+  can never change the 500 the customer receives (pinned by
+  `tests/test_request_errors.py`). Rows are pruned at 90 days.
 - **Invoices never carry payee account details.** `GET
   /v1/billing/claims/{id}/invoice` (owner-only; a neighbour is 404) renders
   the proforma/receipt from the claim row and the seller settings; the
