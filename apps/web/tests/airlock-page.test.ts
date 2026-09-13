@@ -208,6 +208,25 @@ describe("/airlock", () => {
     }
   });
 
+  it("is live where it claims to be, and documents the API where a developer looks", () => {
+    // The decision counters are the client component that refreshes from
+    // /stats (server-seeded), the integration section carries all three
+    // languages, and /docs -- the page a developer opens first -- has the
+    // API reference rather than only PostMortem AI.
+    expect(PAGE).toContain("<LiveCounters initial={stats} />");
+    for (const lang of ["CURL_SNIPPET", "PYTHON_SNIPPET", "TYPESCRIPT_SNIPPET"]) {
+      expect(PAGE).toContain(`{${lang}}`);
+    }
+    const DOCS = readFileSync(join(__dirname, "..", "app", "docs", "page.tsx"), "utf8");
+    expect(DOCS).toContain("Airlock API");
+    for (const must of ["X-Airlock-Key", "402", "credits_remaining", "Retry-After", "X-Request-ID", "/v1/airlock/egress"]) {
+      expect(DOCS).toContain(must);
+    }
+    const STATUS = readFileSync(join(__dirname, "..", "app", "status", "page.tsx"), "utf8");
+    expect(STATUS).toContain("/v1/airlock/pricing");
+    expect(STATUS).toContain("<AutoRefresh");
+  });
+
   it("states the deep scan's terms next to the no-model promise", () => {
     // The default path makes a privacy promise (no model call). The deep
     // scan is the exception and must be described as opt-in, as sending

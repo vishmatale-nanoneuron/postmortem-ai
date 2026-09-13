@@ -461,6 +461,13 @@ over 1 KB are gzip-compressed when accepted. `/v1/airlock/pricing` and
 emailed once when the balance first drops below 1,000 credits and once
 when it reaches zero (stateless: sent on the call that crosses the line).
 
+**Where to read more.** The human-readable API reference is the first
+section of https://www.nanoneuron.ai/docs#airlock; /status shows the
+Airlock API's reachability, app-side latency and region, re-checked every
+30 seconds; the counters on /airlock refresh from /v1/airlock/stats every
+minute; the dashboard's Airlock panel re-reads balance, keys and claims
+every 20 seconds while open.
+
 **Geography and language.** The API is global (HTTPS from anywhere, no
 region restriction) and model-agnostic. Payment from any country by SWIFT
 wire in USD/GBP/EUR, or by UPI within India -- the only rails. The 30
