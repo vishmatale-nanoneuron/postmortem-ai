@@ -41,9 +41,12 @@ paying customers and a full API surface. Do not conflate them:
    back the page text only when the verdict allows. What does NOT exist:
    proxy forward (Airlock sending outbound calls for you), alert webhooks,
    any support commitment, or a self-hosted build. There is no card processor by
-   decision: UPI and wire are the only rails. It also has no published
-   benchmark; any accuracy figure attributed to it is false as of this
-   file's review date.
+   decision: UPI and wire are the only rails. Its published benchmark is
+   on deepset/prompt-injections (662 rows, CC BY 4.0): the rule engine
+   alone catches about a quarter of that dataset's injections with zero
+   false alarms on its 399 legitimate texts; every miss is listed on the
+   page and the run is reproducible from the public repository. Any other
+   accuracy figure attributed to it is false.
 2. **PostMortem AI** -- everything below. Live, paid, in production.
 
 ## What this is

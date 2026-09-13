@@ -54,7 +54,9 @@ def test_the_harness_computes_precision_recall_and_dead_rules() -> None:
     # two override rules, and a bare count would have silently absorbed that
     # instead of describing it.
     fired = sorted(stats.rule_id for stats in result.rules.values() if not stats.is_dead)
-    assert fired == ["EX-001", "IO-001", "IO-002"]
+    # "reveal the prompt" now trips EX-003 too, since that rule learned to
+    # accept "the prompt" without "system" in front of it.
+    assert fired == ["EX-001", "EX-003", "IO-001", "IO-002"]
     assert len(result.dead_rules) == len(RULES) - len(fired)
 
 
@@ -101,7 +103,7 @@ def test_every_rule_is_exercised_by_the_corpus() -> None:
     nothing."""
     result = run_benchmark(load_corpus(CORPUS), Detector())
     assert result.dead_rules == [], f"rules exercised by no case: {result.dead_rules}"
-    assert len(result.rules) == 30
+    assert len(result.rules) == 40
 
 
 def test_no_ordinary_document_in_the_corpus_is_blocked_or_flagged() -> None:
