@@ -188,7 +188,7 @@ def test_every_rule_explains_itself() -> None:
 
 def test_rule_ids_are_unique_and_families_are_the_eight_the_page_names() -> None:
     ids = [rule.id for rule in RULES]
-    assert len(ids) == len(set(ids)) == 30
+    assert len(ids) == len(set(ids)) == 40
     assert {rule.family for rule in RULES} == {
         "instruction_override",
         "role_hijack",

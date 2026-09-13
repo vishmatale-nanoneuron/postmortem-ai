@@ -190,7 +190,7 @@ posture is stricter than the rest of the product's:
   Postgres triggers (row-level `BEFORE UPDATE OR DELETE`, statement-level
   `BEFORE TRUNCATE`), tested from a separate connection. Attribution lives
   in the deletable ledger, so account erasure still holds.
-- **No model call by default.** The standard scan is thirty regular
+- **No model call by default.** The standard scan is forty regular
   expressions over normalised text. A deep scan is opt-in per call, sends
   that content to Google's Gemini API, can only raise a verdict (its weight
   is zero unless it says "injection", capped below the strongest single

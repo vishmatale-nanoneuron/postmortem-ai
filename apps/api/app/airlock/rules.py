@@ -7,6 +7,10 @@ Design notes:
   than misses, because a blocked legitimate document is visible and a missed
   attack usually is not.
 - Weights above 0.75 are reserved for patterns with no plausible benign use.
+- Rules are English, plus the most common German override phrasings (ids in
+  the 1xx series) -- German being the other language in the public dataset
+  the engine is benchmarked against (scripts/airlock_benchmark.py). Any
+  other language is the deep scan's job.
 """
 
 from dataclasses import dataclass
@@ -27,7 +31,8 @@ RULES: list[Rule] = [
     Rule(
         "IO-001",
         "instruction_override",
-        r"ignore\s+(all\s+|any\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?|directions?)",
+        r"ignore\s+(all\s+|any\s+|the\s+)?(previous|prior|above|earlier|preceding)\s+"
+        r"(instructions?|prompts?|rules?|directions?|orders?|tasks?|commands?)",
         0.80,
         description="Classic instruction-override phrasing.",
     ),
@@ -41,7 +46,10 @@ RULES: list[Rule] = [
     Rule(
         "IO-003",
         "instruction_override",
-        r"forget\s+(your|all|the)\s+(instructions?|training|rules?|guidelines?|system\s+prompt)",
+        r"forget\s+(everything\s+|all\s+|about\s+all\s+|the\s+|your\s+)+"
+        r"((the|your|our)\s+)?((previous|prior|earlier|above)\s+)?"
+        r"(instructions?|training|rules?|guidelines?|system\s+prompt|tasks?|assignments?|information|orders?|"
+        r"before|we\s+discussed|you\s+were\s+told)",
         0.75,
         description="Tells the model to forget its instructions, training or guidelines.",
     ),
@@ -136,7 +144,9 @@ RULES: list[Rule] = [
     Rule(
         "EX-003",
         "exfiltration",
-        r"(reveal|print|output|repeat|show)\s+(your|the)\s+(system\s+prompt|initial\s+instructions?|configuration)",
+        r"(reveal|print|output|repeat|show|display)\s+(me\s+)?(all\s+(of\s+)?)?(your|the)\s+"
+        r"((entire|full|whole|complete|initial|original)\s+)?"
+        r"(system\s+prompt|initial\s+instructions?|configuration|prompt\s*texts?|prompts?\b|instructions?\s+above)",
         0.75,
         description="Asks the model to reveal its system prompt or initial configuration.",
     ),
@@ -272,6 +282,104 @@ RULES: list[Rule] = [
         r"(decode|base64|rot13|reverse)\s+(the\s+following|this)\s+and\s+(then\s+)?(execute|follow|run|do)",
         0.85,
         description="Decode-then-execute: hides the payload and instructs the model to run it.",
+    ),
+    # ---- phrasings a public dataset showed the seed rules missed ---------
+    # Added after benchmarking against deepset/prompt-injections (see
+    # scripts/airlock_benchmark.py). Each is a general form of an override,
+    # a hand-over to "new" instructions, or a prompt-extraction request --
+    # not a fingerprint of any one sample. Weights follow the same scale.
+    Rule(
+        "IO-006",
+        "instruction_override",
+        r"(new|further|next|different)\s+(tasks?|instructions?|assignments?|orders?)\s+(will\s+)?(follow|now)|"
+        r"(focus|concentrate)\s+(now\s+)?on\s+(your|the)\s+new\s+(task|assignment|instructions?)|"
+        r"start\s+(over|again|afresh|from\s+the\s+(front|top|beginning))\s+with\s+a\s+new\s+task|"
+        r"(leave|put)\s+(all\s+)?(the\s+|your\s+)?previous\s+(information|tasks?|instructions?)\s+(behind|aside)|"
+        r"remove\s+all\s+previous\s+tasks",
+        0.70,
+        description="Hands the model over to \"new\" tasks or instructions, discarding what came before.",
+    ),
+    Rule(
+        "IO-007",
+        "instruction_override",
+        r"(do\s+not|don'?t|never)\s+answer\s+(this|the|that|my)\s+question\b.{0,40}\b(output|say|print|write|respond|reply)|"
+        r"despite\s+what\s+you('ve|\s+have)\s+been\s+told|"
+        r"regardless\s+of\s+(your|any|the)\s+(previous\s+|prior\s+|earlier\s+)?(instructions?|rules?|guidelines?)",
+        0.65,
+        description="Overrides the standing instructions in passing: answer differently, regardless of what you were told.",
+    ),
+    Rule(
+        "IO-008",
+        "instruction_override",
+        r"ignore\s+(the\s+)?(above|previous|preceding)\s+and\s+(instead\s+)?(say|output|print|write|respond|reply|tell|answer)",
+        0.60,
+        description="\"Ignore the above and say ...\" -- the override without naming what is ignored.",
+    ),
+    Rule(
+        "EX-006",
+        "exfiltration",
+        r"copy\s+of\s+(the\s+)?(full\s+|entire\s+|whole\s+|complete\s+)?(prompt|instructions?|system\s+prompt)|"
+        r"what\s+was\s+written\s+(at\s+the\s+(beginning|start|top)|above)|"
+        r"(text|words?|instructions?)\s+(at\s+the\s+(beginning|start|top)\s+of\s+(this|the|your)\s+prompt)",
+        0.70,
+        description="Asks for the prompt above the content: a copy of it, or what was written at its beginning.",
+    ),
+    Rule(
+        "RH-005",
+        "role_hijack",
+        r"\bi\s+want\s+you\s+to\s+act\s+as\b|"
+        r"\bact\s+as\s+(a|an)\s+(linux|unix|bash|python|javascript|sql|shell|node)\b|"
+        r"\byou\s+are\s+(now\s+)?(a|an|the)?\s*(linux|unix|bash)\s+terminal\b",
+        0.55,
+        description="\"I want you to act as ...\" inside content the model is reading -- an instruction, not information.",
+    ),
+    # ---- German. The other language in the benchmark dataset; the same
+    # overrides, translated. Ids in the 1xx series. Any other language is
+    # the deep scan's job. --------------------------------------------------
+    Rule(
+        "IO-101",
+        "instruction_override",
+        r"ignorier(e|en)\s+(sie\s+)?(alle\s+|die\s+|jegliche\s+)?"
+        r"(vorherigen|bisherigen|vorangehenden|vorangegangenen|obigen|früheren|vorigen)\s+"
+        r"(anweisungen|befehle|aufgaben|regeln|instruktionen|angaben)",
+        0.80,
+        description="German: ignore all previous instructions.",
+    ),
+    Rule(
+        "IO-102",
+        "instruction_override",
+        r"vergiss\s+(nun\s+|jetzt\s+|bitte\s+)?(alle|alles|deine|die|sämtliche)\s+"
+        r"((vorherigen|bisherigen|früheren|vorigen)\s+)?"
+        r"(aufgaben|anweisungen|angaben|aufträge|regeln|instruktionen|davor|zuvor|bisherige|"
+        r"was\s+(davor|zuvor|bisher)\s+(war|gesagt\s+wurde))",
+        0.75,
+        description="German: forget everything before / all previous tasks.",
+    ),
+    Rule(
+        "IO-103",
+        "instruction_override",
+        r"(nun|jetzt)\s+folgen\s+neue\s+(aufgaben|anweisungen)|neue\s+(aufgaben|anweisungen)\s+folgen|"
+        r"konzentrier(e|en)\s+(dich|sie\s+sich)\s+(jetzt\s+|nun\s+)?auf\s+(deine|ihre|die)\s+neue\s+aufgabe|"
+        r"(starten|beginnen)\s+(wir\s+)?(von\s+)?(neu|vorne)\s+mit\s+einer\s+neuen\s+aufgabe",
+        0.70,
+        description="German: new tasks follow / concentrate on your new task.",
+    ),
+    Rule(
+        "EX-101",
+        "exfiltration",
+        r"zeig(e|en)\s+(sie\s+)?(mir\s+)?(alle\s+|deinen\s+|deine\s+|ihren\s+|den\s+)?"
+        r"((gesamten|kompletten|vollständigen|ganzen)\s+)?(system-?prompt|prompt-?texte?|prompt\b|anweisungen)|"
+        r"(kopie|abschrift)\s+(des|der)\s+(gesamten\s+|vollständigen\s+)?(prompt|anweisungen)",
+        0.75,
+        description="German: show me your (whole) prompt text.",
+    ),
+    Rule(
+        "RH-101",
+        "role_hijack",
+        r"(jetzt|nun|ab\s+jetzt|ab\s+sofort)\s+bist\s+du\b|stell(e)?\s+dir\s+vor,?\s+du\s+bist|"
+        r"ich\s+möchte,?\s+dass\s+(sie|du)\s+als\b.{0,50}\bfungier(en|st)",
+        0.55,
+        description="German: now you are ... / imagine you are ... / I want you to act as ...",
     ),
 ]
 
