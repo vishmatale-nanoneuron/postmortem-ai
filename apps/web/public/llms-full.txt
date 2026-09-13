@@ -356,7 +356,13 @@ before keep working on that one incident (never publishing it, never a second)
 -- a promise the site made them at the time is kept. To judge the output
 before paying, read https://www.nanoneuron.ai/blog/github-outage-demo, a full
 postmortem the tool drafted from a real public outage; the 14-day refund on
-the first charge is the safety net. An account that signed up at least a
+the first charge is the safety net. Every payment claim has a printable
+document at /invoice/{claim id} (session-gated, never indexed): a proforma
+invoice while pending -- what a finance team needs to raise a wire -- and a
+receipt once the founder has verified the payment, with the amount, the
+reference and the verification date; the confirmation and approval emails
+link to it. The seller block comes from SELLER_LEGAL_NAME / SELLER_ADDRESS /
+SELLER_TAX_ID (falling back to the bank beneficiary name). An account that signed up at least a
 day ago and has never paid for either product (no subscription, no payment
 claim in any state, no Airlock credits) receives exactly one automated
 reminder email, ever: the worked example, the prices, and how to pay from

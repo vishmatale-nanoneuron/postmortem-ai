@@ -89,6 +89,14 @@ class Settings(BaseSettings):
     founder_bank_account_number: str = Field(default="", alias="FOUNDER_BANK_ACCOUNT_NUMBER")
     founder_bank_name: str = Field(default="", alias="FOUNDER_BANK_NAME")
     founder_bank_swift_code: str = Field(default="", alias="FOUNDER_BANK_SWIFT_CODE")
+    # Who the invoice is from. A company outside India will not wire money
+    # against an email that says "pay this account"; its finance team needs
+    # a proforma invoice naming the seller, and a receipt afterwards to
+    # expense it. All optional: unset, the invoice falls back to the bank
+    # beneficiary name and omits the address and tax-id lines.
+    seller_legal_name: str = Field(default="", alias="SELLER_LEGAL_NAME")
+    seller_address: str = Field(default="", alias="SELLER_ADDRESS")
+    seller_tax_id: str = Field(default="", alias="SELLER_TAX_ID")
     subscription_price_usd: int = Field(default=15, alias="SUBSCRIPTION_PRICE_USD")
     subscription_price_gbp: int = Field(default=12, alias="SUBSCRIPTION_PRICE_GBP")
     subscription_price_eur: int = Field(default=14, alias="SUBSCRIPTION_PRICE_EUR")

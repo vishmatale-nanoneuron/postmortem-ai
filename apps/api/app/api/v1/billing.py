@@ -10,6 +10,7 @@ ever billed through it.
 """
 
 import logging
+from datetime import UTC, datetime
 import secrets
 import time
 
@@ -213,6 +214,116 @@ async def _insert_claim(
 
 class PatchClaimIn(BaseModel):
     reference: str = Field(min_length=4, max_length=200)
+
+
+# ---------------------------------------------------------------------------
+# The invoice. One document per claim, in two states: a proforma invoice
+# while the claim is pending (what a finance team needs to raise a wire),
+# and a receipt once the founder has approved it (what they need to
+# expense it). Rejected claims render as void. Readable only by the claim's
+# owner; the founder reads claims from the founder dashboard instead.
+#
+# Payee bank details are NOT on this document -- they are emailed to the
+# account's own address on request (email_upi_details / email_wire_details),
+# which keeps the existing posture of never serving the real account
+# numbers from a page. The proforma says so and names the reference the
+# wire must carry.
+# ---------------------------------------------------------------------------
+
+
+class InvoiceSellerOut(BaseModel):
+    name: str
+    address: str | None
+    tax_id: str | None
+
+
+class InvoiceLineOut(BaseModel):
+    description: str
+    quantity: int
+    unit_amount: int
+    amount: int
+    currency: str
+
+
+class InvoiceOut(BaseModel):
+    number: str
+    # "proforma" while pending, "receipt" once approved, "void" if rejected.
+    kind: str
+    status: str
+    issued_at: int
+    paid_at: int | None
+    seller: InvoiceSellerOut
+    buyer_email: str
+    line: InvoiceLineOut
+    method: str
+    reference: str
+    product: str
+    billing_period: str | None
+    scan_credits: int | None
+
+
+def _invoice_number(claim_id: str, created_at: int) -> str:
+    """Stable, derived from the claim, never reissued: the date the claim
+    was raised plus the first eight characters of its id. Not a sequential
+    tax-invoice series -- that numbering is a bookkeeping decision the
+    founder makes outside this app; this is the document's reference."""
+    day = datetime.fromtimestamp(created_at / 1000, tz=UTC).strftime("%Y%m%d")
+    return f"NN-{day}-{claim_id[:8].upper()}"
+
+
+def _describe(settings: Settings, product: str, billing_period: str | None, scan_credits: int | None) -> tuple[str, int]:
+    if product == "airlock":
+        credits = int(scan_credits or 0)
+        packs = max(1, credits // max(1, settings.airlock_pack_scans))
+        return f"Airlock scan credits -- {credits:,} credits ({packs} x {settings.airlock_pack_scans:,})", packs
+    period = "annual (12 months)" if billing_period == "annual" else "monthly (30 days)"
+    return f"PostMortem AI subscription -- {period}", 1
+
+
+@router.get("/claims/{claim_id}/invoice", response_model=InvoiceOut, responses={404: {"description": "Not your claim, or no such claim."}})
+async def claim_invoice(
+    claim_id: str,
+    database: Database = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+    user: User = Depends(current_user),
+) -> InvoiceOut:
+    row = await database.fetch_one(
+        f"""SELECT {_CLAIM_COLUMNS}, reviewed_at
+            FROM payment_claims WHERE id=%s AND user_id=%s""",
+        (claim_id, user.id),
+    )
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    product = row.get("product") or "postmortem"
+    description, quantity = _describe(settings, product, row.get("billing_period"), row.get("scan_credits"))
+    amount = int(row["amount"])
+    kind = {"pending": "proforma", "approved": "receipt", "rejected": "void"}.get(row["status"], "proforma")
+    seller_name = settings.seller_legal_name or settings.founder_bank_account_name or settings.founder_upi_payee_name
+    return InvoiceOut(
+        number=_invoice_number(row["id"], int(row["created_at"])),
+        kind=kind,
+        status=row["status"],
+        issued_at=int(row["created_at"]),
+        paid_at=int(row["reviewed_at"]) if row["status"] == "approved" and row.get("reviewed_at") else None,
+        seller=InvoiceSellerOut(
+            name=seller_name or "NanoNeuron",
+            address=settings.seller_address or None,
+            tax_id=settings.seller_tax_id or None,
+        ),
+        buyer_email=user.email,
+        line=InvoiceLineOut(
+            description=description,
+            quantity=quantity,
+            unit_amount=amount // quantity if quantity else amount,
+            amount=amount,
+            currency=row["currency"],
+        ),
+        method=row["method"],
+        reference=row["reference"],
+        product=product,
+        billing_period=row.get("billing_period"),
+        scan_credits=row.get("scan_credits"),
+    )
 
 
 @router.patch("/claims/{claim_id}", response_model=ClaimOut)

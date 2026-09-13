@@ -17,6 +17,8 @@ import { usePolling } from "../use-polling";
 import { AirlockMark } from "./airlock-mark";
 import { PendingClaim } from "../pending-claim";
 import { PolicyEditor, UsagePanel } from "./policy-panel";
+import { Receipts } from "../receipts";
+import { guessCurrency } from "../locale-currency";
 
 // The panel is live, not a snapshot: it re-reads the balance, the keys and
 // the claims every POLL_MS while the tab is visible (and immediately on
@@ -276,6 +278,12 @@ function BuyCredits({ onChanged }: { onChanged: () => void | Promise<void> }) {
   const [pricing, setPricing] = useState<AirlockPricing | null>(null);
   const [claims, setClaims] = useState<Claim[]>([]);
   const [currency, setCurrency] = useState<AirlockCurrency>("INR");
+  // Open on the visitor's likely currency (browser locale, nothing
+  // stored); set after mount so the server render and the first client
+  // render agree. Every currency stays one click away.
+  useEffect(() => {
+    setCurrency(guessCurrency());
+  }, []);
   const [packs, setPacks] = useState(1);
   const [busy, setBusy] = useState(false);
   const [emailing, setEmailing] = useState(false);
@@ -442,6 +450,7 @@ function BuyCredits({ onChanged }: { onChanged: () => void | Promise<void> }) {
           A previous reference could not be matched -- check the amount and the reference, then resubmit.
         </p>
       )}
+      <Receipts claims={claims} />
       {error && (
         <p role="status" className="mt-3 text-sm text-red-600">
           {error}

@@ -65,7 +65,7 @@ vi.mock("../app/api", () => ({
       super(message);
     }
   },
-  billing: { updateClaim: vi.fn(), cancelClaim: vi.fn() },
+  billing: { updateClaim: vi.fn(), cancelClaim: vi.fn(), invoice: vi.fn() },
 }));
 
 vi.mock("../app/auth", () => ({
@@ -267,5 +267,42 @@ describe("UrlFetch", () => {
     await userEvent.click(button);
     expect(await screen.findByText(/Nothing is handed over on a block/)).toBeTruthy();
     expect(screen.queryByText(/Revenue grew 4%/)).toBeNull();
+  });
+});
+
+describe("InvoiceDocument", () => {
+  it("renders a proforma with the reference and no bank details, then a receipt", async () => {
+    const { billing } = await import("../app/api");
+    const base = {
+      number: "NN-20260913-ABCDEF12",
+      status: "pending",
+      issued_at: Date.UTC(2026, 8, 13),
+      paid_at: null,
+      seller: { name: "NanoNeuron", address: null, tax_id: null },
+      buyer_email: "buyer@example.com",
+      line: { description: "Airlock scan credits -- 20,000 credits (2 x 10,000)", quantity: 2, unit_amount: 15, amount: 30, currency: "USD" },
+      method: "wire",
+      reference: "WIRE-REF-1",
+      product: "airlock",
+      billing_period: null,
+      scan_credits: 20000,
+    };
+    (billing as unknown as { invoice: ReturnType<typeof vi.fn> }).invoice = vi
+      .fn()
+      .mockResolvedValueOnce({ ...base, kind: "proforma" })
+      .mockResolvedValueOnce({ ...base, kind: "receipt", status: "approved", paid_at: Date.UTC(2026, 8, 14) });
+    const { InvoiceDocument } = await import("../app/invoice/[id]/invoice-document");
+    const { unmount } = render(<InvoiceDocument claimId="abc" />);
+    expect(await screen.findByText("Proforma invoice")).toBeTruthy();
+    expect(screen.getByText("NN-20260913-ABCDEF12")).toBeTruthy();
+    expect(screen.getByText("Total due")).toBeTruthy();
+    expect(screen.getAllByText("WIRE-REF-1").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Print / save as PDF" })).toBeTruthy();
+    unmount();
+
+    render(<InvoiceDocument claimId="abc" />);
+    expect(await screen.findByText("Receipt")).toBeTruthy();
+    expect(screen.getByText("Total paid")).toBeTruthy();
+    expect(screen.getByText("Payment verified")).toBeTruthy();
   });
 });

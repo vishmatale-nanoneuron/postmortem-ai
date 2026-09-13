@@ -231,8 +231,26 @@ export type Claim = {
 
 export type PaymentClaim = Claim & { user_id: string; email: string; bank_verified: boolean };
 
+export type Invoice = {
+  number: string;
+  // "proforma" while pending, "receipt" once approved, "void" if rejected.
+  kind: "proforma" | "receipt" | "void";
+  status: string;
+  issued_at: number;
+  paid_at: number | null;
+  seller: { name: string; address: string | null; tax_id: string | null };
+  buyer_email: string;
+  line: { description: string; quantity: number; unit_amount: number; amount: number; currency: string };
+  method: string;
+  reference: string;
+  product: string;
+  billing_period: string | null;
+  scan_credits: number | null;
+};
+
 export const billing = {
   status: () => request<BillingStatus>("/v1/billing/status"),
+  invoice: (claimId: string) => request<Invoice>(`/v1/billing/claims/${claimId}/invoice`),
   upiPricing: () => request<UpiPricing>("/v1/billing/upi/pricing"),
   submitUpiClaim: (reference: string, billingPeriod: "monthly" | "annual" = "monthly") =>
     request<Claim>("/v1/billing/upi/claim", {
