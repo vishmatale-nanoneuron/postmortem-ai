@@ -16,7 +16,7 @@ from httpx import ASGITransport, AsyncClient
 async def test_an_unhandled_exception_still_carries_cors_headers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATABASE_URL", "postgresql://unused/unused")
     monkeypatch.setenv("GEMINI_API_KEY", "unused")
-    monkeypatch.setenv("SESSION_SECRET", "unused")
+    monkeypatch.setenv("SESSION_SECRET", "unused-session-secret-0123456789abcdef0123")
     monkeypatch.setenv("CORS_ORIGINS", "https://www.nanoneuron.ai")
 
     from app.dependencies import get_database

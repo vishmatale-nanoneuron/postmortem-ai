@@ -45,7 +45,7 @@ def test_the_upi_link_handles_a_non_ascii_payee_name() -> None:
 def _settings(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql://unused/unused")
     monkeypatch.setenv("GEMINI_API_KEY", "unused")
-    monkeypatch.setenv("SESSION_SECRET", "unused-session-secret")
+    monkeypatch.setenv("SESSION_SECRET", "unused-session-secret-0123456789abcdef0123")
     monkeypatch.setenv("RESEND_API_KEY", "test-key")
     monkeypatch.setenv("RESEND_EMAIL_DOMAIN", "example.test")
     from app.settings import get_settings

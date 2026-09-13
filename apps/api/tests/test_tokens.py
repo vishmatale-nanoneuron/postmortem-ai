@@ -51,7 +51,7 @@ def test_a_tampered_signature_is_rejected() -> None:
 
 def test_a_token_signed_with_a_different_secret_is_rejected() -> None:
     token = issue_token(SECRET, user_id="u1", email="user@example.com")
-    assert verify_token("a-different-secret", token) is None
+    assert verify_token("a-different-secret-that-is-long-enough-0123", token) is None
 
 
 def test_an_expired_token_is_rejected() -> None:

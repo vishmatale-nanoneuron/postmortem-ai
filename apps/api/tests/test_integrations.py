@@ -128,7 +128,7 @@ async def context(monkeypatch: pytest.MonkeyPatch):
         pytest.skip("TEST_DATABASE_URL is not configured")
     monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
-    monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("SESSION_SECRET", "test-session-secret-0123456789abcdef0123")
     monkeypatch.setenv("COOKIE_SECURE", "false")
 
     from app.database import Database

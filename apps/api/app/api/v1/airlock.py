@@ -1112,7 +1112,7 @@ async def put_policy(
             ),
         )
     except InvalidPolicy as error:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from None
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from None
     return _policy_out(policy)
 
 
@@ -1368,7 +1368,7 @@ def _quote(settings: Settings, currency: str, packs: int) -> tuple[PackPriceOut,
     claim ten packs for the price of one."""
     if packs > settings.airlock_max_packs_per_claim:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"At most {settings.airlock_max_packs_per_claim} packs per payment. For more, email the founder.",
         )
     price = next(p for p in _pack_prices(settings) if p.currency == currency)

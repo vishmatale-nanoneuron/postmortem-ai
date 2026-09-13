@@ -62,7 +62,7 @@ class FakeProvider:
 async def context(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATABASE_URL", DATABASE_URL or "")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
-    monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("SESSION_SECRET", "test-session-secret-0123456789abcdef0123")
     monkeypatch.setenv("COOKIE_SECURE", "false")
 
     from app.api.v1.postmortems import get_model_provider

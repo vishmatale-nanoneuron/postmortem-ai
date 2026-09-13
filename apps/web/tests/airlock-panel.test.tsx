@@ -306,3 +306,23 @@ describe("InvoiceDocument", () => {
     expect(screen.getByText("Payment verified")).toBeTruthy();
   });
 });
+
+describe("failure boundaries", () => {
+  it("the 404 is branded and points onward; the error boundary offers a retry and the digest", async () => {
+    const { default: NotFound } = await import("../app/not-found");
+    render(<NotFound />);
+    expect(screen.getByText("There is nothing at this address.")).toBeTruthy();
+    for (const name of [/Airlock/, /Docs/, /Pricing/, /Status/]) expect(screen.getAllByRole("link", { name }).length).toBeGreaterThan(0);
+
+    const { default: ErrorBoundary } = await import("../app/error");
+    const reset = vi.fn();
+    const error = Object.assign(new Error("boom"), { digest: "abc123" });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    render(<ErrorBoundary error={error} reset={reset} />);
+    expect(screen.getByText("This page failed to render.")).toBeTruthy();
+    expect(screen.getByText("abc123")).toBeTruthy();
+    expect(screen.queryByText("boom")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(reset).toHaveBeenCalledTimes(1);
+  });
+});

@@ -43,7 +43,7 @@ BENIGN = "Invoice 2291. Amount due USD 4,200. Net 30. Remit to the account liste
 async def context(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATABASE_URL", DATABASE_URL or "")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
-    monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("SESSION_SECRET", "test-session-secret-0123456789abcdef0123")
     monkeypatch.setenv("COOKIE_SECURE", "false")
     monkeypatch.setenv("FOUNDER_EMAIL", "airlock-policy-founder@example.com")
 
