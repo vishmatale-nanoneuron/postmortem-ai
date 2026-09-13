@@ -64,7 +64,21 @@ describe("routing", () => {
     const sitemap = readFileSync(join(root, "app", "sitemap.ts"), "utf8");
     expect(sitemap).toContain("`${SITE_URL}/blog`");
     expect(sitemap).toContain("`${SITE_URL}/airlock/benchmark`");
-    const rulePage = readFileSync(join(root, "app", "airlock", "rules", "[id]", "page.tsx"), "utf8");
-    expect(rulePage).toContain("permanentRedirect(`/airlock/rules/${id.toLowerCase()}`)");
+    const middleware = readFileSync(join(root, "middleware.ts"), "utf8");
+    expect(middleware).toContain('matcher: ["/founder/:path*", "/airlock/rules/:id"]');
+    expect(middleware).toContain("NextResponse.redirect(url, 308)");
+  });
+});
+
+describe("rule slug middleware", () => {
+  it("lower-cases an upper-case rule id with a 308 and passes everything else through", async () => {
+    const { middleware } = await import("../middleware");
+    const { NextRequest } = await import("next/server");
+    const upper = middleware(new NextRequest("https://www.nanoneuron.ai/airlock/rules/IO-001"));
+    expect(upper.status).toBe(308);
+    expect(upper.headers.get("location")).toBe("https://www.nanoneuron.ai/airlock/rules/io-001");
+    const lower = middleware(new NextRequest("https://www.nanoneuron.ai/airlock/rules/io-001"));
+    expect(lower.status).toBe(200);
+    expect(lower.headers.get("location")).toBeNull();
   });
 });
