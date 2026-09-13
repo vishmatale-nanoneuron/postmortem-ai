@@ -325,9 +325,12 @@ export default function DocsPage() {
         <>
           <h2 className={h2}>Payments</h2>
           <p className={p}>
-            Your first incident is free: record evidence on it, draft a grounded postmortem, and see the real output
-            before paying anything. Creating a second incident, and publishing, require an active subscription. For
-            clients anywhere in the world, an international SWIFT wire (USD/GBP/EUR) or UPI (India)
+            Every incident, from the first, requires an active subscription; there is no free tier. To judge the
+            output before paying, read{" "}
+            <Link className="underline underline-offset-2" href="/blog/github-outage-demo">
+              the postmortem this tool drafted from a real public outage
+            </Link>
+            . For clients anywhere in the world, an international SWIFT wire (USD/GBP/EUR) or UPI (India)
             works today -- submit the
             transaction reference and the founder reviews and approves it personally, usually quickly. UPI and
             wire are the only payment rails: there is no card processor, by decision. Not happy after

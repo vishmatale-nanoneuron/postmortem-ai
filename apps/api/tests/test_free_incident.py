@@ -107,34 +107,39 @@ async def context(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-async def test_a_new_unpaid_account_is_offered_one_free_incident(context) -> None:
-    """The trial was hardcoded off on 2026-09-04 and restored on 2026-09-10
-    after the numbers came in: every payment this product has taken was made
-    while the free incident existed, and none since it was removed."""
+async def test_a_new_unpaid_account_is_not_offered_a_free_incident(context) -> None:
+    """Retired 2026-09-04, restored 2026-09-10 on the funnel evidence,
+    retired again 2026-09-13 by the founder's explicit decision with that
+    evidence in front of them. A new account is told, truthfully, that it
+    was never offered one -- not that it used one."""
     client, _ = context
     me = await client.get("/v1/auth/me")
     body = me.json()
-    assert body["has_free_incident_available"] is True
+    assert body["has_free_incident_available"] is False
     assert body["has_used_free_incident"] is False
 
 
 @pytest.mark.asyncio
-async def test_a_new_unpaid_account_can_create_exactly_one_incident_then_is_paywalled(context) -> None:
-    """The whole trial in one test: the first incident is free, the second is
-    not. The second half is the part that must never regress -- if an unpaid
-    account could keep creating incidents, the product would simply be free."""
-    client, _ = context
+async def test_a_new_unpaid_account_is_paywalled_from_its_very_first_incident(context) -> None:
+    """Strictly paid: the first incident is 402, not 201. The half that must
+    never regress is that nothing is created -- if an unpaid account could
+    create even one, the product would have a free tier the founder said no
+    to."""
+    client, database = context
 
     first = await client.post("/v1/postmortems/incidents", json={"title": "First outage", "severity": "sev2"})
-    assert first.status_code == 201, first.text
+    assert first.status_code == 402, first.text
+    assert first.json()["detail"] == "An active subscription is required"
 
     me = await client.get("/v1/auth/me")
     assert me.json()["has_free_incident_available"] is False
-    assert me.json()["has_used_free_incident"] is True
-
-    second = await client.post("/v1/postmortems/incidents", json={"title": "Second outage", "severity": "sev3"})
-    assert second.status_code == 402
-    assert second.json()["detail"] == "An active subscription is required"
+    assert me.json()["has_used_free_incident"] is False
+    row = await database.fetch_one("SELECT free_incident_id FROM users WHERE email=%s", (FREE_EMAIL,))
+    assert row["free_incident_id"] is None, "nothing was granted"
+    listed = await client.get("/v1/postmortems/incidents")
+    assert listed.status_code in (200, 402)
+    if listed.status_code == 200:
+        assert listed.json() == []
 
 
 @pytest_asyncio.fixture

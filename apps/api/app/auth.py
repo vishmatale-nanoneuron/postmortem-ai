@@ -89,30 +89,31 @@ class User:
 
     @property
     def has_free_incident_available(self) -> bool:
-        """One free incident per account, until they've used it.
+        """The free-incident trial is retired for new grants -- always False.
 
-        This was hardcoded to False on 2026-09-04 ("retired for new grants").
-        Restored 2026-09-10 on the evidence, which was unambiguous: all three
-        payments this product has ever taken were made while the free incident
-        existed (25-27 Aug), and there have been **zero** payment claims since.
-        The last incident anyone created was 3 Sep -- the day before the trial
-        was switched off -- while registrations carried on right through, one
-        of them the day this was written. New accounts were signing up, finding
-        they could not create even a single incident, and leaving.
+        History, because this has moved twice and the reasons matter:
+        retired 2026-09-04; restored 2026-09-10 on the evidence that every
+        payment the product had taken came while the trial existed and that
+        signups converted 0/28 without it; retired again 2026-09-13 by the
+        founder's explicit, repeated decision ("do not give our service
+        free, strictly; get money from all") with that evidence in front of
+        them. So: every new account needs an active subscription from its
+        very first incident. The decision is the founder's; the funnel
+        numbers in the founder dashboard are where to watch what it does.
 
-        Asking someone to pay having never used the product and never seen its
-        output (/postmortems is still empty) converted at 0/28. With the free
-        incident it converted at roughly 10%, which is a good rate for a cold
-        funnel. This is the single change with real evidence behind it.
+        This property is the single source of truth every place a NEW free
+        incident could be granted already reads (require_active_subscription_
+        or_free_slot, its MCP mirror, the webhook ingestion path), so making
+        it False here retires the trial everywhere at once.
 
-        Deliberately still ONE incident, not a time-boxed trial: it gates only
-        *starting* a new free incident (see
-        require_active_subscription_or_free_slot), and every action on an
-        existing one is checked against free_incident_id directly by
-        require_active_subscription_or_free_incident, so a user cannot loop
-        back for a second. Kept as a real method rather than inlined so REST,
-        MCP and the webhook path all stay driven by this one place."""
-        return self.free_incident_id is None
+        Accounts that already hold a free incident from before keep working
+        on that one specific incident: require_active_subscription_or_free_
+        incident checks free_incident_id == incident_id directly and is
+        untouched. Cutting that would revoke access to work real accounts
+        started under a promise the site made them at the time. They can
+        never publish it, or start a second, without subscribing -- same as
+        always."""
+        return False
 
     @property
     def has_used_free_incident(self) -> bool:

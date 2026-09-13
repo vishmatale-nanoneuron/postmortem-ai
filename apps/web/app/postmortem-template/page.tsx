@@ -223,9 +223,9 @@ export default function PostmortemTemplatePage() {
               items -- stay yours, because they need judgment the evidence doesn&apos;t contain.
             </p>
             <p className={p}>
-              Your first incident is free.{" "}
-              <Link className="underline underline-offset-2" href="/">
-                Start one
+              Want the citing done for you?{" "}
+              <Link className="underline underline-offset-2" href="/pricing">
+                Subscribe and start an incident
               </Link>{" "}
               or read{" "}
               <Link className="underline underline-offset-2" href="/blog/grounding-mechanism">
