@@ -9,6 +9,40 @@ thing: making that classifier better on the paraphrased, no-fixed-phrasing
 injections the rules cannot see — and measuring it the same way the rule
 engine is measured, in the open.
 
+## In production: the customer's own tuning loop
+
+Weight tuning of the shared classifier is a founder decision (below).
+What runs today, per account, is the loop that produces the data for it
+and improves that account's answers now:
+
+| Step | Where | What it does |
+|---|---|---|
+| Report | `POST /v1/airlock/feedback`, the try-it box, `guard.feedback(result, "allow")` in both SDKs | "This verdict was wrong, it should have been X." Stores the scan's hash, both verdicts and the rule ids. Not metered. `content` is optional and off by default. |
+| Suggest | `GET /v1/airlock/tuning` (`cqrs/airlock_feedback.py`) | A rule reported as a false positive on **3 distinct scans** → "mute this rule", applied in one call (`POST /v1/airlock/tuning/mute`, session only, through the policy). **2 reported misses** from one source → "send `deep: true` for this source". Every suggestion carries its count; nothing is applied unasked. |
+| Tune the deep scan | `airlock/semantic.py::render_examples` | Reports that kept their text are shown to Gemini on that account's deep scans as worked answers (`<examples>` appended to the system instruction; the 8 most recent, each cut at 1,200 chars; the user turn stays the bare `<content>` block the dataset pins). `semantic.examples` on the response says how many. Weights untouched; nobody else's calls affected. |
+| Export | `GET /v1/airlock/tuning/export.jsonl` | The kept examples in the Vertex AI supervised-tuning format the builder below writes, for a customer running their own tuning job. |
+| Signal to the engine | `GET /v1/founder/airlock/rule-feedback` | Per-rule false-positive counts across accounts -- never content, never a hash -- the evidence for reweighting a rule in `rules.py`, benchmarked before it ships. |
+
+Database: `airlock_feedback` (migration 0036), cascaded on account erasure.
+Pinned by `apps/api/tests/test_airlock_feedback.py` (thresholds, the
+session-only mute, the export format round-tripping `_parse`, the
+in-context examples reaching the prompt bounded and most-recent-first, an
+untuned account's prompt being byte-for-byte the published one, account
+isolation, the founder view carrying counts only, erasure).
+
+**Why in-context rather than a per-account tuned model.** The classifier is
+Gemini through the same `ModelProvider` the rest of the product uses (with
+Claude only as a fallback provider, `ai/model_router.py`). Neither vendor
+offers per-customer weight tuning at a price that makes sense for an
+account with a dozen corrections, and a tuned model per account would be
+a deployment per account. Worked examples in the prompt are the form of
+tuning both vendors recommend at this scale; they take effect on the next
+deep scan, they are withdrawable one report at a time, and the export
+gives the customer the same rows if they ever want to tune weights
+themselves. (There is no weight fine-tuning on Anthropic's own API;
+Claude custom models exist on Amazon Bedrock only. This product's deep
+scan runs on the Gemini key.)
+
 ## What exists today (this repository)
 
 | Piece | Where | Status |
@@ -82,9 +116,12 @@ held-out split → publish both numbers side by side, including the misses.
 
 - **Train on customer content.** The audit log stores a hash, byte count
   and verdict — no content, by construction (migration 0031) — and the
-  privacy policy says scans are not kept. There is nothing to train on
-  from production and there never will be. The dataset builder reads two
-  files, both public or self-authored, and says so in its manifest.
+  privacy policy says scans are not kept. The one place content is stored
+  is a report the customer chose to include it in (migration 0036), and
+  that text is theirs: it tunes their own deep scans in-context, exports to
+  them, and is deleted with the report or the account. It never enters the
+  shared dataset. The dataset builder reads two files, both public or
+  self-authored, and says so in its manifest.
 - **Score the training rows.** A number on rows the model may later be
   tuned on is meaningless; the harness reads `eval.jsonl` only.
 - **Hand-type a result.** Tests pin the manifest to the builder and the

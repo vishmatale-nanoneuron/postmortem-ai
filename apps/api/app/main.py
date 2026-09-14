@@ -205,6 +205,10 @@ def create_app() -> FastAPI:
         allow_credentials=True,  # required for the session cookie to cross the frontend<->backend origin boundary
         allow_methods=["*"],
         allow_headers=["*"],
+        # Without this a browser can read none of these on a cross-origin
+        # response: the dashboard's CSV and JSONL downloads fell back to a
+        # generic filename, and a browser-side SDK saw no request id.
+        expose_headers=["Content-Disposition", "X-Request-ID", "Retry-After", "ETag", "Server-Timing"],
     )
     app.exception_handler(Exception)(unhandled_exception_handler)
 

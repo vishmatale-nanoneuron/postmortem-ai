@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { airlockScan, AirlockScanError, type AirlockScan } from "../api";
+import { airlock, airlockScan, AirlockScanError, type AirlockScan, type AirlockVerdict } from "../api";
 import { auth, type AuthUser } from "../auth";
 
 // The real scanner, on the page. Not a mock and not a replay -- this posts
@@ -74,6 +74,14 @@ export function Playground() {
   const [result, setResult] = React.useState<AirlockScan | null>(null);
   const [error, setError] = React.useState<ReturnType<typeof describeFailure> | null>(null);
   const [busy, setBusy] = React.useState(false);
+  // The text scanned for the result on screen, so a report can include it
+  // if asked to -- the result itself carries only the hash.
+  const [scanned, setScanned] = React.useState("");
+  const [includeText, setIncludeText] = React.useState(false);
+  const [report, setReport] = React.useState<{ state: "idle" | "sending" | "sent" | "failed"; text: string }>({
+    state: "idle",
+    text: "",
+  });
   // null = not checked yet (the server render), false = signed out.
   const [user, setUser] = React.useState<AuthUser | null | false>(null);
 
@@ -87,13 +95,36 @@ export function Playground() {
   async function run() {
     setBusy(true);
     setError(null);
+    setReport({ state: "idle", text: "" });
     try {
       setResult(await airlockScan(content, "playground", deep, sanitize));
+      setScanned(content);
     } catch (cause) {
       setResult(null);
       setError(describeFailure(cause));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function sendReport(scan: AirlockScan, expected: AirlockVerdict) {
+    setReport({ state: "sending", text: "" });
+    try {
+      await airlock.feedback({
+        content_sha256: scan.content_sha256,
+        kind: "ingress",
+        verdict_given: scan.verdict,
+        verdict_expected: expected,
+        rule_ids: scan.matches.map((match) => match.rule_id),
+        source: "playground",
+        content: includeText ? scanned : null,
+      });
+      setReport({
+        state: "sent",
+        text: `Reported: should have been ${expected}. See "Tune Airlock" in your dashboard for what your reports add up to.`,
+      });
+    } catch (cause) {
+      setReport({ state: "failed", text: cause instanceof Error ? cause.message : "Could not send the report." });
     }
   }
 
@@ -217,7 +248,7 @@ export function Playground() {
             <p className="mt-2.5 text-xs text-muted">
               <span className="font-medium text-ink">Gemini:</span>{" "}
               {result.semantic.status === "ok"
-                ? `${result.semantic.injection ? "injection" : "not an injection"} · confidence ${Number(result.semantic.confidence).toFixed(2)} · weight ${Number(result.semantic.weight).toFixed(2)}${result.semantic.reason ? ` · ${String(result.semantic.reason)}` : ""}`
+                ? `${result.semantic.injection ? "injection" : "not an injection"} · confidence ${Number(result.semantic.confidence).toFixed(2)} · weight ${Number(result.semantic.weight).toFixed(2)}${result.semantic.reason ? ` · ${String(result.semantic.reason)}` : ""}${result.semantic.examples ? ` · tuned on ${result.semantic.examples} of your kept examples` : ""}`
                 : result.semantic.status === "skipped"
                   ? "not asked — the rules already block, and a second opinion can only raise a verdict; the extra credits were refunded"
                   : "second opinion unavailable — the rule verdict stands and the extra credits were refunded"}
@@ -266,6 +297,56 @@ export function Playground() {
           <p className="mt-3 border-t border-line pt-2.5 font-mono text-[10.5px] text-muted">
             append-only entry written · sha256 {result.content_sha256.slice(0, 8)}… · raw content not stored
           </p>
+
+          <div className="mt-3 border-t border-line pt-2.5">
+            {report.state === "sent" ? (
+              <p className="text-xs text-emerald-700" role="status">
+                {report.text}
+              </p>
+            ) : (
+              <>
+                <p className="mb-1.5 text-xs font-medium text-ink">Wrong verdict? Say so, and it tunes your account.</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  {result.verdict !== "allow" && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={report.state === "sending"}
+                      onClick={() => void sendReport(result, "allow")}
+                    >
+                      Should have been allowed
+                    </Button>
+                  )}
+                  {result.verdict !== "block" && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={report.state === "sending"}
+                      onClick={() => void sendReport(result, "block")}
+                    >
+                      Should have been blocked
+                    </Button>
+                  )}
+                  <label className="flex items-center gap-1.5 text-xs text-muted">
+                    <input type="checkbox" checked={includeText} onChange={(e) => setIncludeText(e.target.checked)} />
+                    Keep the text with the report — it tunes your deep scans and exports as a training example
+                  </label>
+                </div>
+                <p className="mt-1.5 text-[11px] text-muted">
+                  A report stores the hash above, the verdicts and the rule ids. Three reports naming the same rule become
+                  a one-click mute in your dashboard; reported misses suggest the deep scan. The text is kept only if you
+                  tick the box — and then Gemini sees it as a worked answer on your account&apos;s deep scans.
+                </p>
+                {report.state === "failed" && (
+                  <p className="mt-1.5 text-xs text-red-700" role="alert">
+                    {report.text}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>

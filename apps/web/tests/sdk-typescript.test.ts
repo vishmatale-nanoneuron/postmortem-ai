@@ -82,6 +82,49 @@ describe("Airlock TypeScript SDK", () => {
     expect(calls[3]!.init.body).toBeUndefined();
   });
 
+  it("reports a wrong verdict from a result, reads the tuning and exports the examples as text", async () => {
+    const scan = {
+      verdict: "flag" as const,
+      score: 0.55,
+      matches: [{ rule_id: "AS-002", family: "authority_spoof", weight: 0.55, description: "x" }],
+      families: ["authority_spoof"],
+      signals: {},
+      content_sha256: "a".repeat(64),
+      content_bytes: 10,
+      latency_ms: 1,
+      credits_remaining: 9,
+      credits_charged: 1,
+      semantic: null,
+      sanitized: null,
+      policy: { block_threshold: 0.75, flag_threshold: 0.4, muted_rules: [], default: true },
+      request_id: "req-1",
+    };
+    // A 201, not a 200: the SDK accepts any 2xx.
+    const { impl, calls } = fakeFetch(201, { id: "f1", content_sha256: scan.content_sha256, has_content: false, rule_ids: ["AS-002"] });
+    const guard = new Airlock({ apiKey: "alk_test", baseUrl: "https://api.example", fetch: impl });
+    const report = await guard.feedback(scan, "allow", { note: "our own terms", source: "contracts" });
+    expect(report.id).toBe("f1");
+    expect(report.request_id).toBe("req-42");
+    expect(calls[0]!.url).toBe("https://api.example/v1/airlock/feedback");
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      content_sha256: scan.content_sha256,
+      kind: "ingress",
+      verdict_given: "flag",
+      verdict_expected: "allow",
+      rule_ids: ["AS-002"],
+      source: "contracts",
+      note: "our own terms",
+      content: null,
+    });
+
+    // A refused fetch has no hash to report against.
+    expect(() => guard.feedback({ ...scan, content_sha256: null } as never, "allow")).toThrow(/no content hash/);
+
+    const jsonl = vi.fn(async () => new Response('{"contents":[]}\n', { status: 200, headers: { "content-type": "application/jsonl" } })) as unknown as typeof fetch;
+    const exporter = new Airlock({ apiKey: "alk_test", fetch: jsonl });
+    expect(await exporter.tuningExamples()).toBe('{"contents":[]}\n');
+  });
+
   it("throws the right error class for each status, with the request id", async () => {
     const cases: [number, Record<string, string>, unknown][] = [
       [401, {}, AuthenticationError],

@@ -31,4 +31,20 @@ scanned), `RateLimited` (429, `.retryAfter` seconds), `FetchRefused` (proxy
 422/502, verdict block), `AirlockError` (anything else). Every error carries
 `.requestId`, which is what to quote if you ask about it.
 
+Wrong verdict? Report it — not metered — and it tunes your account:
+
+```ts
+await guard.feedback(result, "allow", { note: "our own terms mention 'test mode enabled'" });
+// Include the text only to keep it as a tuning example you can export later:
+await guard.feedback(result, "block", { content: documentText });
+
+const tuning = await guard.tuning(); // reports, suggestions (mute a rule, deep-scan a source), examples_with_content
+const jsonl = await guard.tuningExamples(); // the reports that kept their text, for supervised tuning
+```
+
+Three reports naming the same rule on distinct scans become a one-click mute
+in the dashboard; two reported misses from one source suggest `deep: true`
+for it. Only the scan's hash, verdicts and rule ids are stored unless you
+pass `content`.
+
 Reference: https://www.nanoneuron.ai/docs#airlock

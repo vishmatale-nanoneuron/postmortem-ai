@@ -5,6 +5,7 @@ import { api, founderActivity, founderBilling, type FounderActivityLogEntry, typ
 import { cn } from "@/lib/utils";
 import { usePolling } from "./use-polling";
 import { FounderErrorsPanel } from "./founder-errors";
+import { FounderRuleFeedbackPanel } from "./founder-rule-feedback";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -152,6 +153,7 @@ export default function FounderDashboard() {
       </div>
       <div id="founder-airlock" className="scroll-mt-16">
         <AirlockBusinessPanel airlock={summary.airlock} waitlist={summary.airlock_waitlist} />
+        <FounderRuleFeedbackPanel />
       </div>
       {summary.ai_runs_by_feature.length > 0 && (
         <>

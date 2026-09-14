@@ -422,11 +422,15 @@ async def test_a_fetch_that_cannot_be_made_costs_the_attempt_and_says_block(cont
         expected -= 1
         assert await _balance(database, user_id) == expected, url
     assert response.headers["cache-control"].startswith("private, no-store")
-    # The refunds are on the ledger, paired with the charges: 6 taken, 5 back.
+    # The refunds are on the ledger, paired with the charges: 6 taken and 5
+    # back, five times. Aggregated by reason -- charge and refund land in the
+    # same millisecond, so their order on the ledger is not a fact to pin.
     lines = await database.fetch_all(
-        "SELECT reason, delta FROM airlock_credit_ledger WHERE user_id=%s AND reason <> 'grant' ORDER BY created_at", (user_id,)
+        "SELECT reason, count(*)::int AS n, sum(delta)::int AS total FROM airlock_credit_ledger"
+        " WHERE user_id=%s AND reason <> 'grant' GROUP BY reason ORDER BY reason",
+        (user_id,),
     )
-    assert [(line["reason"], line["delta"]) for line in lines][:2] == [("deep_scan", -6), ("refund", 5)]
+    assert [(line["reason"], line["n"], line["total"]) for line in lines] == [("deep_scan", 5, -30), ("refund", 5, 25)]
 
 
 @pytest.mark.asyncio

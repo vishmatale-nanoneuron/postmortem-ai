@@ -254,6 +254,7 @@ async def test_an_unavailable_model_refunds_the_extra_and_says_so(context):
         "reason": "",
         "model": "fake-gemini",
         "weight": 0.0,
+        "examples": 0,
     }
     assert body["credits_charged"] == 1
     assert body["credits_remaining"] == 9

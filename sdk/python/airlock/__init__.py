@@ -14,6 +14,9 @@ AirlockError subclass, so a caller that treats "any exception = block"
 fails closed -- exactly what the API's own guidance says. Nothing is
 retried automatically: a retried scan is a second charge.
 
+A wrong verdict is reported with `feedback(result, "allow")` (not
+metered); reports tune the account -- see `tuning()`.
+
 Sync and async clients share one surface. Zero dependencies beyond httpx.
 """
 
@@ -155,6 +158,8 @@ class FetchResult:
     credits_remaining: int | None
     credits_charged: int
     semantic: dict[str, Any] | None = None
+    # None when the URL was refused before any fetch (stage "egress").
+    content_sha256: str | None = None
     request_id: str | None = None
 
     @property
@@ -223,12 +228,13 @@ def _fetch_result(body: dict[str, Any], request_id: str | None) -> FetchResult:
         credits_remaining=body.get("credits_remaining"),
         credits_charged=int(body.get("credits_charged", 0)),
         semantic=body.get("semantic"),
+        content_sha256=body.get("content_sha256"),
         request_id=request_id,
     )
 
 
 def _raise_for(response: httpx.Response, *, proxy: bool = False) -> None:
-    if response.status_code == 200:
+    if 200 <= response.status_code < 300:
         return
     request_id = response.headers.get("x-request-id")
     try:
@@ -269,6 +275,30 @@ class _Base:
     @staticmethod
     def _fetch_body(url: str, *, allowlist: list[str] | tuple[str, ...], deep: bool, return_content: bool) -> dict[str, Any]:
         return {"url": url, "allowlist": list(allowlist), "deep": deep, "return_content": return_content}
+
+    @staticmethod
+    def _feedback_body(
+        result: ScanResult | FetchResult,
+        expected: str,
+        *,
+        note: str | None,
+        content: str | None,
+        source: str | None,
+    ) -> dict[str, Any]:
+        if expected not in ("allow", "flag", "block"):
+            raise ValueError("expected must be 'allow', 'flag' or 'block'")
+        if not result.content_sha256:
+            raise ValueError("this result carries no content hash to report against (the URL was refused before any fetch)")
+        return {
+            "content_sha256": result.content_sha256,
+            "kind": "ingress",
+            "verdict_given": result.verdict,
+            "verdict_expected": expected,
+            "rule_ids": [m.rule_id for m in result.matches],
+            "source": source,
+            "note": note,
+            "content": content,
+        }
 
 
 class Airlock(_Base):
@@ -327,6 +357,34 @@ class Airlock(_Base):
         _raise_for(r)
         return r.json()
 
+    def feedback(
+        self,
+        result: ScanResult | FetchResult,
+        expected: str,
+        *,
+        note: str | None = None,
+        content: str | None = None,
+        source: str | None = None,
+    ) -> dict[str, Any]:
+        """Report that a verdict was wrong: `expected` is what it should have
+        been. Not metered. Send `content` only to keep the text as a tuning
+        example you can export; by default only the hash is stored."""
+        r = self._http.post("/v1/airlock/feedback", json=self._feedback_body(result, expected, note=note, content=content, source=source))
+        _raise_for(r)
+        return r.json()
+
+    def tuning(self) -> dict[str, Any]:
+        """The account's reports, what they suggest (mute a rule, deep-scan a source) and how many carry text."""
+        r = self._http.get("/v1/airlock/tuning")
+        _raise_for(r)
+        return r.json()
+
+    def tuning_examples(self) -> str:
+        """The reports that included text, as JSON lines in the Vertex AI supervised-tuning format."""
+        r = self._http.get("/v1/airlock/tuning/export.jsonl")
+        _raise_for(r)
+        return r.text
+
 
 class AsyncAirlock(_Base):
     """Asynchronous client with the same surface."""
@@ -380,3 +438,26 @@ class AsyncAirlock(_Base):
         r = await self._http.get("/v1/airlock/rules")
         _raise_for(r)
         return r.json()
+
+    async def feedback(
+        self,
+        result: ScanResult | FetchResult,
+        expected: str,
+        *,
+        note: str | None = None,
+        content: str | None = None,
+        source: str | None = None,
+    ) -> dict[str, Any]:
+        r = await self._http.post("/v1/airlock/feedback", json=self._feedback_body(result, expected, note=note, content=content, source=source))
+        _raise_for(r)
+        return r.json()
+
+    async def tuning(self) -> dict[str, Any]:
+        r = await self._http.get("/v1/airlock/tuning")
+        _raise_for(r)
+        return r.json()
+
+    async def tuning_examples(self) -> str:
+        r = await self._http.get("/v1/airlock/tuning/export.jsonl")
+        _raise_for(r)
+        return r.text
