@@ -399,6 +399,35 @@ export const webhooks = {
   rotate: () => request<WebhookToken>("/v1/webhooks/token/rotate", { method: "POST" }),
 };
 
+// The account's drafting style -- PostMortem AI's in-context tuning. Form
+// only: instructions on phrasing and structure, and whether the team's
+// most recent published postmortem is shown to the model as an example of
+// how they write. Citations are unaffected (apps/api/app/services/
+// postmortem.py rule 7 and ground_draft); nothing trains a model.
+export type DraftingPreferences = {
+  instructions: string;
+  use_published_example: boolean;
+  updated_at: number | null;
+  default: boolean;
+  has_published_example: boolean;
+};
+
+export const drafting = {
+  // Null when the route is not there to answer (the web deploys before the
+  // API), so the card renders as absent for that gap.
+  preferences: async (): Promise<DraftingPreferences | null> => {
+    const response = await fetch(`${API_BASE}/v1/postmortems/preferences`, { credentials: "include" });
+    if (!response.ok) return null;
+    return (await response.json()) as DraftingPreferences;
+  },
+  setPreferences: (instructions: string, usePublishedExample: boolean) =>
+    request<DraftingPreferences>("/v1/postmortems/preferences", {
+      method: "PUT",
+      body: JSON.stringify({ instructions, use_published_example: usePublishedExample }),
+    }),
+  clearPreferences: () => request<DraftingPreferences>("/v1/postmortems/preferences", { method: "DELETE" }),
+};
+
 export const api = {
   listIncidents: () => request<Incident[]>("/v1/postmortems/incidents"),
   summary: () => request<DashboardSummary>("/v1/postmortems/summary"),

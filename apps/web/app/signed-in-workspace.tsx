@@ -6,6 +6,7 @@ import { auth, type AuthUser } from "./auth";
 import { cn } from "@/lib/utils";
 import { SiteFooter } from "./landing";
 import { AirlockPanel } from "./airlock/airlock-panel";
+import { DraftingStyle } from "./drafting-style";
 import { PendingClaim } from "./pending-claim";
 import { usePolling } from "./use-polling";
 import { Receipts } from "./receipts";
@@ -87,6 +88,7 @@ export default function SignedInWorkspace({ user, setUser }: { user: AuthUser; s
             !user.is_founder && (["Billing", "#client-billing"] as [string, string]),
             ["Integrations", "#client-integrations"],
             ["Webhook", "#client-webhook"],
+            ["Style", "#client-drafting-style"],
             ["Dashboard", "#client-dashboard"],
             ["Incidents", "#client-incidents"],
           ].filter(Boolean) as [string, string][]
@@ -1792,6 +1794,7 @@ function IncidentWorkspace({ isFounder }: { isFounder: boolean }) {
       <div id="client-webhook" className="scroll-mt-16">
         <WebhookSettings />
       </div>
+      <DraftingStyle />
 
       {!loaded && <DashboardSkeleton />}
       {summary && (

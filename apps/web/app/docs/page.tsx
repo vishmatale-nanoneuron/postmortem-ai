@@ -269,6 +269,17 @@ export default function DocsPage() {
             only ever validates citations against the current incident&apos;s own numbered evidence, so a retrieved
             past incident can never become the source for a claim.
           </p>
+          <h2 className={h2}>Drafting style -- tuning, per account</h2>
+          <p className={p}>
+            <code className={code}>GET/PUT/DELETE /v1/postmortems/preferences</code> (session) holds your team&apos;s
+            house style: up to 1,500 characters of instructions on phrasing and structure, and whether your most
+            recent published postmortem is shown to the model as an example of how you write (on by default). Both
+            go into the system prompt on every draft, never into the numbered evidence, and govern form only: a style
+            instruction cannot add a fact, and the example is never citable. Drafts made with a style record{" "}
+            <code className={code}>prompt_version: &quot;v4+style&quot;</code>. No customer content trains any model
+            -- the example is your own text on your own drafts. The <span className="font-medium text-ink">Drafting
+            style</span> card on the dashboard edits it.
+          </p>
         </>,
       )}
 

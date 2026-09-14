@@ -128,6 +128,45 @@ async def test_the_harness_aggregates_model_and_combined_verdicts_and_counts_fai
     assert out["prompt_version"] == "airlock-semantic-v1" and out["model"] == "fake-gemini"
 
 
+@pytest.mark.asyncio
+async def test_the_harness_measures_in_context_tuning_with_training_rows_only() -> None:
+    """--examples N shows the classifier N training rows exactly as an
+    account's kept examples are shown (render_examples), balanced by label,
+    the same rows on every run, none of them held out -- and the result
+    file says how many so tuned and untuned never get confused."""
+    import airlock_semantic_eval as harness
+    from app.airlock.semantic import MAX_TUNING_EXAMPLES, SYSTEM_PROMPT
+
+    examples = harness.training_examples(6)
+    assert len(examples) == 6 and sum(e["label"] for e in examples) == 3
+    assert examples == harness.training_examples(6), "seeded: the same rows every run"
+    held_out = {json.loads(line)["text"] for line in harness.EVAL_FILE.read_text(encoding="utf-8").splitlines() if line.strip()}
+    assert not ({e["text"] for e in examples} & held_out), "never a held-out row"
+    assert harness.training_examples(0) == []
+    with pytest.raises(SystemExit):
+        harness.training_examples(MAX_TUNING_EXAMPLES + 1)
+
+    seen: list[str] = []
+
+    class Recording(FakeProvider):
+        async def complete(self, request):
+            seen.append(request.system)
+            return await super().complete(request)
+
+    provider = Recording({"paraphrased attack": (True, 0.9)})
+    rows = [{"text": "paraphrased attack", "label": 1, "language": "en", "source": "t", "family": None, "rule_score": 0.0}]
+    results = await harness.evaluate(rows, lambda: provider, concurrency=1, examples=examples)
+    assert seen[0].startswith(SYSTEM_PROMPT) and seen[0].count("<example>") == 6
+    assert examples[0]["text"][:80] in seen[0]
+    out = harness.report(results, provider.model_name, len(examples))
+    assert out["examples"] == 6
+    assert harness.results_file(6).name == "deep-scan-eval.examples-6.json"
+    assert harness.results_file(0) == harness.RESULTS_FILE
+    # Untuned: the published prompt, byte for byte.
+    await harness.evaluate(rows, lambda: provider, concurrency=1)
+    assert seen[-1] == SYSTEM_PROMPT
+
+
 def test_the_harness_refuses_to_write_when_every_call_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import airlock_semantic_eval as harness
 
