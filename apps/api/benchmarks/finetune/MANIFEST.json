@@ -1,0 +1,25 @@
+{
+  "prompt_version": "airlock-semantic-v1",
+  "seed": 20260914,
+  "eval_fraction": 0.2,
+  "rows_total": 718,
+  "train": {
+    "rows": 574,
+    "injections": 242
+  },
+  "eval": {
+    "rows": 144,
+    "injections": 61,
+    "german": 42
+  },
+  "files": {
+    "eval.jsonl": "172a39a642847c2359c429b3fc5585c0e7dda54ff215bc7bbfbf3e62a15b14d5",
+    "train.jsonl": "736b24cd1d387645e126983d516255b74657d64ca5998537c69ddff16d1b1237",
+    "train.aistudio.jsonl": "1df486012588f0823a962354f96eb2d61022e1f18f647ab7cc1b3bde0d8e2cb4"
+  },
+  "sources": {
+    "public": "deepset/prompt-injections (CC BY 4.0)",
+    "corpus": "app/airlock/corpus/rule_coverage.jsonl"
+  },
+  "never_included": "customer content -- the audit log stores none and the privacy policy promises none is kept"
+}
