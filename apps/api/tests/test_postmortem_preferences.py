@@ -11,17 +11,103 @@ a fact: an uncited claim the style asked for is still dropped.
 """
 
 import json
+import os
 import time
 
 import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 
-# The drafting fixture (fake model, seeded incident, active subscription)
-# is the routes file's; importing it registers it here under its own
-# name, which is why the test signatures below "redefine" it (F811).
-# ruff: noqa: F811
-from .test_postmortem_routes import CLIENT_EMAIL, GOOD_RESPONSE, INCIDENT, context, pytestmark, seed_two_entries  # noqa: F401
+DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
+pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="TEST_DATABASE_URL is not configured")
 
+INCIDENT = "pm-style-incident-1"
+CLIENT_EMAIL = "postmortem-style-user@example.com"
+PASSWORD = "correct-horse-battery-staple"
 STYLE = "British spelling. Root cause in one paragraph. Action titles start with a verb."
+
+GOOD_RESPONSE = {
+    "summary": {"text": "Checkout latency rose after release 1.2.", "citations": [1, 2]},
+    "root_cause": {"text": "The new payment client slowed checkout.", "citations": [2]},
+    "detection": {"text": "Alert CHK-LAT fired on p99 latency.", "citations": [1]},
+    "resolution": {"text": "Rolling back restored latency.", "citations": [2]},
+    "contributing_factors": [{"text": "The release changed the payment client.", "citations": [2]}],
+    "actions": [
+        {"title": "Load-test the payment client before release", "rationale": "It reached production undetected.", "owner": "ops", "citations": [2]}
+    ],
+}
+
+
+class FakeProvider:
+    """Answers with a fixed draft; keeps the last request so a test can
+    read the prompt the style went into."""
+
+    name = "fake"
+    model_name = "fake-model-v1"
+
+    def __init__(self, response: object) -> None:
+        self.response = response
+        self.last_request = None
+
+    async def complete(self, request):
+        from app.ai.provider import ModelResponse
+
+        self.last_request = request
+        text = self.response if isinstance(self.response, str) else json.dumps(self.response)
+        return ModelResponse(text=text, output_tokens=42)
+
+
+@pytest_asyncio.fixture
+async def context(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL or "")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
+    monkeypatch.setenv("SESSION_SECRET", "test-session-secret-0123456789abcdef0123")
+    monkeypatch.setenv("COOKIE_SECURE", "false")
+
+    from app.api.v1.postmortems import get_model_provider
+    from app.database import Database
+    from app.main import create_app
+    from app.settings import get_settings
+
+    async def fake_embed_text(_client, _text):
+        return [0.1] * 768
+
+    monkeypatch.setattr("app.api.v1.postmortems.embed_text", fake_embed_text)
+    monkeypatch.setattr("app.ai.rag.embed_text", fake_embed_text)
+
+    get_settings.cache_clear()
+    database = Database(get_settings())
+    await database.open()
+    await database.execute("DELETE FROM registration_attempts")
+    await database.execute("DELETE FROM incidents WHERE client_email=%s", (CLIENT_EMAIL,))
+    await database.execute("DELETE FROM users WHERE email=%s", (CLIENT_EMAIL,))
+
+    provider = FakeProvider(GOOD_RESPONSE)
+    application = create_app()
+    application.state.database = database
+    application.dependency_overrides[get_model_provider] = lambda: provider
+    async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as client:
+        register = await client.post("/v1/auth/register", json={"email": CLIENT_EMAIL, "password": PASSWORD})
+        assert register.status_code == 201, register.text
+        await database.execute("UPDATE users SET subscription_status='active' WHERE email=%s", (CLIENT_EMAIL,))
+        now = int(time.time() * 1000)
+        await database.execute(
+            """INSERT INTO incidents (id, client_email, title, severity, status, impact, created_at, updated_at)
+               VALUES (%s, %s, 'Checkout outage', 'sev1', 'open', 'All checkouts', %s, %s)""",
+            (INCIDENT, CLIENT_EMAIL, now, now),
+        )
+        yield client, provider, database, application
+    await database.close()
+    get_settings.cache_clear()
+
+
+async def seed_two_entries(client: AsyncClient) -> None:
+    for payload in (
+        {"occurred_at": 1_000, "source": "alert", "summary": "Checkout p99 latency crossed 4s", "detail": None},
+        {"occurred_at": 1_100, "source": "deploy", "summary": "Release 1.2 shipped", "detail": None},
+    ):
+        response = await client.post(f"/v1/postmortems/incidents/{INCIDENT}/evidence", json=payload)
+        assert response.status_code == 201, response.text
 
 
 @pytest.mark.asyncio

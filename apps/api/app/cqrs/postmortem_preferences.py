@@ -97,6 +97,19 @@ async def handle_clear_preferences(database: Database, user_id: str) -> Drafting
     return DEFAULTS
 
 
+async def handle_has_style_example_query(database: Database, client_email: str) -> bool:
+    """Whether the account has an approved, published postmortem the example
+    can be drawn from -- a boolean for the dashboard, not the row."""
+    row = await database.fetch_one(
+        """SELECT EXISTS(
+             SELECT 1 FROM incident_postmortems p JOIN incidents i ON i.id = p.incident_id
+             WHERE i.client_email = %s AND p.status = 'published' AND p.approved_by IS NOT NULL
+           ) AS present""",
+        (client_email,),
+    )
+    return bool(row and row["present"])
+
+
 @dataclass(frozen=True)
 class StyleExample:
     incident_title: str

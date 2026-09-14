@@ -35,6 +35,7 @@ from ...cqrs.postmortem_preferences import (
     InvalidPreferences,
     SetPreferencesCommand,
     handle_clear_preferences,
+    handle_has_style_example_query,
     handle_preferences_query,
     handle_set_preferences,
     handle_style_example_query,
@@ -399,8 +400,8 @@ class DraftingPreferencesOut(BaseModel):
 
 async def _preferences_out(database: Database, user: User) -> DraftingPreferencesOut:
     preferences = await handle_preferences_query(database, user.id)
-    example = await handle_style_example_query(database, user.email, "")
-    return DraftingPreferencesOut(**vars(preferences), has_published_example=example is not None)
+    present = await handle_has_style_example_query(database, user.email)
+    return DraftingPreferencesOut(**vars(preferences), has_published_example=present)
 
 
 @router.get("/preferences", response_model=DraftingPreferencesOut)
