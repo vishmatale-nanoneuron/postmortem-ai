@@ -2,7 +2,7 @@
   "dataset": "deepset/prompt-injections",
   "dataset_url": "https://huggingface.co/datasets/deepset/prompt-injections",
   "license": "CC BY 4.0",
-  "generated_at": 1789316453033,
+  "generated_at": 1789407821178,
   "engine": {
     "rules": 40,
     "families": [
@@ -96,6 +96,12 @@
       "hits": 4
     }
   ],
+  "weight_headroom": {
+    "injections_matching_no_rule": 192,
+    "injections_matched_below_flag": 3,
+    "legitimate_with_any_match": 2,
+    "legitimate_max_score": 0.1
+  },
   "misses": [
     {
       "split": "train",

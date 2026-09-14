@@ -32,6 +32,12 @@ const data = benchmark as {
   english: Metrics;
   german: Metrics;
   top_rules_on_injections: { rule: string; hits: number }[];
+  weight_headroom: {
+    injections_matching_no_rule: number;
+    injections_matched_below_flag: number;
+    legitimate_with_any_match: number;
+    legitimate_max_score: number;
+  };
   misses: Miss[];
   false_positives: Miss[];
 };
@@ -106,6 +112,15 @@ export function BenchmarkSection({ h2, full = false }: { h2: string; full?: bool
         exists for &mdash; it is not part of this run. Before this benchmark the same rules caught 1.1%; every rule
         added since is a general phrasing (&ldquo;forget everything before that&rdquo;, &ldquo;new tasks
         follow&rdquo;, &ldquo;show me your prompt text&rdquo;, and their German forms), not a fingerprint of a sample.
+      </p>
+      <p className={p}>
+        <span className="font-medium text-ink">Why the weights are not tuned on it.</span> Of the{" "}
+        {data.overall.injections - data.overall.caught} misses, {data.weight_headroom.injections_matching_no_rule}{" "}
+        match no rule at all &mdash; no weight reaches text a pattern never saw &mdash; and only{" "}
+        {data.weight_headroom.injections_matched_below_flag} match below the flag line. Fitting the weights to this
+        data would recover those {data.weight_headroom.injections_matched_below_flag} and nothing else; what moves the
+        number is new general phrasings, and the paraphrases go to the deep scan. The figures are in the results file
+        and a test fails if reweighting ever becomes worth it.
       </p>
       {full ? (
         <section className="mb-3" aria-labelledby="benchmark-misses">

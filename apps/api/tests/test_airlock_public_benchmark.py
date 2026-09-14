@@ -31,6 +31,21 @@ def test_the_committed_results_match_the_engine_on_the_committed_rows() -> None:
     assert fresh["engine"]["rules"] == published["engine"]["rules"]
     assert [m["text"] for m in fresh["misses"]] == [m["text"] for m in published["misses"]]
     assert [f["text"] for f in fresh["false_positives"]] == [f["text"] for f in published["false_positives"]]
+    assert fresh["weight_headroom"] == published["weight_headroom"]
+
+
+def test_the_headroom_says_why_the_rules_are_not_reweighted() -> None:
+    """Weights are not tuned on this data, and the file says why: almost
+    every miss matches no rule at all, so no weight reaches it, and the
+    few matched-below-flag rows are a rounding error against the misses.
+    If this ever flips -- many matched-but-allowed injections -- weight
+    tuning becomes worth building, and this test is where that shows."""
+    published = json.loads(RESULTS.read_text(encoding="utf-8"))
+    headroom = published["weight_headroom"]
+    misses = published["overall"]["injections"] - published["overall"]["caught"]
+    assert headroom["injections_matching_no_rule"] + headroom["injections_matched_below_flag"] == misses
+    assert headroom["injections_matched_below_flag"] <= misses * 0.1, "reweighting could recover more than a tenth of the misses -- reconsider"
+    assert headroom["legitimate_max_score"] < 0.40, "a legitimate text is within reach of the flag line"
 
 
 def test_the_published_numbers_are_the_honest_shape() -> None:

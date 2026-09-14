@@ -138,11 +138,14 @@ async def founder_summary(
            FROM ai_runs WHERE created_at >= %s""",
         (day_ago,),
     )
-    # Broken out by prompt_version -- drafting (PROMPT_VERSION, currently
-    # "v2") and evidence extraction (EXTRACTION_PROMPT_VERSION, "extract-v1")
-    # are two different model calls with independent failure modes; a
-    # single blended success rate can hide one of them being broken while
-    # the other masks it in the average.
+    # Broken out by prompt_version -- drafting (PROMPT_VERSION, "v4", and
+    # "v4+style" when the account's house style was in the prompt),
+    # evidence extraction ("extract-v2") and title suggestion ("suggest-v1")
+    # are different model calls with independent failure modes; a single
+    # blended success rate can hide one of them being broken while the
+    # other masks it in the average. "v4" beside "v4+style" is the A/B for
+    # the drafting style: same model, same grounding, prompt with and
+    # without the account's example.
     ai_runs_by_feature = await database.fetch_all(
         """SELECT prompt_version,
                   count(*) AS total,
@@ -151,6 +154,21 @@ async def founder_summary(
                   avg(latency_ms) FILTER (WHERE status = 'succeeded') AS avg_latency_ms
            FROM ai_runs GROUP BY prompt_version ORDER BY count(*) DESC"""
     )
+    # Grounding quality per drafting prompt version, from the drafts on
+    # file: how many claims ground_draft had to drop as uncited, and how
+    # many evidence entries a draft cites. Success rate and latency say
+    # whether the call worked; this says whether the prompt made the model
+    # invent more -- the number that decides if a style change stays.
+    grounding_by_version = await database.fetch_all(
+        """SELECT prompt_version,
+                  count(*) AS drafts,
+                  avg(unsupported_claims_dropped) AS avg_unsupported_dropped,
+                  count(*) FILTER (WHERE unsupported_claims_dropped > 0) AS drafts_with_dropped,
+                  avg(jsonb_array_length(cited_evidence_ids)) AS avg_citations
+           FROM incident_postmortems WHERE prompt_version IS NOT NULL
+           GROUP BY prompt_version"""
+    )
+    grounding = {row["prompt_version"]: row for row in grounding_by_version}
     # Unit economics. Everything above measures whether the model calls
     # work; nothing measured what they cost against what came in. Two
     # windows: this calendar month (UTC) -- the one that answers "are we
@@ -211,6 +229,9 @@ async def founder_summary(
         value = (row or {}).get("avg_latency_ms")
         return round(float(value), 1) if value is not None else None
 
+    def _rounded(value: object) -> float | None:
+        return None if value is None else round(float(value), 2)
+
     avg_latency = (ai_run_counts or {}).get("avg_latency_ms")
     avg_resolution_ms = (incident_counts or {}).get("avg_resolution_ms")
     return {
@@ -236,6 +257,11 @@ async def founder_summary(
                 "succeeded": row["succeeded"],
                 "failed": row["failed"],
                 "avg_latency_ms": _latency(row),
+                # Drafting versions only; null for extraction/suggestion.
+                "drafts": (grounding.get(row["prompt_version"]) or {}).get("drafts"),
+                "avg_unsupported_dropped": _rounded((grounding.get(row["prompt_version"]) or {}).get("avg_unsupported_dropped")),
+                "drafts_with_dropped": (grounding.get(row["prompt_version"]) or {}).get("drafts_with_dropped"),
+                "avg_citations": _rounded((grounding.get(row["prompt_version"]) or {}).get("avg_citations")),
             }
             for row in ai_runs_by_feature
         ],

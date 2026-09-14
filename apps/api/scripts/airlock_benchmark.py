@@ -139,6 +139,19 @@ def evaluate(rows: list[dict]) -> dict:
     german = [r for r in results if r["language"] == "de"]
     rule_hits = Counter(rule for r in results if r["label"] == 1 for rule in r["rules"])
 
+    # What reweighting the rules could and could not recover. An injection
+    # that matches no rule at all is out of reach of any weight; one that
+    # matches below the flag line is the only kind a weight change reaches;
+    # a legitimate text with any match is the only kind a raise could cost.
+    injections = [r for r in results if r["label"] == 1]
+    legitimate = [r for r in results if r["label"] == 0]
+    headroom = {
+        "injections_matching_no_rule": sum(1 for r in injections if not r["rules"] and r["score"] == 0),
+        "injections_matched_below_flag": sum(1 for r in injections if r["score"] > 0 and r["verdict"] == "allow"),
+        "legitimate_with_any_match": sum(1 for r in legitimate if r["score"] > 0),
+        "legitimate_max_score": max((r["score"] for r in legitimate), default=0.0),
+    }
+
     def excerpt(r: dict) -> dict:
         return {
             "split": r["split"],
@@ -160,6 +173,7 @@ def evaluate(rows: list[dict]) -> dict:
         "english": metrics(english),
         "german": metrics(german),
         "top_rules_on_injections": [{"rule": rule, "hits": hits} for rule, hits in rule_hits.most_common(10)],
+        "weight_headroom": headroom,
         "misses": [excerpt(r) for r in results if r["label"] == 1 and r["verdict"] == "allow"],
         "false_positives": [excerpt(r) for r in results if r["label"] == 0 and r["verdict"] != "allow"],
     }

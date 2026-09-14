@@ -173,6 +173,29 @@ async def test_ai_run_health_is_broken_out_by_24h_window_and_feature(context) ->
     assert by_feature["v2"]["succeeded"] - v2_baseline_succeeded == 2
     assert by_feature["extract-v1"]["total"] - extract_baseline_total == 1
     assert by_feature["extract-v1"]["failed"] - extract_baseline_failed == 1
+    # Grounding quality rides along for drafting versions only: extraction
+    # writes no postmortem row, so it has nothing to report.
+    assert by_feature["extract-v1"]["drafts"] is None and by_feature["extract-v1"]["avg_unsupported_dropped"] is None
+
+    # A draft on file under a version reports how much grounding dropped
+    # and how much it cited -- the axis that tells "v4" from "v4+style".
+    # A version tag unique to this run: incidents from earlier local runs
+    # persist on a long-lived database and would otherwise be counted.
+    version = f"ab-test-style-{now}"
+    await database.execute("DELETE FROM incident_postmortems WHERE incident_id=%s", (incident_id,))
+    await database.execute(
+        """INSERT INTO incident_postmortems
+             (id,incident_id,status,summary,root_cause,detection,resolution,contributing_factors,
+              cited_evidence_ids,unsupported_claims_dropped,generated_by,prompt_version,created_at,updated_at)
+           VALUES (gen_random_uuid(),%s,'draft','s','r','d','x','[]','["e1","e2","e3"]',2,'fake',%s,%s,%s)""",
+        (incident_id, version, now, now),
+    )
+    await insert_run(version, "succeeded", 120, now)
+    quality = {row["prompt_version"]: row for row in (await client.get("/v1/founder/summary")).json()["ai_runs_by_feature"]}
+    assert quality[version]["drafts"] == 1
+    assert quality[version]["avg_unsupported_dropped"] == 2.0
+    assert quality[version]["drafts_with_dropped"] == 1
+    assert quality[version]["avg_citations"] == 3.0
 
 
 @pytest.mark.asyncio
