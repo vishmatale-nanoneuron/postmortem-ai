@@ -158,18 +158,32 @@ export default function FounderDashboard() {
       {summary.ai_runs_by_feature.length > 0 && (
         <>
           <h3 className="mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">AI features (by prompt version)</h3>
-          <ul className="mb-4 space-y-1 text-sm">
+          <ul className="mb-1 space-y-1 text-sm">
             {summary.ai_runs_by_feature.map((feature) => (
-              <li key={feature.prompt_version} className="flex justify-between rounded-md bg-paper px-3 py-1.5">
+              <li key={feature.prompt_version} className="flex flex-wrap justify-between gap-x-3 rounded-md bg-paper px-3 py-1.5">
                 <span className="font-mono text-xs">{feature.prompt_version}</span>
                 <span>
                   {feature.succeeded}/{feature.total} ok
                   {feature.failed > 0 && <span className="text-red-600"> -- {feature.failed} failed</span>}
                   {feature.avg_latency_ms != null && <span className="text-muted"> -- avg {feature.avg_latency_ms} ms</span>}
+                  {feature.drafts != null && feature.drafts > 0 && (
+                    <span className="text-muted">
+                      {" "}
+                      -- {feature.drafts} draft{feature.drafts === 1 ? "" : "s"} on file, {feature.avg_unsupported_dropped}{" "}
+                      uncited claim{feature.avg_unsupported_dropped === 1 ? "" : "s"} dropped and {feature.avg_citations}{" "}
+                      citations per draft
+                    </span>
+                  )}
                 </span>
               </li>
             ))}
           </ul>
+          <p className="mb-4 text-xs text-muted">
+            <span className="font-mono">v4</span> beside <span className="font-mono">v4+style</span> is the A/B for the
+            drafting style: same model and grounding, prompt with and without the account&apos;s example. If the styled
+            row drops more uncited claims per draft, the style is making the model invent -- that is the number that
+            decides whether it stays.
+          </p>
         </>
       )}
       <h3 id="founder-signups" className="mb-1.5 scroll-mt-16 text-xs font-medium tracking-wide text-muted uppercase">

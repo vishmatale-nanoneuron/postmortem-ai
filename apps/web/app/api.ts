@@ -132,6 +132,13 @@ export type FounderSummary = {
     succeeded: number;
     failed: number;
     avg_latency_ms: number | null;
+    // Grounding quality from the drafts on file; null for versions that
+    // write no postmortem (extraction, title suggestion). "v4" beside
+    // "v4+style" is the A/B for the drafting style.
+    drafts: number | null;
+    avg_unsupported_dropped: number | null;
+    drafts_with_dropped: number | null;
+    avg_citations: number | null;
   }[];
   pending_payment_claims: number;
   unit_economics: {

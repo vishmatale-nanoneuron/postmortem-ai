@@ -112,6 +112,32 @@ commit the numbers → tune on `train.jsonl` in Vertex → point
 `GEMINI_MODEL` at the tuned endpoint → re-run the harness on the *same*
 held-out split → publish both numbers side by side, including the misses.
 
+## Why the rule weights are not tuned (measured)
+
+The obvious "fine-tuning" for a deterministic engine is fitting its 40
+weights to labelled data. `scripts/airlock_benchmark.py` now reports the
+headroom for that (`weight_headroom` in the results file, rendered on the
+benchmark page): of the 195 misses on deepset, **192 match no rule at
+all** — no weight reaches text a pattern never saw — and **3** match
+below the flag line; on the legitimate side the highest score is 0.10, so
+no raise is at risk either. Fitting the weights would recover three rows.
+What moves recall is new general phrasings (the founder's rule-feedback
+counts and the committed misses list are the input), and the paraphrases
+are the deep scan's. A test fails if reweighting ever becomes worth it
+(`test_the_headroom_says_why_the_rules_are_not_reweighted`).
+
+## Measuring the tuning that exists
+
+- **Airlock, offline:** `airlock_semantic_eval.py` (untuned) and
+  `--examples 8` (in-context tuned) on the same held-out split. Needs a
+  valid `GEMINI_API_KEY`; ~288 Flash calls.
+- **PostMortem AI, in production:** the founder dashboard's "AI features
+  (by prompt version)" shows `v4` beside `v4+style` — success rate,
+  latency, and from the drafts on file the average number of uncited
+  claims `ground_draft` dropped and the average citations per draft. If
+  the styled row drops more, the style is making the model invent, and it
+  goes.
+
 ## What we will not do
 
 - **Train on customer content.** The audit log stores a hash, byte count
