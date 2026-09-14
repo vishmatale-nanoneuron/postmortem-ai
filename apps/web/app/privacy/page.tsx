@@ -93,8 +93,9 @@ export default function PrivacyPage() {
         <>
           <h2 className={h2}>What third parties see</h2>
           <p className={p}>
-            Your incident evidence is sent to Google (Gemini) to draft a postmortem, and to Anthropic (Claude) only
-            if Gemini&apos;s own call fails and a fallback is configured. An Airlock scan sends nothing to any model
+            Your incident evidence is sent to Google (Gemini) to draft a postmortem &mdash; along with your drafting
+            style, if you set one, and your own most recent published postmortem as an example of it, unless you switch
+            that off &mdash; and to Anthropic (Claude) only if Gemini&apos;s own call fails and a fallback is configured. An Airlock scan sends nothing to any model
             by default; only a <span className="font-medium text-ink">deep scan</span>, which you request per call
             with <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">&quot;deep&quot;: true</code>,
             sends that one piece of content to Google (Gemini) for classification -- and we still keep only the

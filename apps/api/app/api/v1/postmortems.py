@@ -30,6 +30,16 @@ from ...auth import (
     require_active_subscription_or_free_slot,
 )
 from ...cqrs.activity import ActivityLogFilter, RecordActivityCommand, handle_activity_log_query, handle_record_activity
+from ...cqrs.postmortem_preferences import (
+    MAX_INSTRUCTIONS_CHARS,
+    InvalidPreferences,
+    SetPreferencesCommand,
+    handle_clear_preferences,
+    handle_has_style_example_query,
+    handle_preferences_query,
+    handle_set_preferences,
+    handle_style_example_query,
+)
 from ...database import Database
 from ...dependencies import get_database
 from ...integrations.linear import create_linear_issue
@@ -38,10 +48,10 @@ from ...security.rate_limit import try_record_action
 from ...services.postmortem_markdown import render_postmortem_markdown
 from ...services.postmortem import (
     EXTRACTION_PROMPT_VERSION,
-    PROMPT_VERSION,
     TITLE_SUGGESTION_PROMPT_VERSION,
     UNSUPPORTED,
     EvidenceEntry,
+    HouseStyle,
     bound_evidence_by_chars,
     build_draft_request,
     build_extraction_request,
@@ -50,6 +60,7 @@ from ...services.postmortem import (
     parse_extracted_evidence,
     parse_model_json,
     parse_suggested_incident,
+    prompt_version_for,
     render_evidence,
 )
 from ...settings import Settings, get_settings
@@ -352,6 +363,81 @@ async def list_incidents(
            FROM incidents WHERE client_email=%s ORDER BY created_at DESC""",
         (user.email,),
     )
+
+
+# ---------------------------------------------------------------------------
+# Drafting style -- the account's in-context tuning of the drafting model.
+# Form only; see services/postmortem.py SYSTEM_PROMPT rule 7 and
+# cqrs/postmortem_preferences.py. Session-scoped, no entitlement needed:
+# setting a style costs nothing; drafting is what is gated.
+# ---------------------------------------------------------------------------
+
+
+class DraftingPreferencesIn(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "instructions": "British spelling. Root cause in one paragraph. Action titles start with a verb. Say 'customer-facing', not 'external'.",
+                    "use_published_example": True,
+                }
+            ]
+        }
+    }
+    instructions: str = Field(default="", max_length=MAX_INSTRUCTIONS_CHARS)
+    use_published_example: bool = True
+
+
+class DraftingPreferencesOut(BaseModel):
+    instructions: str
+    use_published_example: bool
+    updated_at: int | None
+    # True while the account has never saved any (the defaults apply).
+    default: bool
+    # Whether the account has a published postmortem the example can be drawn from.
+    has_published_example: bool
+
+
+async def _preferences_out(database: Database, user: User) -> DraftingPreferencesOut:
+    preferences = await handle_preferences_query(database, user.id)
+    present = await handle_has_style_example_query(database, user.email)
+    return DraftingPreferencesOut(**vars(preferences), has_published_example=present)
+
+
+@router.get("/preferences", response_model=DraftingPreferencesOut)
+async def drafting_preferences(
+    database: Database = Depends(get_database), user: User = Depends(current_user)
+) -> DraftingPreferencesOut:
+    """The account's house style: instructions on phrasing and structure,
+    and whether the most recent published postmortem is shown to the
+    drafting model as an example. Form only -- citations are unaffected."""
+    return await _preferences_out(database, user)
+
+
+@router.put("/preferences", response_model=DraftingPreferencesOut)
+async def set_drafting_preferences(
+    payload: DraftingPreferencesIn, database: Database = Depends(get_database), user: User = Depends(current_user)
+) -> DraftingPreferencesOut:
+    """Replace the account's house style. Applies to the next draft."""
+    try:
+        await handle_set_preferences(
+            database,
+            SetPreferencesCommand(
+                user_id=user.id, instructions=payload.instructions, use_published_example=payload.use_published_example
+            ),
+        )
+    except InvalidPreferences as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+    return await _preferences_out(database, user)
+
+
+@router.delete("/preferences", response_model=DraftingPreferencesOut)
+async def clear_drafting_preferences(
+    database: Database = Depends(get_database), user: User = Depends(current_user)
+) -> DraftingPreferencesOut:
+    """Back to the defaults: no instructions, the published example on."""
+    await handle_clear_preferences(database, user.id)
+    return await _preferences_out(database, user)
 
 
 class ActivityLogEntryOut(BaseModel):
@@ -812,9 +898,19 @@ async def _draft_postmortem_for_incident(
     evidence = bound_evidence_by_chars(evidence)
     input_chars = len(render_evidence(evidence))
 
+    # The account's house style (form only, rule 7): its instructions and,
+    # unless switched off, its most recent approved, published postmortem
+    # as an example of how it writes -- never the incident being drafted.
+    preferences = await handle_preferences_query(database, user.id)
+    example = (
+        await handle_style_example_query(database, user.email, incident_id) if preferences.use_published_example else None
+    )
+    house_style = HouseStyle(instructions=preferences.instructions, example=example)
+    prompt_version = prompt_version_for(house_style)
+
     logger.info(
         "postmortem_draft_requested",
-        extra={"incident_id": incident_id, "provider": provider.name, "evidence_count": len(evidence)},
+        extra={"incident_id": incident_id, "provider": provider.name, "evidence_count": len(evidence), "prompt_version": prompt_version},
     )
     started_at = time.monotonic()
 
@@ -829,7 +925,7 @@ async def _draft_postmortem_for_incident(
                 incident_id,
                 provider.name,
                 provider.model_name,
-                PROMPT_VERSION,
+                prompt_version,
                 input_chars,
                 output_tokens,
                 latency_ms,
@@ -858,7 +954,9 @@ async def _draft_postmortem_for_incident(
 
     try:
         result = await provider.complete(
-            build_draft_request(dict(incident), evidence, similar_past_incidents=similar_past_incidents)
+            build_draft_request(
+                dict(incident), evidence, similar_past_incidents=similar_past_incidents, house_style=house_style
+            )
         )
         response = parse_model_json(result.text)
     except CircuitOpenError as error:
@@ -987,7 +1085,7 @@ async def _draft_postmortem_for_incident(
                 json_list(draft.cited_evidence_ids),
                 draft.unsupported_claims_dropped,
                 provider.name,
-                PROMPT_VERSION,
+                prompt_version,
                 now,
                 now,
             ),

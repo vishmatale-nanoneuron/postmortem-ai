@@ -34,5 +34,6 @@
   "0033_drop_card_processor_columns.sql": "55b1f9a7483d7e587855fe86eb8ef6f93f693862891da04d4ad35990d9ba0235",
   "0034_airlock_policies.sql": "c9b539fa731b9a7c97a0834d17ed318d99f40e518d2dede46eedcd3a90f38e02",
   "0035_request_errors.sql": "81b409838c6f87c7d9ebdce8d87c542e11d77b27488ddf5a69a861a4eab35726",
-  "0036_airlock_feedback.sql": "5c5f839f865a34508584c36ba3b6170e1b6f0463f00d889a87d6f8d8bfd20b9f"
+  "0036_airlock_feedback.sql": "5c5f839f865a34508584c36ba3b6170e1b6f0463f00d889a87d6f8d8bfd20b9f",
+  "0037_postmortem_drafting_preferences.sql": "1a805eacfb918f8a4115d7d9c7ec91e6c5d6375876e48b422eeb95038e78bfaa"
 }

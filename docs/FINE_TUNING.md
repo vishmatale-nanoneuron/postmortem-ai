@@ -129,15 +129,34 @@ held-out split → publish both numbers side by side, including the misses.
 
 ## PostMortem AI
 
-There is no fine-tuning to add, and this is a design fact rather than a
-gap. The product's guarantee — every claim cites recorded evidence,
-anything unsupported is marked, never invented — is enforced by **code
-after the model answers** (`services/postmortem.py` verifies every
-citation independently before anything is stored; the database refuses
-to publish without a named approver). A better-tuned drafting model would
-change fluency, not that guarantee. And the only material that could tune
-it is customers' incidents and evidence, which the privacy policy and the
-data-export/erasure promises put out of reach. The two public worked
-examples (`/blog/github-outage-demo`, `/blog/cloudflare-outages-2025`) are
-demonstrations, not a dataset. If that ever changes it will be with an
-explicit, opt-in, per-account consent — not quietly.
+No weight tuning, and that is a design fact rather than a gap: the
+product's guarantee — every claim cites recorded evidence, anything
+unsupported is marked, never invented — is enforced by **code after the
+model answers** (`services/postmortem.py::ground_draft` checks every
+citation by index into this incident's evidence; the database refuses to
+publish without a named approver). A better-tuned drafting model would
+change fluency, not that guarantee, and the only material that could tune
+one is customers' incidents, which the privacy policy and the
+export/erasure promises put out of reach.
+
+What the product does have, since 2026-09-14, is the same in-context form
+of tuning Airlock has — **per account, form only, customer-controlled**:
+
+| Piece | Where |
+|---|---|
+| House style | `GET/PUT/DELETE /v1/postmortems/preferences` (session), the **Drafting style** card on the dashboard. Up to 1,500 characters of the team's own instructions on phrasing and structure. |
+| The team's own example | On by default: the account's most recent **approved, published** postmortem (never the incident being drafted, never another account's) is shown to the model as an example of how this team writes. Switchable off. |
+| Where it goes | Appended to the **system** prompt (`render_house_style`), never to the user turn the citations index into. Rule 7 of `SYSTEM_PROMPT` (v4) says: form only, not evidence, never citable, cannot add a fact, cannot override rules 1–6. |
+| Traceability | Drafts made with a style record `prompt_version = "v4+style"` on `ai_runs` and on the postmortem row; a bare draft records `"v4"`. |
+| Bounds | Instructions 1,500 chars; each example section cut at 1,200 chars, at most five contributing factors — a separate, fixed cost per draft that never competes with the 40,000-char evidence budget. |
+
+Pinned by `apps/api/tests/test_postmortem_preferences.py`: an account with
+nothing saved sends the published prompt byte for byte; the style reaches
+the system prompt and never the evidence turn; the example is this
+account's published postmortem only; switching it off restores the bare
+prompt; and **a style instruction cannot add a fact** — an uncited claim
+the style asked for is still dropped by `ground_draft`.
+
+Migration `0037_postmortem_drafting_preferences.sql`; cascades on erasure.
+There is still no dataset, no export and no training: the example is the
+customer's own text shown on the customer's own drafts.

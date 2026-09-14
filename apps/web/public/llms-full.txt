@@ -86,6 +86,20 @@ ever checks against the current incident's own numbered evidence, so a
 retrieved past incident structurally cannot become the source for a claim,
 regardless of what the model outputs.
 
+## Drafting style (per-account tuning, in context)
+
+`GET/PUT/DELETE /v1/postmortems/preferences` (session) holds the account's
+house style: up to 1,500 characters of instructions on phrasing and
+structure, plus whether the account's most recent approved, published
+postmortem is shown to the drafting model as an example of how the team
+writes (on by default, switchable). Both are appended to the system prompt
+(`SYSTEM_PROMPT` v4, rule 7) — never to the numbered evidence — and govern
+form only: a style instruction cannot add a fact and the example is never
+citable; `ground_draft` still drops every uncited claim. Drafts made with a
+style record `prompt_version = "v4+style"` on `ai_runs` and the postmortem
+row. There is no weight tuning and no training on customer content; see
+`docs/FINE_TUNING.md`.
+
 ## Evidence model
 
 Each evidence entry has: `source` (a fixed type category — `alert`, `log`,
