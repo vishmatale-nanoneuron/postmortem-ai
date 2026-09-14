@@ -17,6 +17,7 @@ import { usePolling } from "../use-polling";
 import { AirlockMark } from "./airlock-mark";
 import { PendingClaim } from "../pending-claim";
 import { PolicyEditor, UsagePanel } from "./policy-panel";
+import { TuningPanel } from "./tuning-panel";
 import { Receipts } from "../receipts";
 import { guessCurrency } from "../locale-currency";
 
@@ -50,6 +51,11 @@ function when(ms: number): string {
 export function AirlockPanel({ isFounder }: { isFounder: boolean }) {
   const [credits, setCredits] = useState<AirlockCredits | null>(null);
   const [error, setError] = useState("");
+  // The policy is written from two places on this card -- the editor and a
+  // tuning suggestion's one click. Each bumps this after a write and both
+  // re-read on it, so neither can save a stale copy over the other's.
+  const [policyVersion, setPolicyVersion] = useState(0);
+  const policyChanged = useCallback(() => setPolicyVersion((value) => value + 1), []);
 
   const refresh = useCallback(async () => {
     try {
@@ -98,7 +104,8 @@ export function AirlockPanel({ isFounder }: { isFounder: boolean }) {
         )}
 
         <Keys />
-        <PolicyEditor />
+        <PolicyEditor version={policyVersion} onChanged={policyChanged} />
+        <TuningPanel policyVersion={policyVersion} onPolicyChanged={policyChanged} />
         {/* The founder is not metered, so there is nothing for them to buy. */}
         {!isFounder && <BuyCredits onChanged={refresh} />}
         {!isFounder && <UsagePanel />}

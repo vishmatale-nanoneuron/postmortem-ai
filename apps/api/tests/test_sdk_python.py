@@ -104,6 +104,17 @@ async def test_the_async_client_covers_scan_egress_and_fetch_with_typed_results(
         assert (await guard.policy())["block_threshold"] == 0.75
         assert (await guard.rules())["count"] >= 30
 
+        # A wrong verdict is reported from the result itself, not metered,
+        # and the text is kept only when passed.
+        report = await guard.feedback(clean, "block", note="a paraphrase we know", content=BENIGN, source="invoices")
+        assert report["has_content"] is True and report["rule_ids"] == [] and report["verdict_given"] == "allow"
+        tuning = await guard.tuning()
+        assert len(tuning["reports"]) == 1 and tuning["examples_with_content"] == 1
+        assert BENIGN in (await guard.tuning_examples())
+        assert (await guard.usage(days=7))["total_credits"] == 4, "feedback is not charged"
+        with pytest.raises(ValueError):
+            await guard.feedback(clean, "maybe")
+
     # Drained: 402 becomes InsufficientCredits, and nothing was scanned.
     async with AsyncAirlock(key, base_url="http://test", transport=transport) as guard:
         for _ in range(6):

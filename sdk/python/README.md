@@ -38,4 +38,20 @@ carries `.request_id`, which is what to quote if you ask about it.
 
 Deep scan (`deep=True`, +4 credits) adds a Gemini second opinion that can only
 raise a verdict; `sanitize=True` returns a defanged copy in `result.sanitized`.
+
+Wrong verdict? Report it — not metered — and it tunes your account:
+
+```python
+guard.feedback(result, "allow", note="our own terms mention 'test mode enabled'")
+# Include the text only to keep it as a tuning example you can export later:
+guard.feedback(result, "block", content=document_text)
+
+guard.tuning()            # your reports, and what they suggest (mute a rule, deep-scan a source)
+guard.tuning_examples()   # the reports that kept their text, as JSONL for supervised tuning
+```
+
+Three reports naming the same rule on distinct scans become a one-click mute
+in the dashboard; two reported misses from one source suggest `deep=True`
+for it. Only the scan's hash, verdicts and rule ids are stored unless you
+pass `content`.
 Reference: https://www.nanoneuron.ai/docs#airlock

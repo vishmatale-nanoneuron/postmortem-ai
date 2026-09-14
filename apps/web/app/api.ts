@@ -309,9 +309,15 @@ export type ErrorGroup = {
   notified: boolean;
 };
 
+// Which Airlock rules customers report as false positives, across
+// accounts. Counts only: the founder's signal for reweighting a rule, never
+// a note, a hash or content.
+export type RuleFeedbackStat = { rule_id: string; family: string; false_positive_reports: number; accounts: number };
+
 export const founderBilling = {
   paymentClaims: () => request<PaymentClaim[]>("/v1/founder/payment-claims"),
   errors: (days = 7) => request<ErrorGroup[]>(`/v1/founder/errors?days=${days}`),
+  ruleFeedback: (days = 90) => request<RuleFeedbackStat[]>(`/v1/founder/airlock/rule-feedback?days=${days}`),
   // Founder-only Airlock credit grant for everything that is not a
   // payment: refunds credited as scans, goodwill after an outage, a pilot.
   // Every grant is a ledger line with the note on it (founder.py).
@@ -561,6 +567,8 @@ export type AirlockScan = {
     reason: string;
     model?: string;
     weight: number;
+    // How many of the account's kept examples the classifier was shown.
+    examples?: number;
   } | null;
   // The content with hidden characters, hidden HTML and the strongest
   // matches removed. Only when the scan asked for it.
@@ -716,6 +724,52 @@ export type AirlockUsageRow = {
 
 export type AirlockUsage = { days: number; total_credits: number; rows: AirlockUsageRow[] };
 
+// Tuning feedback -- see apps/api/app/cqrs/airlock_feedback.py. A report
+// says a verdict was wrong. Reports carry the scan's hash and labels; the
+// text itself only when the reporter chose to include it (has_content),
+// which is what makes a report exportable as a tuning example.
+export type AirlockVerdict = "allow" | "flag" | "block";
+
+export type AirlockFeedbackIn = {
+  content_sha256: string;
+  kind: "ingress" | "egress";
+  verdict_given: AirlockVerdict;
+  verdict_expected: AirlockVerdict;
+  rule_ids: string[];
+  source?: string | null;
+  note?: string | null;
+  content?: string | null;
+};
+
+export type AirlockFeedback = {
+  id: string;
+  content_sha256: string;
+  kind: "ingress" | "egress";
+  verdict_given: AirlockVerdict;
+  verdict_expected: AirlockVerdict;
+  rule_ids: string[];
+  source: string | null;
+  note: string | null;
+  has_content: boolean;
+  created_at: number;
+};
+
+export type AirlockSuggestion = {
+  kind: "mute_rule" | "deep_scan_source";
+  rule_id: string | null;
+  source: string | null;
+  reports: number;
+  detail: string;
+};
+
+export type AirlockTuning = {
+  reports: AirlockFeedback[];
+  suggestions: AirlockSuggestion[];
+  examples_with_content: number;
+  // The most recent of those, shown to the classifier on every deep scan.
+  examples_in_deep_scan: number;
+};
+
 export const airlock = {
   pricing: airlockPricing,
   rules: () => request<AirlockRules>("/v1/airlock/rules"),
@@ -748,6 +802,43 @@ export const airlock = {
     }
   },
   credits: () => request<AirlockCredits>("/v1/airlock/credits"),
+  // Tuning: report a wrong verdict, read what the reports add up to, apply a
+  // mute suggestion in one call (a policy write, so session only), export the
+  // consented examples. The export is fetched with the cookie and handed back
+  // as text for the same reason the usage CSV is.
+  feedback: (report: AirlockFeedbackIn) =>
+    request<AirlockFeedback>("/v1/airlock/feedback", { method: "POST", body: JSON.stringify(report) }),
+  // Null when the tuning routes are not there to answer (the web deploys on
+  // merge; the API is deployed by hand afterwards), so the dashboard card
+  // renders as absent for that gap rather than as an error on every
+  // paying account's dashboard.
+  tuning: async (): Promise<AirlockTuning | null> => {
+    const response = await fetch(`${API_BASE}/v1/airlock/tuning`, { credentials: "include" });
+    if (!response.ok) return null;
+    return (await response.json()) as AirlockTuning;
+  },
+  deleteFeedback: async (feedbackId: string): Promise<void> => {
+    const response = await fetch(`${API_BASE}/v1/airlock/feedback/${feedbackId}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    if (!response.ok && response.status !== 204) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(readableDetail(body.detail) ?? `Request failed: ${response.status}`);
+    }
+  },
+  muteSuggestion: (ruleId: string) =>
+    request<AirlockPolicy>("/v1/airlock/tuning/mute", { method: "POST", body: JSON.stringify({ rule_id: ruleId }) }),
+  tuningExport: async (): Promise<{ filename: string; text: string }> => {
+    const response = await fetch(`${API_BASE}/v1/airlock/tuning/export.jsonl`, { credentials: "include" });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(readableDetail(body.detail) ?? `Request failed: ${response.status}`);
+    }
+    const disposition = response.headers.get("content-disposition") ?? "";
+    const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? "airlock-tuning.jsonl";
+    return { filename, text: await response.text() };
+  },
   // The purchase is a payment claim (product='airlock') on the same manual
   // rails as the subscription. Amount and credit count are server-derived
   // from currency x packs; the client never states either.

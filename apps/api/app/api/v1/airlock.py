@@ -61,6 +61,7 @@ from ...airlock.proxy import (
 from ...airlock.rules import RULES, RULES_BY_ID
 from ...airlock.semantic import (
     DEEP_SCAN_EXTRA_CREDITS,
+    MAX_TUNING_EXAMPLES,
     SEMANTIC_MAX_WEIGHT,
     SEMANTIC_RULE_ID,
     combine,
@@ -85,6 +86,17 @@ from ...cqrs.airlock_billing import (
     handle_revoke_api_key,
     handle_usage_query,
     resolve_api_key,
+)
+from ...cqrs.airlock_feedback import (
+    MAX_CONTENT_CHARS,
+    MAX_NOTE_CHARS,
+    InvalidFeedback,
+    RecordFeedbackCommand,
+    handle_delete_feedback,
+    handle_feedback_examples_query,
+    handle_feedback_query,
+    handle_record_feedback,
+    handle_suggestions_query,
 )
 from ...cqrs.airlock_policy import (
     DEFAULT_BLOCK_THRESHOLD,
@@ -332,6 +344,14 @@ def get_fetcher() -> Fetcher:
     tests can hand the route one bound to a mock transport and a fake
     resolver and still exercise every rule the real one enforces."""
     return fetch_url
+
+
+async def _tuning_examples(database: Database, principal: AirlockPrincipal) -> list[dict]:
+    """The account's kept corrections for the classifier to weigh on this
+    deep scan (airlock/semantic.py: render_examples). One indexed read,
+    only on a deep scan; an account with no kept examples gets the
+    published prompt unchanged."""
+    return await handle_feedback_examples_query(database, principal.user_id, newest=MAX_TUNING_EXAMPLES)
 
 
 def get_model_provider(settings: Settings = Depends(get_settings)) -> Callable[[], ModelProvider]:
@@ -597,7 +617,7 @@ async def scan(
                 )
                 charged = 1
         elif ask_model:
-            opinion = await semantic_opinion(model_provider, payload.content)
+            opinion = await semantic_opinion(model_provider, payload.content, await _tuning_examples(database, principal))
             semantic = opinion.as_dict()
             if opinion.status == "ok":
                 score, verdict = combine(detection.score, opinion, policy.block_threshold, policy.flag_threshold)
@@ -951,7 +971,7 @@ async def proxy_fetch(
             remaining = await _refund_or_keep(database, principal, remaining, DEEP_SCAN_EXTRA_CREDITS, "deep scan: rules already block")
             charged = 0 if principal.is_founder else PROXY_FETCH_CREDITS
         elif ask_model:
-            opinion = await semantic_opinion(model_provider, scan_text)
+            opinion = await semantic_opinion(model_provider, scan_text, await _tuning_examples(database, principal))
             semantic = opinion.as_dict()
             if opinion.status == "ok":
                 score, verdict = combine(detection.score, opinion, policy.block_threshold, policy.flag_threshold)
@@ -1221,6 +1241,222 @@ async def reset_policy(
 ) -> PolicyOut:
     """Back to the defaults."""
     return _policy_out(await handle_reset_policy(database, user.id))
+
+
+# ---------------------------------------------------------------------------
+# Tuning. A customer reports a wrong verdict; the reports become concrete
+# suggestions (mute this rule, deep-scan that source) that apply through
+# the policy in one call, and -- for reports that include the text -- a
+# fine-tuning export in the same format the repository's own dataset uses.
+# Content is stored only when the report includes it. Reports are not
+# metered: a customer correcting the guard is doing the product a favour.
+# ---------------------------------------------------------------------------
+
+
+class FeedbackIn(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "content_sha256": "3a7bd3e2360a3d29eea436fcfb7e44c735d117c42d1c1835420b6b9942dd4f1b",
+                    "kind": "ingress",
+                    "verdict_given": "block",
+                    "verdict_expected": "allow",
+                    "rule_ids": ["AS-002"],
+                    "source": "contracts",
+                    "note": "Our own terms mention 'test mode enabled' -- a product feature, not an injection.",
+                }
+            ]
+        }
+    }
+    content_sha256: str = Field(min_length=64, max_length=64)
+    kind: Literal["ingress", "egress"] = "ingress"
+    verdict_given: Literal["allow", "flag", "block"]
+    verdict_expected: Literal["allow", "flag", "block"]
+    rule_ids: list[str] = Field(default_factory=list, max_length=64)
+    source: str | None = Field(default=None, max_length=64)
+    note: str | None = Field(default=None, max_length=MAX_NOTE_CHARS)
+    # Include the scanned text ONLY if you want it kept for tuning your own
+    # account and exported as your own fine-tuning example. Omitted, the
+    # report is a hash and a label, and nothing of the text is stored.
+    content: str | None = Field(default=None, max_length=MAX_CONTENT_CHARS)
+
+
+class FeedbackOut(BaseModel):
+    id: str
+    content_sha256: str
+    kind: str
+    verdict_given: str
+    verdict_expected: str
+    rule_ids: list[str]
+    source: str | None
+    note: str | None
+    has_content: bool
+    created_at: int
+
+
+class SuggestionOut(BaseModel):
+    kind: str
+    rule_id: str | None
+    source: str | None
+    reports: int
+    detail: str
+
+
+class TuningOut(BaseModel):
+    reports: list[FeedbackOut]
+    suggestions: list[SuggestionOut]
+    examples_with_content: int
+    # How many of those the classifier is shown on this account's deep
+    # scans (the most recent, up to the cap in airlock/semantic.py).
+    examples_in_deep_scan: int
+
+
+@router.post("/feedback", response_model=FeedbackOut, status_code=status.HTTP_201_CREATED, responses=READ_RESPONSES)
+async def report_feedback(
+    payload: FeedbackIn,
+    database: Database = Depends(get_database),
+    principal: AirlockPrincipal = Depends(airlock_principal),
+) -> FeedbackOut:
+    """Report a wrong verdict. Send the `content_sha256` the scan response
+    carried, what the verdict was and what it should have been, and the
+    rule ids that fired. Not metered; bounded per account like the other
+    reads. Include `content` only to keep that text for your own tuning."""
+    await _bound_reads(database, principal, "airlock_read", MAX_READS_PER_WINDOW)
+    try:
+        feedback_id = await handle_record_feedback(
+            database,
+            RecordFeedbackCommand(
+                user_id=principal.user_id,
+                content_sha256=payload.content_sha256,
+                kind=payload.kind,
+                verdict_given=payload.verdict_given,
+                verdict_expected=payload.verdict_expected,
+                rule_ids=payload.rule_ids,
+                source=payload.source,
+                note=payload.note,
+                content=payload.content,
+            ),
+        )
+    except InvalidFeedback as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from None
+    reports = await handle_feedback_query(database, principal.user_id)
+    created = next(report for report in reports if report.id == feedback_id)
+    return FeedbackOut(**vars(created))
+
+
+@router.get("/tuning", response_model=TuningOut, responses=READ_RESPONSES)
+async def tuning(
+    database: Database = Depends(get_database),
+    principal: AirlockPrincipal = Depends(airlock_principal),
+) -> TuningOut:
+    """Your reports, and what they say to change: rules to mute (reported
+    as false positives on enough distinct scans), sources to deep-scan
+    (reported misses). Suggestions skip rules already muted. Reports that
+    kept their text are the examples this account's deep scans are tuned
+    on, most recent first."""
+    await _bound_reads(database, principal, "airlock_read", MAX_READS_PER_WINDOW)
+    reports = await handle_feedback_query(database, principal.user_id)
+    suggestions = await handle_suggestions_query(database, principal.user_id, muted=principal.policy.muted_rules)
+    examples = await handle_feedback_examples_query(database, principal.user_id)
+    return TuningOut(
+        reports=[FeedbackOut(**vars(r)) for r in reports],
+        suggestions=[SuggestionOut(**vars(sg)) for sg in suggestions],
+        examples_with_content=len(examples),
+        examples_in_deep_scan=min(len(examples), MAX_TUNING_EXAMPLES),
+    )
+
+
+@router.delete("/feedback/{feedback_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_feedback(
+    feedback_id: str,
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> None:
+    """Withdraw a report (and the text it included, if any). Session only."""
+    if not await handle_delete_feedback(database, user.id, feedback_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+
+
+class ApplySuggestionIn(BaseModel):
+    rule_id: str = Field(min_length=3, max_length=16)
+
+
+@router.post("/tuning/mute", response_model=PolicyOut)
+async def apply_mute_suggestion(
+    payload: ApplySuggestionIn,
+    database: Database = Depends(get_database),
+    user: User = Depends(current_user),
+) -> PolicyOut:
+    """One click on a suggestion: add the rule to the account's muted list.
+    Session only, like every policy write -- a key cannot loosen the guard."""
+    current = await handle_policy_query(database, user.id)
+    muted = sorted(set(current.muted_rules) | {payload.rule_id.strip().upper()})
+    try:
+        policy = await handle_set_policy(
+            database,
+            SetPolicyCommand(
+                user_id=user.id,
+                block_threshold=current.block_threshold,
+                flag_threshold=current.flag_threshold,
+                muted_rules=muted,
+                egress_allowlist=list(current.egress_allowlist),
+            ),
+        )
+    except InvalidPolicy as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from None
+    return _policy_out(policy)
+
+
+@router.get(
+    "/tuning/export.jsonl",
+    responses={
+        200: {"content": {"application/jsonl": {}}, "description": "One tuning example per line (Vertex AI supervised-tuning format)."},
+        401: METERED_RESPONSES[401],
+        429: {"description": f"More than {MAX_EXPORTS_PER_WINDOW} exports from this account in an hour."},
+    },
+)
+async def export_tuning_examples(
+    database: Database = Depends(get_database),
+    principal: AirlockPrincipal = Depends(airlock_principal),
+) -> StreamingResponse:
+    """Your consented examples -- the reports that included the text -- in
+    the same supervised-tuning format this repository's own dataset uses
+    (systemInstruction + contents), so they drop straight into a tuning
+    job. Reports without content are not here: there is no text to export."""
+    from ...airlock.semantic import SYSTEM_PROMPT
+
+    await _bound_reads(database, principal, "airlock_export", MAX_EXPORTS_PER_WINDOW)
+    examples = await handle_feedback_examples_query(database, principal.user_id)
+
+    def lines():
+        for example in examples:
+            injection = example["label"] == 1
+            answer = json.dumps(
+                {
+                    "injection": injection,
+                    "confidence": 0.95 if injection else 0.05,
+                    "family": example["family"],
+                    "reason": "Instructs or steers the agent reading it." if injection else "Ordinary content; no instruction aimed at the agent.",
+                }
+            )
+            yield json.dumps(
+                {
+                    "systemInstruction": {"role": "system", "parts": [{"text": SYSTEM_PROMPT}]},
+                    "contents": [
+                        {"role": "user", "parts": [{"text": f"<content>\n{example['text']}\n</content>"}]},
+                        {"role": "model", "parts": [{"text": answer}]},
+                    ],
+                },
+                ensure_ascii=False,
+            ) + "\n"
+
+    today = datetime.now(tz=UTC).date().isoformat()
+    return StreamingResponse(
+        lines(),
+        media_type="application/jsonl; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="airlock-tuning-{today}.jsonl"'},
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ from ...auth import User, current_founder
 from ...cqrs.activity import ActivityLogFilter, handle_activity_log_query
 from ...cqrs.airlock_billing import GrantCreditsCommand, handle_airlock_business_stats_query, handle_grant_credits
 from ...cqrs.airlock_waitlist import handle_waitlist_counts_query
+from ...cqrs.airlock_feedback import handle_rule_feedback_stats_query
 from ...cqrs.request_errors import handle_error_count_query, handle_error_groups_query
 from ...database import Database
 from ...dependencies import get_database
@@ -645,4 +646,23 @@ async def list_errors(
     request id on each line is what the customer saw and what the log
     line carries."""
     return [ErrorGroupOut(**vars(group)) for group in await handle_error_groups_query(database, days=days)]
+
+
+class RuleFeedbackStatOut(BaseModel):
+    rule_id: str
+    family: str
+    false_positive_reports: int
+    accounts: int
+
+
+@router.get("/airlock/rule-feedback", response_model=list[RuleFeedbackStatOut])
+async def airlock_rule_feedback(
+    days: int = Query(default=90, ge=1, le=365),
+    database: Database = Depends(get_database),
+    _founder: User = Depends(current_founder),
+) -> list[RuleFeedbackStatOut]:
+    """Which rules customers keep reporting as false positives, across
+    accounts -- counts only, never content or account. This is the signal
+    for reweighting a rule in rules.py, benchmarked before it ships."""
+    return [RuleFeedbackStatOut(**vars(stat)) for stat in await handle_rule_feedback_stats_query(database, days=days)]
 

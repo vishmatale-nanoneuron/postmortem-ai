@@ -155,6 +155,23 @@ export default function DocsPage() {
             deleting your account remains an erasure. Neither is metered.
           </p>
           <p className={p}>
+            <span className="font-medium text-ink">Tuning.</span> A wrong verdict is reported with{" "}
+            <code className={code}>POST /v1/airlock/feedback</code> (not metered): the scan&apos;s{" "}
+            <code className={code}>content_sha256</code>, <code className={code}>verdict_given</code>,{" "}
+            <code className={code}>verdict_expected</code> and the <code className={code}>rule_ids</code> that fired.{" "}
+            <code className={code}>GET /v1/airlock/tuning</code> returns your reports and what they add up to: a rule
+            reported as a false positive on three distinct scans becomes a &ldquo;mute this rule&rdquo; suggestion,
+            applied in one call with <code className={code}>POST /v1/airlock/tuning/mute</code> (session only, through
+            your policy); two reported misses from one source suggest <code className={code}>&quot;deep&quot;: true</code>{" "}
+            for it. Include <code className={code}>content</code> on a report only if you want the text kept: it is then
+            shown to Gemini as a worked answer on your own deep scans (the eight most recent;{" "}
+            <code className={code}>semantic.examples</code> says how many), exportable as{" "}
+            <code className={code}>GET /v1/airlock/tuning/export.jsonl</code> in the Vertex AI supervised-tuning format,
+            and withdrawable with <code className={code}>DELETE /v1/airlock/feedback/&#123;id&#125;</code>. Both SDKs
+            expose this as <code className={code}>feedback(result, expected)</code>, <code className={code}>tuning()</code>{" "}
+            and the export. No customer content trains any model.
+          </p>
+          <p className={p}>
             <span className="font-medium text-ink">Operational.</span> Every response carries{" "}
             <code className={code}>X-Request-ID</code> (yours is echoed if you send one) and{" "}
             <code className={code}>Server-Timing</code>; every <code className={code}>429</code> carries{" "}

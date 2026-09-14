@@ -40,7 +40,7 @@ function family(name: string): string {
 // Policy
 // ---------------------------------------------------------------------------
 
-export function PolicyEditor() {
+export function PolicyEditor({ version = 0, onChanged }: { version?: number; onChanged?: () => void }) {
   const [policy, setPolicy] = useState<AirlockPolicy | null>(null);
   const [rules, setRules] = useState<AirlockRule[]>([]);
   const [block, setBlock] = useState("0.75");
@@ -67,9 +67,11 @@ export function PolicyEditor() {
     }
   }, []);
 
+  // Re-read whenever the policy was written elsewhere on the page (a
+  // tuning suggestion applied a mute), so the form never holds a stale copy.
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, version]);
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
@@ -90,6 +92,7 @@ export function PolicyEditor() {
       setMuted(new Set(next.muted_rules));
       setAllowlist(next.egress_allowlist.join("\n"));
       setSaved("Saved. Applies to the next call on any of your keys.");
+      onChanged?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save the policy.");
     } finally {
@@ -105,6 +108,7 @@ export function PolicyEditor() {
       await airlock.resetPolicy();
       await load();
       setSaved("Back to the defaults.");
+      onChanged?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not reset the policy.");
     } finally {

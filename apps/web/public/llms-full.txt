@@ -546,6 +546,25 @@ deep scan sends the content to Google's Gemini API; the audit row still
 holds only the hash. The classifier's contribution is recorded as rule id
 `AI-001`.
 
+**Tuning (customer feedback loop).** A wrong verdict is reported with
+`POST /v1/airlock/feedback` (not metered): the scan's `content_sha256`, the
+verdict given, the verdict expected and the rule ids. `GET /v1/airlock/tuning`
+returns the account's reports and what they add up to -- a rule reported as
+a false positive on three distinct scans becomes a "mute this rule"
+suggestion applied in one call (`POST /v1/airlock/tuning/mute`, session
+only, through the account policy); two reported misses from one source
+become a "send deep: true for this source" suggestion. A report may include
+`content`; only then is the text stored, and then it does two things: it is
+shown to Gemini as a worked answer on that account's deep scans (the eight
+most recent, in-context, weights untouched, `semantic.examples` says how
+many), and it exports as `GET /v1/airlock/tuning/export.jsonl` in the same
+Vertex AI supervised-tuning format the repository's own dataset builder
+writes. Reports are withdrawable (`DELETE /v1/airlock/feedback/{id}`) and go
+with the account. The founder sees per-rule false-positive counts across
+accounts -- never content -- which is the signal for reweighting a rule in
+`rules.py`, benchmarked before it ships. No customer content trains any
+model. Full account: `docs/FINE_TUNING.md`.
+
 **Pricing and metering.** Airlock is paid and has no free tier. Prepaid
 packs of 10,000 scan credits: INR 999 by UPI, or USD 15 / GBP 12 / EUR 14 by
 international SWIFT wire, up to 10 packs per payment; one credit per scan or
@@ -596,8 +615,9 @@ SSRF-guarded URL retrieval above), the Gemini deep scan, sanitize-on-request, th
 revocable), prepaid credits with an atomic per-call meter, a per-account
 policy (thresholds, muted rules, standing egress allowlist), the public
 rule list, usage by day and key with CSV export, a readable ledger, pack
-purchase via UPI/wire claims, fail-closed 5xx bodies, and the dashboard to
-buy, mint, revoke and tune -- all served from this site's own FastAPI
+purchase via UPI/wire claims, fail-closed 5xx bodies, the tuning feedback
+loop (reports, suggestions, in-context tuned deep scans, JSONL export), and
+the dashboard to buy, mint, revoke and tune -- all served from this site's own FastAPI
 backend under `/v1/airlock`. The playground at
 https://www.nanoneuron.ai/airlock calls the real endpoint from the
 signed-in account's credits.

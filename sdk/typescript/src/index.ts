@@ -109,6 +109,31 @@ export type Usage = {
 
 export type Rules = { count: number; families: string[]; rules: Match[] };
 
+/** A report that a verdict was wrong. Only the hash, verdicts and rule ids are stored unless `content` is sent. */
+export type Feedback = {
+  id: string;
+  content_sha256: string;
+  kind: "ingress" | "egress";
+  verdict_given: Verdict;
+  verdict_expected: Verdict;
+  rule_ids: string[];
+  source: string | null;
+  note: string | null;
+  has_content: boolean;
+  created_at: number;
+  request_id: string | null;
+};
+
+export type Suggestion = {
+  kind: "mute_rule" | "deep_scan_source";
+  rule_id: string | null;
+  source: string | null;
+  reports: number;
+  detail: string;
+};
+
+export type Tuning = { reports: Feedback[]; suggestions: Suggestion[]; examples_with_content: number; request_id: string | null };
+
 /** Any non-200 from the API. */
 export class AirlockError extends Error {
   constructor(
@@ -214,7 +239,48 @@ export class Airlock {
     return this.call<Rules>("GET", "/v1/airlock/rules");
   }
 
-  private async call<T>(method: "GET" | "POST", path: string, body?: unknown, flags: { proxy?: boolean } = {}): Promise<T> {
+  /**
+   * Report that a verdict was wrong: `expected` is what it should have been.
+   * Not metered. Pass `content` only to keep the text as a tuning example you
+   * can export; by default only the hash is stored. Reports tune the account:
+   * see `tuning()`.
+   */
+  async feedback(
+    result: ScanResult | FetchResult,
+    expected: Verdict,
+    options: { note?: string; content?: string; source?: string } = {},
+  ): Promise<Feedback> {
+    if (!result.content_sha256) {
+      throw new Error("this result carries no content hash to report against (the URL was refused before any fetch)");
+    }
+    return this.call<Feedback>("POST", "/v1/airlock/feedback", {
+      content_sha256: result.content_sha256,
+      kind: "ingress",
+      verdict_given: result.verdict,
+      verdict_expected: expected,
+      rule_ids: result.matches.map((m) => m.rule_id),
+      source: options.source ?? null,
+      note: options.note ?? null,
+      content: options.content ?? null,
+    });
+  }
+
+  /** The account's reports, what they suggest (mute a rule, deep-scan a source) and how many carry text. */
+  tuning(): Promise<Tuning> {
+    return this.call<Tuning>("GET", "/v1/airlock/tuning");
+  }
+
+  /** The reports that included text, as JSON lines in the Vertex AI supervised-tuning format. */
+  tuningExamples(): Promise<string> {
+    return this.call<string>("GET", "/v1/airlock/tuning/export.jsonl", undefined, { text: true });
+  }
+
+  private async call<T>(
+    method: "GET" | "POST",
+    path: string,
+    body?: unknown,
+    flags: { proxy?: boolean; text?: boolean } = {},
+  ): Promise<T> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     let response: Response;
@@ -233,8 +299,9 @@ export class Airlock {
       clearTimeout(timer);
     }
     const requestId = response.headers.get("x-request-id");
+    if (flags.text && response.ok) return (await response.text()) as T;
     const json = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-    if (response.status !== 200) {
+    if (!response.ok) {
       const detail = describe(json.detail as Detail | undefined, `Request failed: ${response.status}`);
       if (response.status === 401) throw new AuthenticationError(response.status, detail, requestId);
       if (response.status === 402) throw new InsufficientCredits(response.status, detail, requestId);

@@ -76,6 +76,15 @@ export default function PrivacyPage() {
             your account. Your credit ledger (which key spent what, when) is kept against your account and deleted
             with it. API keys are stored as a hash; the key itself is shown to you once and never kept.
           </p>
+          <p className={p}>
+            The one exception is yours to make. When you report a wrong verdict, the report stores the hash, the
+            verdicts and the rule ids. If you choose to keep the text with it &mdash; a checkbox on the try-it box,
+            or <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">content</code> on{" "}
+            <code className="rounded bg-paper px-1 py-0.5 font-mono text-[12px]">/v1/airlock/feedback</code> &mdash;
+            that text is stored against your account, shown to Gemini as a worked example on your own deep scans,
+            exportable by you, withdrawable one report at a time, and deleted with your account. It is never used
+            to train a model, and never shown to another account.
+          </p>
         </>,
       )}
 

@@ -196,6 +196,22 @@ posture is stricter than the rest of the product's:
   Postgres triggers (row-level `BEFORE UPDATE OR DELETE`, statement-level
   `BEFORE TRUNCATE`), tested from a separate connection. Attribution lives
   in the deletable ledger, so account erasure still holds.
+- **Content is stored only when the customer sends it as feedback.** A
+  wrong-verdict report (`POST /v1/airlock/feedback`, migration 0036) holds
+  the hash, verdicts and rule ids; `content` is a nullable column filled
+  only when the report includes it. Kept text is that account's: shown to
+  the classifier on that account's deep scans as a worked example (the
+  most recent eight, capped in length), exportable and deletable by the
+  account, cascaded on erasure, invisible to the founder view (which
+  returns per-rule counts only) and to every other account -- pinned by
+  `tests/test_airlock_feedback.py`. Nothing trains a model on it.
+  A key can file reports (that is what the SDK's `feedback()` does), so a
+  leaked key can add examples to the account's deep-scan prompt; the
+  bound is that examples cannot lower a verdict below the rules -- the
+  model's term is zero unless it answers "injection" and the combination
+  only raises (`airlock/semantic.py`) -- and a key still cannot mute a
+  rule or change a threshold. Reports are listed on the dashboard and
+  withdrawable there.
 - **No model call by default.** The standard scan is forty regular
   expressions over normalised text. A deep scan is opt-in per call, sends
   that content to Google's Gemini API, can only raise a verdict (its weight
