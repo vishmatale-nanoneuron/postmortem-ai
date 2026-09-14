@@ -477,6 +477,21 @@ page with every miss verbatim; /airlock keeps the summary. Guessed URLs
 (/airlock/pricing, /airlock/docs, /docs/airlock, /rss.xml) redirect to
 where the thing lives.
 
+**Fine-tuning (status, honestly).** The only model-behaviour layer in either
+product is Airlock's deep-scan classifier. A fine-tuning dataset builder
+(apps/api/scripts/airlock_finetune_dataset.py: 718 rows from the public
+benchmark set and the self-authored corpus -- never customer content;
+574 train / 144 held-out, stratified, seeded) and an evaluation harness for
+the current classifier on the held-out split
+(scripts/airlock_semantic_eval.py) exist and are tested; the held-out split
+and manifest are committed. No deep-scan number has been published yet
+(the harness needs a valid Gemini key and refuses to write a result when
+every call fails), and no weights have been tuned (gemini-2.5-flash tuning
+needs Vertex AI billing this company does not currently have). Full
+account: docs/FINE_TUNING.md. PostMortem AI has no fine-tuning by design:
+its guarantee is enforced by code after the model answers, and its only
+possible training material is customer data the privacy policy excludes.
+
 **Rule pages.** Every detection rule has its own page at
 https://www.nanoneuron.ai/airlock/rules/<id lower-cased> (index at
 /airlock/rules): what it catches, its weight and what that weight means
