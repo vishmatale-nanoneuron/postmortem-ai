@@ -188,6 +188,9 @@ async def test_validation_isolation_and_the_founder_view(context):
 
     for n in range(3):
         assert (await client.post("/v1/airlock/feedback", json=_report(hashlib.sha256(f"c{n}".encode()).hexdigest()), headers=_keyed(key))).status_code == 201
+    # The classifier's own id is reportable (a deep-scan false positive) but
+    # has no rule to reweight, so the founder view leaves it out.
+    assert (await client.post("/v1/airlock/feedback", json=_report(sha, rule_ids=["AI-001"]), headers=_keyed(key))).status_code == 201
 
     # The neighbour sees none of it.
     _, other = await _customer(client, database, email=NEIGHBOUR)
@@ -202,7 +205,7 @@ async def test_validation_isolation_and_the_founder_view(context):
     assert stats.status_code == 200, stats.text
     [stat] = [s for s in stats.json() if s["rule_id"] == "AS-002"]
     assert stat == {"rule_id": "AS-002", "family": "authority_spoof", "false_positive_reports": 3, "accounts": 1}
-    assert "content" not in stats.text and sha not in stats.text
+    assert "AI-001" not in stats.text and "content" not in stats.text and sha not in stats.text
     client.cookies.clear()
     await client.post("/v1/auth/login", json={"email": NEIGHBOUR, "password": PASSWORD})
     assert (await client.get("/v1/founder/airlock/rule-feedback")).status_code in (403, 404)

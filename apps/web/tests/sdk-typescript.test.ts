@@ -117,8 +117,8 @@ describe("Airlock TypeScript SDK", () => {
       content: null,
     });
 
-    // A refused fetch has no hash to report against.
-    expect(() => guard.feedback({ ...scan, content_sha256: null } as never, "allow")).toThrow(/no content hash/);
+    // A refused fetch has no hash to report against: a rejection, not a sync throw.
+    await expect(guard.feedback({ ...scan, content_sha256: null } as never, "allow")).rejects.toThrow(/no content hash/);
 
     const jsonl = vi.fn(async () => new Response('{"contents":[]}\n', { status: 200, headers: { "content-type": "application/jsonl" } })) as unknown as typeof fetch;
     const exporter = new Airlock({ apiKey: "alk_test", fetch: jsonl });

@@ -249,12 +249,15 @@ async def handle_rule_feedback_stats_query(database: Database, *, days: int = 90
            GROUP BY rule ORDER BY false_positive_reports DESC, rule LIMIT 50""",
         (since,),
     )
+    # Only ids in rules.py: those are what a weight change can act on. The
+    # classifier's AI-001 is reportable but has no rule to reweight.
     return [
         RuleFeedbackStat(
             rule_id=row["rule_id"],
-            family=RULES_BY_ID[row["rule_id"]].family if row["rule_id"] in RULES_BY_ID else "",
+            family=RULES_BY_ID[row["rule_id"]].family,
             false_positive_reports=row["false_positive_reports"],
             accounts=row["accounts"],
         )
         for row in rows
+        if row["rule_id"] in RULES_BY_ID
     ]

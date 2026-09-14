@@ -245,7 +245,7 @@ export class Airlock {
    * can export; by default only the hash is stored. Reports tune the account:
    * see `tuning()`.
    */
-  feedback(
+  async feedback(
     result: ScanResult | FetchResult,
     expected: Verdict,
     options: { note?: string; content?: string; source?: string } = {},
